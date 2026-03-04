@@ -66,8 +66,13 @@ class SimulatedSparkConnection implements ISparkConnection {
 
     physics.step(physics.commandedVoltage, 0.010);
 
-    lastStatus0 = const StatusFrame0(
-      appliedOutput: 0.0,
+    // Compute the applied output (duty cycle) from commanded voltage.
+    final appliedOutput = physics.nominalVoltage > 0
+        ? (physics.commandedVoltage / physics.nominalVoltage).clamp(-1.0, 1.0)
+        : 0.0;
+
+    lastStatus0 = StatusFrame0(
+      appliedOutput: appliedOutput,
       faults: 0,
       stickyFaults: 0,
       flags: 0,

@@ -157,8 +157,11 @@ class TestRunsNotifier extends StateNotifier<List<TestRun>> {
 final feedforwardGainsProvider =
     StateProvider<FeedforwardGains?>((ref) => null);
 
-/// Computed PID gains (null until analysis is run).
+/// Computed velocity PID gains (null until analysis is run).
 final pidResultProvider = StateProvider<PidResult?>((ref) => null);
+
+/// Computed position PID gains (null until analysis is run).
+final posPidResultProvider = StateProvider<PidResult?>((ref) => null);
 
 /// Complete sysid results (null until analysis is run).
 final sysIdResultsProvider = StateProvider<SysIdResults?>((ref) => null);
