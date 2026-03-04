@@ -83,6 +83,7 @@ const int kHeartbeatFlagAutonomous = 0x02;
 // Parameter IDs
 // ---------------------------------------------------------------------------
 
+const int kParamCanId = 0;
 const int kParamMotorType = 2;
 const int kParamIdleMode = 5;
 const int kParamOpenLoopRampRate = 8;

@@ -45,7 +45,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
 
     try {
       final dm = ref.read(deviceManagerProvider);
-      dm.connect(_selectedPort!, label: 'Leader');
+      await dm.connect(_selectedPort!, label: 'Leader');
       setState(() => _connecting = false);
     } catch (e) {
       setState(() {
@@ -71,10 +71,10 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         const SizedBox(height: 12),
         Row(
           children: [
-            SizedBox(
-              width: 300,
+            Flexible(
               child: ComboBox<String>(
                 placeholder: const Text('Select COM port'),
+                isExpanded: true,
                 value: _selectedPort,
                 items: _ports
                     .map((p) => ComboBoxItem<String>(
@@ -159,13 +159,19 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          const InfoBar(
-            title: Text('How to set up followers'),
-            content: Text(
-              '1. Connect to the follower motor via USB\n'
-              '2. Set the leader CAN ID below\n'
-              '3. Click "Configure as Follower"\n'
-              '4. Disconnect the follower and connect the leader for testing\n\n'
+          InfoBar(
+            title: const Text('USB connects to one device at a time'),
+            content: const Text(
+              'CAN commands cannot be relayed to other devices through USB. '
+              'To configure followers, swap the USB cable to each follower '
+              'motor one at a time.\n\n'
+              'Workflow:\n'
+              '1. Connect your leader motor — note its CAN ID shown above\n'
+              '2. Disconnect the leader, plug USB into a follower motor\n'
+              '3. Connect here, enter the leader\'s CAN ID, and click '
+              '"Configure as Follower"\n'
+              '4. Repeat for each additional follower\n'
+              '5. Reconnect the leader motor for testing\n\n'
               'Follower settings are burned to flash and persist across power cycles.',
             ),
             severity: InfoBarSeverity.info,
@@ -192,19 +198,51 @@ class _DeviceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Card(
         child: Row(
           children: [
+            // CAN ID badge
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: theme.accentColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    '${device.canId}',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: theme.accentColor,
+                    ),
+                  ),
+                  Text(
+                    'CAN ID',
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: theme.accentColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
             Icon(
               device.isConnected
                   ? FluentIcons.plug_connected
                   : FluentIcons.plug_disconnected,
               color: device.isConnected ? Colors.green : Colors.red,
-              size: 24,
+              size: 20,
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -218,8 +256,7 @@ class _DeviceCard extends StatelessWidget {
                   ),
                   Text(
                     '${device.connection.portName} • '
-                    '${device.isLeader ? "Leader" : "Follower"} • '
-                    'CAN ID: ${device.canId}',
+                    '${device.isLeader ? "Leader" : "Follower"}',
                     style: const TextStyle(fontSize: 12),
                   ),
                 ],
@@ -258,12 +295,30 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
   int _leaderCanId = 0;
   bool _configuring = false;
   String? _result;
+  InfoBarSeverity _resultSeverity = InfoBarSeverity.success;
 
   @override
   Widget build(BuildContext context) {
+    final currentDevice = widget.devices.last;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Show current device info
+        InfoBar(
+          title: Text(
+            'Currently connected: ${currentDevice.connection.portName} '
+            '(CAN ID ${currentDevice.canId})',
+          ),
+          content: Text(
+            currentDevice.isLeader
+                ? 'This device is set as Leader. To make it a follower, '
+                  'enter the leader\'s CAN ID below.'
+                : 'This device is already configured as a Follower.',
+          ),
+          severity: InfoBarSeverity.warning,
+        ),
+        const SizedBox(height: 12),
         Row(
           children: [
             const Text('Leader CAN ID: '),
@@ -272,13 +327,15 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
               child: NumberBox<int>(
                 value: _leaderCanId,
                 min: 0,
-                max: 63,
+                max: 62,
                 onChanged: (v) => setState(() => _leaderCanId = v ?? 0),
               ),
             ),
             const SizedBox(width: 12),
             FilledButton(
-              onPressed: widget.devices.isNotEmpty && !_configuring
+              onPressed: widget.devices.isNotEmpty &&
+                      !_configuring &&
+                      _leaderCanId != currentDevice.canId
                   ? _configureFollower
                   : null,
               child: _configuring
@@ -289,6 +346,13 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
                     )
                   : const Text('Configure as Follower'),
             ),
+            if (_leaderCanId == currentDevice.canId) ...[
+              const SizedBox(width: 12),
+              const Text(
+                '⚠ Leader CAN ID cannot match this device',
+                style: TextStyle(fontSize: 12, color: Color(0xFFFF8C00)),
+              ),
+            ],
           ],
         ),
         if (_result != null) ...[
@@ -296,7 +360,7 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
           InfoBar(
             title: const Text('Result'),
             content: Text(_result!),
-            severity: InfoBarSeverity.success,
+            severity: _resultSeverity,
           ),
         ],
       ],
@@ -317,13 +381,16 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
       );
       setState(() {
         _configuring = false;
+        _resultSeverity = InfoBarSeverity.success;
         _result =
-            'Successfully configured ${device.connection.portName} as follower '
-            'of CAN ID $_leaderCanId. Settings burned to flash.';
+            'Successfully configured ${device.connection.portName} (CAN ID '
+            '${device.canId}) as follower of CAN ID $_leaderCanId. '
+            'Settings burned to flash.';
       });
     } catch (e) {
       setState(() {
         _configuring = false;
+        _resultSeverity = InfoBarSeverity.error;
         _result = 'Error: $e';
       });
     }

@@ -119,9 +119,10 @@ class DeviceManager {
 
   /// Connect to a SPARK controller on the given COM port.
   ///
+  /// Reads the device's CAN ID automatically after connecting.
   /// Returns the connected [SparkDevice].
   /// Throws if the port cannot be opened.
-  SparkDevice connect(String portName, {String label = 'Motor'}) {
+  Future<SparkDevice> connect(String portName, {String label = 'Motor'}) async {
     final connection = SparkConnection.fromPortName(portName);
     connection.open();
 
@@ -136,6 +137,13 @@ class DeviceManager {
       control: control,
       label: label,
     );
+
+    // Read the device's CAN ID from parameter 0.
+    try {
+      device.canId = await parameters.getCanId();
+    } catch (_) {
+      // If reading fails, leave canId at default 0.
+    }
 
     _devices.add(device);
     _notifyChanged();

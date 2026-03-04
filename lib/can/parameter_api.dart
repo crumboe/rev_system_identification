@@ -58,6 +58,20 @@ class ParameterApi {
   }
 
   // -----------------------------------------------------------------------
+  // CAN ID
+  // -----------------------------------------------------------------------
+
+  /// Read the device's CAN ID (parameter 0).
+  Future<int> getCanId() async {
+    final value = await getParameter(kParamCanId);
+    return value.toInt();
+  }
+
+  /// Set the device's CAN ID (0–62). Must call [burnFlash] to persist.
+  Future<void> setCanId(int canId) =>
+      setParameter(kParamCanId, canId.toDouble());
+
+  // -----------------------------------------------------------------------
   // Motor configuration
   // -----------------------------------------------------------------------
 
