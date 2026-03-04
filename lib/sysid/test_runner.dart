@@ -251,17 +251,20 @@ class TestRunner {
           break;
         }
 
-        // Check soft limits.
-        if (mechanismConfig.hasSoftLimits) {
+        // Check soft limits (skip first 0.5s to let mechanism start).
+        if (mechanismConfig.hasSoftLimits && elapsedSeconds > 0.5) {
           final pos = device.connection.lastStatus2?.positionRotations;
-          if (pos != null) {
+          final vel = device.connection.lastStatus1?.velocityRpm;
+          if (pos != null && vel != null) {
             final userPos = pos * mechanismConfig.positionConversionFactor;
+            final userVel = vel * mechanismConfig.velocityConversionFactor;
             final fwdLimit = mechanismConfig.forwardSoftLimit!;
             final revLimit = mechanismConfig.reverseSoftLimit!;
             final margin = (fwdLimit - revLimit).abs() * 0.05; // 5% margin
 
-            if (userPos >= fwdLimit - margin ||
-                userPos <= revLimit + margin) {
+            // Only stop if moving toward the limit.
+            if ((userPos >= fwdLimit - margin && userVel > 0) ||
+                (userPos <= revLimit + margin && userVel < 0)) {
               stopReason = TestStopReason.softLimitReached;
               break;
             }

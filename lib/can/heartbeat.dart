@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 
+import 'interfaces.dart';
 import 'spark_protocol.dart';
 import 'spark_connection.dart';
 
@@ -19,8 +20,8 @@ import 'spark_connection.dart';
 /// hb.disable();      // stop enabling the motor (sends disabled heartbeat)
 /// hb.stop();         // stop sending heartbeat entirely
 /// ```
-class HeartbeatManager {
-  final SparkConnection _connection;
+class HeartbeatManager implements IHeartbeatManager {
+  final ISparkConnection _connection;
 
   bool _running = false;
   bool _enabled = false;

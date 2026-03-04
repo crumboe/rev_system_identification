@@ -70,6 +70,19 @@ class HomeScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 32),
         const InfoBar(
+          title: Text('No hardware? No problem!'),
+          content: Text(
+            'Select a \u{1F9EA} Simulated device (Flywheel, Arm, or Elevator) '
+            'from the COM port dropdown on the Device Setup page to practice '
+            'the full sysid workflow with a physics-based model. Each '
+            'simulated device has known system constants — see if your '
+            'analysis recovers them!',
+          ),
+          severity: InfoBarSeverity.success,
+          isLong: true,
+        ),
+        const SizedBox(height: 16),
+        const InfoBar(
           title: Text('Safety Notice'),
           content: Text(
             'Always configure soft limits for Arms and Elevators before '

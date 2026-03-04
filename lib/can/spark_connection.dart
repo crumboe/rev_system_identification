@@ -10,11 +10,12 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import 'interfaces.dart';
 import 'spark_protocol.dart';
 import 'status_parser.dart';
 
 /// Represents a live USB-serial connection to one SPARK controller.
-class SparkConnection {
+class SparkConnection implements ISparkConnection {
   final SerialPort _port;
   SerialPortReader? _reader;
 

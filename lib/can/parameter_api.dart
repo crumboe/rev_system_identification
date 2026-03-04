@@ -6,12 +6,12 @@ library;
 
 import 'dart:typed_data';
 
+import 'interfaces.dart';
 import 'spark_protocol.dart';
-import 'spark_connection.dart';
 
 /// Provides typed access to SPARK controller parameters.
-class ParameterApi {
-  final SparkConnection _conn;
+class ParameterApi implements IParameterApi {
+  final ISparkConnection _conn;
   final int _deviceId;
 
   ParameterApi(this._conn, {int deviceId = 0}) : _deviceId = deviceId;

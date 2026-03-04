@@ -6,6 +6,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../devices/device_manager.dart';
+import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
 
 class DeviceScreen extends ConsumerStatefulWidget {
@@ -21,6 +22,13 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   bool _connecting = false;
   String? _errorMessage;
 
+  /// Sentinel port names for simulated devices.
+  static const _simFlywheel = '__SIM_FLYWHEEL__';
+  static const _simArm = '__SIM_ARM__';
+  static const _simElevator = '__SIM_ELEVATOR__';
+
+  static const _simPorts = [_simFlywheel, _simArm, _simElevator];
+
   @override
   void initState() {
     super.initState();
@@ -35,6 +43,23 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     });
   }
 
+  /// Returns the port list with simulated device entries prepended.
+  List<PortInfo> get _portsWithSim => [
+        const PortInfo(
+          name: _simFlywheel,
+          description: 'Simulated Flywheel (no hardware needed)',
+        ),
+        const PortInfo(
+          name: _simArm,
+          description: 'Simulated Arm (no hardware needed)',
+        ),
+        const PortInfo(
+          name: _simElevator,
+          description: 'Simulated Elevator (no hardware needed)',
+        ),
+        ..._ports,
+      ];
+
   Future<void> _connect() async {
     if (_selectedPort == null) return;
 
@@ -45,13 +70,77 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
 
     try {
       final dm = ref.read(deviceManagerProvider);
-      await dm.connect(_selectedPort!, label: 'Leader');
+      if (_simPorts.contains(_selectedPort)) {
+        final type = switch (_selectedPort) {
+          _simArm => 'arm',
+          _simElevator => 'elevator',
+          _ => 'flywheel',
+        };
+        await dm.connectSimulated(mechanismType: type);
+        _applySimulatedConfig(type);
+      } else {
+        await dm.connect(_selectedPort!, label: 'Leader');
+      }
       setState(() => _connecting = false);
     } catch (e) {
       setState(() {
         _connecting = false;
         _errorMessage = 'Failed to connect: $e';
       });
+    }
+  }
+
+  /// Pre-populate mechanism config and test params for simulated devices.
+  ///
+  /// The simulated physics models use specific internal units and ranges.
+  /// These conversion factors translate encoder-native rotations/RPM into
+  /// the user-facing units (degrees, inches, etc.) so that soft-limit
+  /// checks and data recording work correctly.
+  void _applySimulatedConfig(String type) {
+    final configNotifier = ref.read(mechanismConfigProvider.notifier);
+    final paramsNotifier = ref.read(testParamsProvider.notifier);
+
+    switch (type) {
+      case 'arm':
+        // Arm physics: internal deg/s → encoder RPM (÷360 ×60).
+        // Conversion: rotations→degrees = 360, RPM→deg/s = 6.
+        // Soft limits match ArmPhysics defaults: −45° to +90°.
+        configNotifier.setConfig(const MechanismConfig(
+          type: MechanismType.arm,
+          gearRatio: 1.0,
+          positionConversionFactor: 360.0,
+          velocityConversionFactor: 6.0,
+          forwardSoftLimit: 85.0,  // 5° margin inside 90° hard stop
+          reverseSoftLimit: -40.0, // 5° margin inside −45° hard stop
+          currentLimitAmps: 40.0,
+        ));
+        paramsNotifier.loadDefaults(MechanismType.arm);
+
+      case 'elevator':
+        // Elevator physics: 1.504 in/rotation.
+        // Conversion: rotations→inches = 1.504, RPM→in/s = 1.504/60.
+        // Soft limits match ElevatorPhysics defaults: 0–48 in.
+        configNotifier.setConfig(MechanismConfig(
+          type: MechanismType.elevator,
+          gearRatio: 1.0,
+          positionConversionFactor: 1.504,
+          velocityConversionFactor: 1.504 / 60.0,
+          forwardSoftLimit: 46.0,  // 2" margin inside 48" hard stop
+          reverseSoftLimit: 2.0,   // 2" margin inside 0" hard stop
+          currentLimitAmps: 40.0,
+        ));
+        paramsNotifier.loadDefaults(MechanismType.elevator);
+
+      default:
+        // Flywheel: rotations and RPM are native, no soft limits needed.
+        configNotifier.setConfig(const MechanismConfig(
+          type: MechanismType.flywheel,
+          gearRatio: 1.0,
+          positionConversionFactor: 1.0,
+          velocityConversionFactor: 1.0,
+          currentLimitAmps: 40.0,
+        ));
+        paramsNotifier.loadDefaults(MechanismType.flywheel);
     }
   }
 
@@ -76,12 +165,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 placeholder: const Text('Select COM port'),
                 isExpanded: true,
                 value: _selectedPort,
-                items: _ports
+                items: _portsWithSim
                     .map((p) => ComboBoxItem<String>(
                           value: p.name,
                           child: Text(
-                            '${p.name} — ${p.description}'
-                            '${p.isLikelySpark ? ' ★' : ''}',
+                            _simPorts.contains(p.name)
+                                ? '\u{1F9EA} ${p.description}'
+                                : '${p.name} — ${p.description}'
+                                  '${p.isLikelySpark ? ' \u2605' : ''}',
                           ),
                         ))
                     .toList(),
@@ -247,15 +338,39 @@ class _DeviceCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    device.label,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Row(
+                    children: [
+                      Text(
+                        device.label,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (device.isSimulated) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.warningPrimaryColor
+                                .withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'SIMULATED',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.warningPrimaryColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
-                    '${device.connection.portName} • '
+                    '${device.connection.portName} \u2022 '
                     '${device.isLeader ? "Leader" : "Follower"}',
                     style: const TextStyle(fontSize: 12),
                   ),

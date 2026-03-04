@@ -166,3 +166,7 @@ final testRunningProvider = StateProvider<bool>((ref) => false);
 /// Latest test progress update.
 final testProgressProvider =
     StateProvider<TestProgress?>((ref) => null);
+
+/// Whether the user has seen the chart walkthrough (per chart key).
+final walkthroughSeenProvider =
+    StateProvider.family<bool, String>((ref, chartKey) => false);

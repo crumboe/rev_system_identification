@@ -5,10 +5,16 @@ import 'dart:async';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import '../can/interfaces.dart';
 import '../can/spark_connection.dart';
 import '../can/heartbeat.dart';
 import '../can/parameter_api.dart';
 import '../can/control_api.dart';
+import '../simulation/simulated_physics.dart';
+import '../simulation/flywheel_physics.dart';
+import '../simulation/arm_physics.dart';
+import '../simulation/elevator_physics.dart';
+import '../simulation/simulated_device.dart';
 
 /// Information about a discovered serial port that may be a SPARK controller.
 class PortInfo {
@@ -42,10 +48,10 @@ class PortInfo {
 
 /// Represents a fully-connected SPARK controller with all API layers.
 class SparkDevice {
-  final SparkConnection connection;
-  final HeartbeatManager heartbeat;
-  final ParameterApi parameters;
-  final ControlApi control;
+  final ISparkConnection connection;
+  final IHeartbeatManager heartbeat;
+  final IParameterApi parameters;
+  final IControlApi control;
 
   /// User-assigned label for this device (e.g., "Leader", "Follower 1").
   String label;
@@ -56,6 +62,9 @@ class SparkDevice {
   /// Whether this device is the leader in follower configurations.
   bool isLeader;
 
+  /// Whether this device is a simulated (non-hardware) device.
+  final bool isSimulated;
+
   SparkDevice({
     required this.connection,
     required this.heartbeat,
@@ -64,6 +73,7 @@ class SparkDevice {
     this.label = 'Motor',
     this.canId = 0,
     this.isLeader = true,
+    this.isSimulated = false,
   });
 
   bool get isConnected => connection.isOpen;
@@ -144,6 +154,46 @@ class DeviceManager {
     } catch (_) {
       // If reading fails, leave canId at default 0.
     }
+
+    _devices.add(device);
+    _notifyChanged();
+    return device;
+  }
+
+  /// Connect a simulated device (no hardware required).
+  ///
+  /// Creates a physics-based model with known system constants
+  /// that students can verify through the sysid workflow.
+  /// [mechanismType] selects flywheel, arm, or elevator physics.
+  Future<SparkDevice> connectSimulated({
+    String? mechanismType,
+  }) async {
+    final SimulatedPhysics physics;
+    switch (mechanismType) {
+      case 'arm':
+        physics = ArmPhysics();
+      case 'elevator':
+        physics = ElevatorPhysics();
+      default:
+        physics = FlywheelPhysics();
+    }
+
+    final connection = SimulatedSparkConnection(physics);
+    connection.open();
+
+    final heartbeat = SimulatedHeartbeatManager();
+    final parameters = SimulatedParameterApi();
+    final control = SimulatedControlApi(physics);
+
+    final device = SparkDevice(
+      connection: connection,
+      heartbeat: heartbeat,
+      parameters: parameters,
+      control: control,
+      label: physics.label,
+      canId: 42,
+      isSimulated: true,
+    );
 
     _devices.add(device);
     _notifyChanged();

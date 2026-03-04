@@ -4,12 +4,12 @@ library;
 
 import 'dart:typed_data';
 
+import 'interfaces.dart';
 import 'spark_protocol.dart';
-import 'spark_connection.dart';
 
 /// Provides typed methods for motor control and system commands.
-class ControlApi {
-  final SparkConnection _conn;
+class ControlApi implements IControlApi {
+  final ISparkConnection _conn;
   final int _deviceId;
 
   ControlApi(this._conn, {int deviceId = 0}) : _deviceId = deviceId;
