@@ -445,6 +445,8 @@ class ValidationRunner {
                   : setpoint;
           device.control.setVelocity(rpmSetpoint);
         } else {
+          // Position hold: always command the target position (including during
+          // the settle phase so the mechanism holds still while we observe).
           setpoint = params.positionSetpoint;
           // Convert user position units to native rotations for the controller.
           // The SPARK CAN protocol always interprets position setpoints in rotations.
