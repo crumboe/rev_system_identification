@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REV SPARK MAX / SPARK Flex — CAN Command Reference</title>
+<style>
+  :root {
+    --rev-orange: #e8631a;
+    --rev-dark:   #1a1a2e;
+    --rev-mid:    #16213e;
+    --rev-panel:  #0f3460;
+    --rev-accent: #f5a623;
+    --text:       #e8eaf0;
+    --text-dim:   #8899b0;
+    --green:      #3ddc84;
+    --blue:       #5ab4f5;
+    --purple:     #b48ef5;
+    --red:        #f55a5a;
+    --yellow:     #f5d85a;
+    --border:     rgba(255,255,255,0.10);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--rev-dark); color: var(--text); min-height: 100vh; }
+
+  header { background: linear-gradient(135deg, #1a1a2e 0%, #0f3460 100%); border-bottom: 2px solid var(--rev-orange); padding: 20px 28px 14px; }
+  header h1 { font-size: 1.25rem; font-weight: 700; color: #fff; }
+  header h1 span { color: var(--rev-orange); }
+  header p  { color: var(--text-dim); margin-top: 4px; font-size: 0.82rem; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; margin-left: 8px; background: rgba(232,99,26,0.25); color: var(--rev-orange); border: 1px solid var(--rev-orange); vertical-align: middle; }
+
+  nav { display: flex; gap: 2px; padding: 0 28px; background: var(--rev-mid); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  nav button { padding: 10px 14px; background: none; border: none; cursor: pointer; color: var(--text-dim); font-size: 0.82rem; font-weight: 500; border-bottom: 3px solid transparent; transition: all 0.15s; }
+  nav button:hover { color: var(--text); }
+  nav button.active { color: var(--rev-orange); border-bottom-color: var(--rev-orange); }
+
+  .tab-content { display: none; padding: 24px 28px; }
+  .tab-content.active { display: block; }
+
+  .section-title { font-size: 0.95rem; font-weight: 700; color: var(--rev-accent); margin: 0 0 12px; padding-bottom: 7px; border-bottom: 1px solid var(--border); }
+  .section-title small { color: var(--text-dim); font-weight: 400; font-size: 0.75rem; margin-left: 8px; }
+
+  .table-wrap { overflow-x: auto; margin-bottom: 28px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; background: var(--rev-mid); border-radius: 8px; overflow: hidden; }
+  th { background: var(--rev-panel); color: var(--rev-accent); padding: 9px 12px; text-align: left; font-weight: 600; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+  .mono { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.78rem; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 0.68rem; font-weight: 600; white-space: nowrap; }
+  .tag-ctrl   { background: rgba(61,220,132,0.15); color: var(--green);  border: 1px solid rgba(61,220,132,0.4); }
+  .tag-param  { background: rgba(90,180,245,0.15); color: var(--blue);   border: 1px solid rgba(90,180,245,0.4); }
+  .tag-status { background: rgba(180,142,245,0.15);color: var(--purple); border: 1px solid rgba(180,142,245,0.4); }
+  .tag-sys    { background: rgba(245,90,90,0.15);  color: var(--red);    border: 1px solid rgba(245,90,90,0.4); }
+  .tag-usb    { background: rgba(245,216,90,0.15); color: var(--yellow); border: 1px solid rgba(245,216,90,0.4); }
+  .rw  { color: var(--green); font-size: 0.75rem; font-weight: 600; }
+  .ro  { color: var(--text-dim); font-size: 0.75rem; }
+
+  .packet-row { display: flex; gap: 0; margin-bottom: 6px; }
+  .field { display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid var(--border); padding: 8px 4px; font-size: 0.68rem; font-family: monospace; text-align: center; min-width: 0; }
+  .field:first-child { border-radius: 6px 0 0 6px; }
+  .field:last-child  { border-radius: 0 6px 6px 0; }
+  .f-label { font-weight: 700; font-size: 0.68rem; }
+  .f-bits  { color: var(--text-dim); font-size: 0.6rem; margin-top: 2px; }
+  .f-desc  { color: var(--text-dim); font-size: 0.62rem; margin-top: 3px; line-height: 1.3; }
+  .f-dt  { background: rgba(245,90,90,0.18);  color: var(--red);    border-color: rgba(245,90,90,0.4); }
+  .f-mfr { background: rgba(245,216,90,0.18); color: var(--yellow); border-color: rgba(245,216,90,0.4); }
+  .f-ac  { background: rgba(90,180,245,0.18); color: var(--blue);   border-color: rgba(90,180,245,0.4); }
+  .f-ai  { background: rgba(61,220,132,0.18); color: var(--green);  border-color: rgba(61,220,132,0.4); }
+  .f-did { background: rgba(180,142,245,0.18);color: var(--purple); border-color: rgba(180,142,245,0.4); }
+  .f-dat { background: rgba(232,99,26,0.18);  color: var(--rev-accent); border-color: rgba(232,99,26,0.4); }
+  .f-neu { background: rgba(255,255,255,0.04);color: var(--text-dim); }
+  .f-usb { background: rgba(245,216,90,0.12); color: var(--yellow); border-color: rgba(245,216,90,0.3); }
+
+  .callout { background: rgba(90,180,245,0.07); border-left: 3px solid var(--blue); border-radius: 0 6px 6px 0; padding: 10px 14px; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 18px; line-height: 1.6; }
+  .callout strong { color: var(--blue); }
+  .warn { background: rgba(245,90,90,0.08); border-left: 3px solid var(--red); border-radius: 0 6px 6px 0; padding: 10px 14px; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 18px; line-height: 1.6; }
+  .warn strong { color: var(--red); }
+
+  .flow-box { padding: 10px 16px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; border: 1px solid; display: inline-flex; align-items: center; gap: 8px; }
+  .flow-label { font-size: 0.7rem; color: var(--text-dim); font-weight: 400; margin-left: 6px; }
+  .box-host  { background: rgba(90,180,245,0.15); color: var(--blue);   border-color: rgba(90,180,245,0.5); }
+  .box-usb   { background: rgba(245,216,90,0.15); color: var(--yellow); border-color: rgba(245,216,90,0.5); }
+  .box-spark { background: rgba(61,220,132,0.15); color: var(--green);  border-color: rgba(61,220,132,0.5); }
+  .box-note  { background: rgba(232,99,26,0.08); border: 1px solid rgba(232,99,26,0.3); border-radius: 6px; padding: 10px 14px; font-size: 0.79rem; color: var(--text-dim); margin-top: 12px; }
+  .box-note strong { color: var(--rev-orange); }
+
+  .code-block { background: var(--rev-mid); border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: 'Cascadia Code','Fira Code',monospace; font-size: 0.77rem; line-height: 1.85; overflow-x: auto; margin-bottom: 24px; }
+
+  footer { text-align: center; padding: 16px; color: var(--text-dim); font-size: 0.72rem; border-top: 1px solid var(--border); margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>REV</span> SPARK MAX / SPARK Flex — CAN Command Reference
+    <span class="badge">Firmware 24.0.x</span>
+  </h1>
+  <p>Complete API table · USB-Serial packet structure · Frame diagrams</p>
+</header>
+
+<nav>
+  <button class="active" onclick="show('arb',this)">Arbitration ID</button>
+  <button onclick="show('commands',this)">CAN Commands</button>
+  <button onclick="show('status',this)">Status Frames</button>
+  <button onclick="show('params',this)">Parameters</button>
+  <button onclick="show('usb',this)">USB-Serial Protocol</button>
+</nav>
+
+<!-- ══ ARB ID ══ -->
+<div id="tab-arb" class="tab-content active">
+  <div class="section-title">FRC CAN Extended Arbitration ID (29-bit)</div>
+  <div class="callout">
+    <strong>Every CAN frame targeting a SPARK controller uses a 29-bit extended ID.</strong>
+    Build it as:<br><br>
+    <code style="color:#fff">arb = (DevType&lt;&lt;24) | (Manufacturer&lt;&lt;16) | (APIClass&lt;&lt;10) | (APIIndex&lt;&lt;6) | DeviceID</code>
+  </div>
+
+  <div style="margin-bottom:20px">
+    <div style="font-size:0.75rem;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">29-bit Arbitration ID Field Layout</div>
+    <div class="packet-row">
+      <div class="field f-dt" style="flex:5"><div class="f-label">Device Type</div><div class="f-bits">bits [28:24] — 5 bits</div><div class="f-desc">Motor Ctrl = <strong>0x02</strong></div></div>
+      <div class="field f-mfr" style="flex:8"><div class="f-label">Manufacturer</div><div class="f-bits">bits [23:16] — 8 bits</div><div class="f-desc">REV = <strong>0x05</strong></div></div>
+      <div class="field f-ac" style="flex:6"><div class="f-label">API Class</div><div class="f-bits">bits [15:10] — 6 bits</div><div class="f-desc">Command category</div></div>
+      <div class="field f-ai" style="flex:4"><div class="f-label">API Index</div><div class="f-bits">bits [9:6] — 4 bits</div><div class="f-desc">Specific command</div></div>
+      <div class="field f-did" style="flex:6"><div class="f-label">Device ID</div><div class="f-bits">bits [5:0] — 6 bits</div><div class="f-desc">CAN ID 0–62</div></div>
+    </div>
+  </div>
+
+  <div class="section-title">API Class Summary</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>API Class</th><th>Hex</th><th>Direction</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0</td><td class="mono">0x00</td><td>→ Device</td><td><span class="tag tag-ctrl">Control</span></td><td>Motor setpoint commands (duty, velocity, position, voltage, current)</td></tr>
+      <tr><td class="mono">1</td><td class="mono">0x01</td><td>↔ Both</td><td><span class="tag tag-param">Parameter</span></td><td>Configuration parameter get/set/commit</td></tr>
+      <tr><td class="mono">2</td><td class="mono">0x02</td><td>→ Device</td><td><span class="tag tag-sys">System</span></td><td>Firmware / device control (reset, identify, DFU, follower)</td></tr>
+      <tr><td class="mono">6</td><td class="mono">0x06</td><td>← Device</td><td><span class="tag tag-status">Status</span></td><td>Periodic telemetry frames broadcast by the controller</td></tr>
+      <tr><td class="mono">7</td><td class="mono">0x07</td><td>→ Device</td><td><span class="tag tag-usb">Frame Rate</span></td><td>Set broadcast rate of each status frame (non-persistent)</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="section-title">Computed Arbitration ID Examples</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Command</th><th>DevType</th><th>Mfr</th><th>APIClass</th><th>APIIndex</th><th>DevID</th><th>Arb ID</th></tr></thead>
+    <tbody>
+      <tr><td>Set Setpoint (dev 1)</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x00</td><td class="mono">0x00</td><td class="mono">0x01</td><td class="mono" style="color:var(--green)">0x02050041</td></tr>
+      <tr><td>Param Set (dev 1)</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x01</td><td class="mono">0x00</td><td class="mono">0x01</td><td class="mono" style="color:var(--blue)">0x02050441</td></tr>
+      <tr><td>Param Get (dev 1)</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x01</td><td class="mono">0x01</td><td class="mono">0x01</td><td class="mono" style="color:var(--blue)">0x02050481</td></tr>
+      <tr><td>Burn Flash (dev 1)</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x02</td><td class="mono">0x03</td><td class="mono">0x01</td><td class="mono" style="color:var(--red)">0x020508C1</td></tr>
+      <tr><td>Status 0 from dev 1</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x06</td><td class="mono">0x00</td><td class="mono">0x01</td><td class="mono" style="color:var(--purple)">0x02051801</td></tr>
+      <tr><td>Status 1 from dev 1</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x06</td><td class="mono">0x01</td><td class="mono">0x01</td><td class="mono" style="color:var(--purple)">0x02051841</td></tr>
+      <tr><td>Status 2 from dev 1</td><td class="mono">0x02</td><td class="mono">0x05</td><td class="mono">0x06</td><td class="mono">0x02</td><td class="mono">0x01</td><td class="mono" style="color:var(--purple)">0x02051881</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<!-- ══ COMMANDS ══ -->
+<div id="tab-commands" class="tab-content">
+  <div class="section-title">Control Commands <small>API Class 0x00 — Host → Controller</small></div>
+  <div class="callout">
+    <strong>Setpoint payload (8 bytes LE):</strong> bytes 0–3 = float32 value &nbsp;|&nbsp; byte 4 = Control Type &nbsp;|&nbsp; byte 5 = PID Slot (0–3) &nbsp;|&nbsp; bytes 6–7 = 0x00
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>API Index</th><th>Command</th><th>Ctrl Type Byte</th><th>Unit</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0x00</td><td>Duty Cycle Setpoint</td><td class="mono">0</td><td>−1.0 … +1.0</td><td>Open-loop % of bus voltage. No PID required.</td></tr>
+      <tr><td class="mono">0x00</td><td>Velocity Setpoint</td><td class="mono">1</td><td>RPM</td><td>Closed-loop. PIDF gains required.</td></tr>
+      <tr><td class="mono">0x00</td><td>Voltage Setpoint</td><td class="mono">2</td><td>Volts</td><td>Open-loop, bus-voltage compensated.</td></tr>
+      <tr><td class="mono">0x00</td><td>Position Setpoint</td><td class="mono">3</td><td>Rotations</td><td>Closed-loop. PIDF gains required.</td></tr>
+      <tr><td class="mono">0x00</td><td>SmartMotion Setpoint</td><td class="mono">4</td><td>Rotations</td><td>Motion-profiled position. Requires PIDF + profile params.</td></tr>
+      <tr><td class="mono">0x00</td><td>Current Setpoint</td><td class="mono">5</td><td>Amps</td><td>Closed-loop torque control. PIDF gains required.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="section-title">System Commands <small>API Class 0x02 — Host → Controller</small></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>API Index</th><th>Command</th><th>Payload</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0x00</td><td>Identify</td><td>—</td><td>Blinks the status LED for visual identification.</td></tr>
+      <tr><td class="mono">0x01</td><td>Clear Faults</td><td>—</td><td>Clears all sticky fault bits.</td></tr>
+      <tr><td class="mono">0x02</td><td>Firmware Version Request</td><td>—</td><td>Device responds with firmware version info.</td></tr>
+      <tr><td class="mono">0x03</td><td>Burn Flash (Persist)</td><td>—</td><td>Writes current RAM config to flash. Blocks briefly. Required to persist params through power cycle.</td></tr>
+      <tr><td class="mono">0x04</td><td>Set Follower</td><td>Leader Arb ID (4 bytes)</td><td>Configures this device to mirror another controller's output.</td></tr>
+      <tr><td class="mono">0x05</td><td>Factory Reset</td><td>—</td><td>Resets all parameters to factory defaults.</td></tr>
+      <tr><td class="mono">0x06</td><td>ID Query</td><td>CAN ID (1 byte)</td><td>Returns a hash of all devices with the given ID (collision detection).</td></tr>
+      <tr><td class="mono">0x07</td><td>ID Assign</td><td>Hash (4B) + New ID (1B)</td><td>Assigns a new CAN ID to the device matching the hash.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="section-title">Periodic Frame Rate Commands <small>API Class 0x07 — Payload: uint16 rate (ms)</small></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>API Index</th><th>Frame Targeted</th><th>Default</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0x00</td><td>Set Rate — Status 0</td><td>10ms</td><td>Applied output, faults, follower flag</td></tr>
+      <tr><td class="mono">0x01</td><td>Set Rate — Status 1</td><td>20ms</td><td>Velocity, temperature, bus voltage, current</td></tr>
+      <tr><td class="mono">0x02</td><td>Set Rate — Status 2</td><td>20ms</td><td>Motor position</td></tr>
+      <tr><td class="mono">0x03</td><td>Set Rate — Status 3</td><td>50ms</td><td>Analog sensor</td></tr>
+      <tr><td class="mono">0x04</td><td>Set Rate — Status 4</td><td>20ms</td><td>Alternate encoder</td></tr>
+      <tr><td class="mono">0x05</td><td>Set Rate — Status 5</td><td>200ms</td><td>Duty cycle absolute encoder position/angle</td></tr>
+      <tr><td class="mono">0x06</td><td>Set Rate — Status 6</td><td>200ms</td><td>Duty cycle absolute encoder velocity/freq</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="section-title">FRC Heartbeat Frame <small>Must be sent every 20ms or motor disables within ~100ms</small></div>
+  <div class="warn"><strong>⚠ Critical:</strong> Outside an FRC robot, you must replicate this heartbeat yourself. The SPARK monitors it continuously and disables output if it stops arriving.</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Arb ID</th><th>Period</th><th>Byte(s)</th><th>Field</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td class="mono" rowspan="4">0x01011840</td><td rowspan="4">20ms</td><td>0–3</td><td>Timestamp</td><td>uint32 LE — monotonic milliseconds</td></tr>
+      <tr><td>4</td><td>Match number</td><td>0 for non-FRC use</td></tr>
+      <tr><td>5</td><td>Mode flags</td><td>Bit4=Watchdog (always set), Bit1=Autonomous, Bit0=Robot Enabled</td></tr>
+      <tr><td>6–7</td><td>Reserved</td><td>0x00 0x00</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<!-- ══ STATUS ══ -->
+<div id="tab-status" class="tab-content">
+  <div class="section-title">Periodic Status Frames <small>API Class 0x06 — Controller → Host · All multi-byte fields are little-endian</small></div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 0 — Applied Output &amp; Faults <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 10ms · API Index 0x00</span></div>
+  <div class="packet-row" style="margin-bottom:18px">
+    <div class="field f-dat" style="flex:2"><div class="f-label">Applied Output</div><div class="f-bits">bytes 0–1</div><div class="f-desc">int16 ÷ 32767</div></div>
+    <div class="field f-dat" style="flex:2"><div class="f-label">Faults</div><div class="f-bits">bytes 2–3</div><div class="f-desc">uint16 bitmask</div></div>
+    <div class="field f-dat" style="flex:2"><div class="f-label">Sticky Faults</div><div class="f-bits">bytes 4–5</div><div class="f-desc">uint16 bitmask</div></div>
+    <div class="field f-neu" style="flex:1"><div class="f-label">Flags</div><div class="f-bits">byte 6</div><div class="f-desc">bit0=follower</div></div>
+  </div>
+  <div class="table-wrap" style="margin-bottom:24px"><table>
+    <thead><tr><th>Fault Bit</th><th>Name</th><th>Fault Bit</th><th>Name</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0</td><td>Brown Out</td><td class="mono">7</td><td>CAN TX Error</td></tr>
+      <tr><td class="mono">1</td><td>Over Current</td><td class="mono">8</td><td>Temperature</td></tr>
+      <tr><td class="mono">2</td><td>Over Voltage</td><td class="mono">9</td><td>Gate Driver Fault</td></tr>
+      <tr><td class="mono">3</td><td>Motor Fault</td><td class="mono">10</td><td>ESC EEPROM Failure</td></tr>
+      <tr><td class="mono">4</td><td>Sensor Fault</td><td class="mono">11</td><td>Software Emergency Stop</td></tr>
+      <tr><td class="mono">5</td><td>Stall</td><td class="mono">12</td><td>Has Reset (sticky only)</td></tr>
+      <tr><td class="mono">6</td><td>EEPROM CRC Error</td><td colspan="2"></td></tr>
+    </tbody>
+  </table></div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 1 — Velocity / Temp / Voltage / Current <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 20ms · API Index 0x01</span></div>
+  <div class="packet-row" style="margin-bottom:6px">
+    <div class="field f-dat" style="flex:4"><div class="f-label">Motor Velocity</div><div class="f-bits">bytes 0–3</div><div class="f-desc">float32 (RPM)</div></div>
+    <div class="field f-neu" style="flex:1"><div class="f-label">Temperature</div><div class="f-bits">byte 4</div><div class="f-desc">uint8 °C</div></div>
+    <div class="field f-neu" style="flex:3"><div class="f-label">Voltage (12-bit) + Current (12-bit)</div><div class="f-bits">bytes 5–7 — two packed 12-bit values</div><div class="f-desc">V = raw×(32/4096) · A = raw×(200/4096)</div></div>
+  </div>
+  <div style="margin-bottom:20px"></div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 2 — Motor Position <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 20ms · API Index 0x02</span></div>
+  <div class="packet-row" style="margin-bottom:20px">
+    <div class="field f-dat" style="flex:4"><div class="f-label">Motor Position</div><div class="f-bits">bytes 0–3</div><div class="f-desc">float32 (rotations)</div></div>
+    <div class="field f-neu" style="flex:4"><div class="f-label">Reserved</div><div class="f-bits">bytes 4–7</div><div class="f-desc">0x00</div></div>
+  </div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 3 — Analog Sensor <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 50ms · API Index 0x03</span></div>
+  <div class="packet-row" style="margin-bottom:20px">
+    <div class="field f-dat" style="flex:2"><div class="f-label">Analog Voltage</div><div class="f-bits">bytes 0–1 (10-bit)</div><div class="f-desc">raw×(3.3/1023) = V</div></div>
+    <div class="field f-dat" style="flex:3"><div class="f-label">Analog Velocity</div><div class="f-bits">bytes 2–4 (22-bit signed)</div><div class="f-desc">RPM</div></div>
+    <div class="field f-dat" style="flex:3"><div class="f-label">Analog Position</div><div class="f-bits">bytes 4–7</div><div class="f-desc">float32</div></div>
+  </div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 4 — Alternate Encoder <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 20ms · API Index 0x04</span></div>
+  <div class="packet-row" style="margin-bottom:20px">
+    <div class="field f-dat" style="flex:4"><div class="f-label">Alt. Enc. Velocity</div><div class="f-bits">bytes 0–3</div><div class="f-desc">float32 (RPM)</div></div>
+    <div class="field f-dat" style="flex:4"><div class="f-label">Alt. Enc. Position</div><div class="f-bits">bytes 4–7</div><div class="f-desc">float32 (rotations)</div></div>
+  </div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 5 — Absolute Encoder Position <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 200ms · API Index 0x05</span></div>
+  <div class="packet-row" style="margin-bottom:20px">
+    <div class="field f-dat" style="flex:4"><div class="f-label">Abs. Position</div><div class="f-bits">bytes 0–3</div><div class="f-desc">float32 (rotations)</div></div>
+    <div class="field f-dat" style="flex:2"><div class="f-label">Abs. Angle</div><div class="f-bits">bytes 4–5</div><div class="f-desc">int16 LE</div></div>
+    <div class="field f-neu" style="flex:2"><div class="f-label">Reserved</div><div class="f-bits">bytes 6–7</div></div>
+  </div>
+
+  <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin:0 0 8px">Status 6 — Absolute Encoder Velocity <span style="color:var(--text-dim);font-weight:400;font-size:0.75rem">default 200ms · API Index 0x06</span></div>
+  <div class="packet-row" style="margin-bottom:20px">
+    <div class="field f-dat" style="flex:4"><div class="f-label">Abs. Velocity</div><div class="f-bits">bytes 0–3</div><div class="f-desc">float32 (RPM)</div></div>
+    <div class="field f-dat" style="flex:2"><div class="f-label">Frequency</div><div class="f-bits">bytes 4–5</div><div class="f-desc">uint16 (Hz)</div></div>
+    <div class="field f-neu" style="flex:2"><div class="f-label">Reserved</div><div class="f-bits">bytes 6–7</div></div>
+  </div>
+</div>
+
+<!-- ══ PARAMS ══ -->
+<div id="tab-params" class="tab-content">
+  <div class="section-title">Parameter Commands <small>API Class 0x01</small></div>
+  <div class="callout">
+    <strong>Set (API Index 0x00) payload:</strong> float32 value (bytes 0–3) + uint16 Param ID (bytes 4–5) + 0x00 0x00<br>
+    <strong>Get (API Index 0x01) payload:</strong> uint16 Param ID (2 bytes) — controller responds with current value.<br>
+    Changes are in RAM only. Call <strong>Burn Flash (API Class 0x02, Index 0x03)</strong> to save to flash.
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Param ID</th><th>Name</th><th>Type</th><th>R/W</th><th>Range / Values</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0</td><td>CAN ID</td><td>uint8</td><td class="rw">R/W</td><td>0–62</td><td>Device CAN identifier.</td></tr>
+      <tr><td class="mono">1</td><td>Input Mode</td><td>uint8</td><td class="ro">RO</td><td>0=PWM, 1=CAN, 2=USB</td><td>Auto-detected, read-only.</td></tr>
+      <tr><td class="mono">2</td><td>Motor Type</td><td>uint8</td><td class="rw">R/W</td><td>0=Brushed, 1=Brushless</td><td>⚠ Wrong type can damage motor.</td></tr>
+      <tr><td class="mono">3</td><td>Sensor Type</td><td>uint8</td><td class="rw">R/W</td><td>0=None, 1=Hall, 2=Encoder</td><td>Feedback sensor selection.</td></tr>
+      <tr><td class="mono">4</td><td>Control Type</td><td>uint8</td><td class="ro">RO</td><td>0–5</td><td>Currently active control mode.</td></tr>
+      <tr><td class="mono">5</td><td>Idle Mode</td><td>uint8</td><td class="rw">R/W</td><td>0=Coast, 1=Brake</td><td>Behavior when no setpoint active.</td></tr>
+      <tr><td class="mono">6</td><td>Input Deadband</td><td>float</td><td class="rw">R/W</td><td>0.0–0.3</td><td>PWM neutral deadband fraction.</td></tr>
+      <tr><td class="mono">8</td><td>Ramp Rate (Open-Loop)</td><td>float</td><td class="rw">R/W</td><td>0.0 = disabled</td><td>Seconds from 0→full output.</td></tr>
+      <tr><td class="mono">9</td><td>Ramp Rate (Closed-Loop)</td><td>float</td><td class="rw">R/W</td><td>0.0 = disabled</td><td>Seconds from 0→full output.</td></tr>
+      <tr><td class="mono">10</td><td>Encoder CPR</td><td>uint32</td><td class="rw">R/W</td><td>≥ 1</td><td>Counts per revolution (4× quadrature CPR).</td></tr>
+      <tr><td class="mono">11</td><td>Enc. Avg Depth</td><td>uint8</td><td class="rw">R/W</td><td>1–64</td><td>Velocity averaging window size.</td></tr>
+      <tr><td class="mono">12</td><td>Enc. Sample Delta</td><td>uint8</td><td class="rw">R/W</td><td>1–255</td><td>Velocity delta time in 500µs increments.</td></tr>
+      <tr><td class="mono">13</td><td>Encoder Inverted</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td>Invert encoder direction.</td></tr>
+      <tr><td class="mono">14</td><td>Motor Inverted</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td>Invert motor output direction.</td></tr>
+      <tr><td class="mono">17</td><td>Position Conv. Factor</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Multiplied by raw rotations for position output.</td></tr>
+      <tr><td class="mono">18</td><td>Velocity Conv. Factor</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Multiplied by raw RPM for velocity output.</td></tr>
+      <tr><td class="mono">22</td><td>P Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td><td rowspan="8">PIDF slot 0. Add 8 per slot: slot1=+8, slot2=+16, slot3=+24.</td></tr>
+      <tr><td class="mono">23</td><td>I Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">24</td><td>D Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">25</td><td>F (Feed-Forward) — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">26</td><td>I-Zone — Slot 0</td><td>float</td><td class="rw">R/W</td><td>0 = disabled</td></tr>
+      <tr><td class="mono">27</td><td>D Filter — Slot 0</td><td>float</td><td class="rw">R/W</td><td>0.0–1.0</td></tr>
+      <tr><td class="mono">28</td><td>Max Output — Slot 0</td><td>float</td><td class="rw">R/W</td><td>−1.0 … +1.0</td></tr>
+      <tr><td class="mono">29</td><td>Min Output — Slot 0</td><td>float</td><td class="rw">R/W</td><td>−1.0 … +1.0</td></tr>
+      <tr><td class="mono">35</td><td>Smart Current Limit</td><td>uint32</td><td class="rw">R/W</td><td>0–80 A</td><td>Current limit at/below threshold RPM.</td></tr>
+      <tr><td class="mono">36</td><td>Smart Current Config</td><td>uint32</td><td class="rw">R/W</td><td>RPM</td><td>RPM above which full current limit applies.</td></tr>
+      <tr><td class="mono">38</td><td>Secondary Current Limit</td><td>uint32</td><td class="rw">R/W</td><td>0–80 A</td><td>Absolute peak current limit.</td></tr>
+      <tr><td class="mono">39</td><td>Voltage Comp Nominal</td><td>float</td><td class="rw">R/W</td><td>0=off, e.g. 12.0</td><td>Bus voltage for compensation mode.</td></tr>
+      <tr><td class="mono">40</td><td>Fwd Limit Switch Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">41</td><td>Fwd Limit Switch Polarity</td><td>uint8</td><td class="rw">R/W</td><td>0=N.O., 1=N.C.</td><td></td></tr>
+      <tr><td class="mono">42</td><td>Rev Limit Switch Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">43</td><td>Rev Limit Switch Polarity</td><td>uint8</td><td class="rw">R/W</td><td>0=N.O., 1=N.C.</td><td></td></tr>
+      <tr><td class="mono">44</td><td>Forward Soft Limit</td><td>float</td><td class="rw">R/W</td><td>rotations</td><td>Forward software stop position.</td></tr>
+      <tr><td class="mono">45</td><td>Fwd Soft Limit Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">46</td><td>Reverse Soft Limit</td><td>float</td><td class="rw">R/W</td><td>rotations</td><td>Reverse software stop position.</td></tr>
+      <tr><td class="mono">47</td><td>Rev Soft Limit Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">48</td><td>Follower ID</td><td>uint32</td><td class="rw">R/W</td><td>Arb ID</td><td>Arb ID of the leader device to follow.</td></tr>
+      <tr><td class="mono">49</td><td>Follower Config</td><td>uint32</td><td class="rw">R/W</td><td>flags</td><td>0x1A = REV follower · 0x1B = Talon/Victor style.</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<!-- ══ USB SERIAL ══ -->
+<div id="tab-usb" class="tab-content">
+  <div class="section-title">USB-Serial Direct Connection</div>
+  <div class="callout">
+    <strong>The SPARK MAX/Flex exposes a CDC USB-Serial port.</strong> Settings: 115200 baud, 8N1.
+    The protocol mirrors CAN exactly but uses a fixed <strong>12-byte packet</strong> per transaction.
+    Every command sent over USB receives a 12-byte response — even commands that don't respond over CAN will receive an Ack.
+  </div>
+
+  <div class="section-title" style="font-size:0.88rem">Communication Path</div>
+  <div style="display:flex;flex-direction:column;gap:0;align-items:flex-start;margin-bottom:24px">
+    <div class="flow-box box-host">💻 Host (Python / PC)<span class="flow-label">your application</span></div>
+    <div style="padding:4px 0 4px 20px;color:var(--text-dim);font-size:1rem">↕</div>
+    <div class="flow-box box-usb">🔌 USB-C cable<span class="flow-label">CDC serial · 115200 baud · 8N1</span></div>
+    <div style="padding:4px 0 4px 20px;color:var(--text-dim);font-size:1rem">↕</div>
+    <div class="flow-box box-spark">⚡ SPARK MAX / Flex<span class="flow-label">no CAN adapter needed</span></div>
+    <div class="box-note"><strong>Note:</strong> If the controller was previously on a roboRIO CAN bus, a safety lockout blocks USB comms. Power-cycle after disconnecting from CAN to release it.</div>
+  </div>
+
+  <div class="section-title" style="font-size:0.88rem">Outbound Packet — Host → Controller (12 bytes)</div>
+  <div class="callout">The 32-bit Command ID is packed <strong>little-endian</strong> into bytes 0–3. The Device ID field is DNC (ignored) when connected directly via USB — the command targets whichever device is physically plugged in.</div>
+  <div class="packet-row" style="margin-bottom:6px">
+    <div class="field f-usb" style="flex:1"><div class="f-label">USB Cmd Type</div><div class="f-bits">bits 31:29 (3b)</div><div class="f-desc">0=Standard<br>1=USB-Extended</div></div>
+    <div class="field f-dt" style="flex:1"><div class="f-label">Dev Type</div><div class="f-bits">bits 28:24</div><div class="f-desc">0x02</div></div>
+    <div class="field f-mfr" style="flex:1"><div class="f-label">Mfr</div><div class="f-bits">bits 23:16</div><div class="f-desc">0x05</div></div>
+    <div class="field f-ac" style="flex:1"><div class="f-label">API Class</div><div class="f-bits">bits 15:10</div></div>
+    <div class="field f-ai" style="flex:1"><div class="f-label">API Index</div><div class="f-bits">bits 9:6</div></div>
+    <div class="field f-did" style="flex:1"><div class="f-label">Device ID</div><div class="f-bits">bits 5:0</div><div class="f-desc">DNC direct</div></div>
+    <div class="field f-dat" style="flex:4"><div class="f-label">Data Payload</div><div class="f-bits">bytes 4–11 (8 bytes)</div><div class="f-desc">Same layout as CAN data field · zero-pad unused bytes</div></div>
+  </div>
+  <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:20px">Bytes 0–3 = Command ID (uint32 LE) &nbsp;·&nbsp; Bytes 4–11 = Data payload (8 bytes, zero-padded)</div>
+
+  <div class="section-title" style="font-size:0.88rem">Inbound Packet — Controller → Host (12 bytes, always)</div>
+  <div class="packet-row" style="margin-bottom:20px">
+    <div class="field f-usb" style="flex:1"><div class="f-label">Resp Type</div><div class="f-bits">bits 31:29</div><div class="f-desc">0=Ack<br>1=Data</div></div>
+    <div class="field f-dt" style="flex:1"><div class="f-label">Dev Type</div><div class="f-bits">bits 28:24</div></div>
+    <div class="field f-mfr" style="flex:1"><div class="f-label">Mfr</div><div class="f-bits">bits 23:16</div></div>
+    <div class="field f-ac" style="flex:1"><div class="f-label">API Class</div><div class="f-bits">bits 15:10</div></div>
+    <div class="field f-ai" style="flex:1"><div class="f-label">API Index</div><div class="f-bits">bits 9:6</div></div>
+    <div class="field f-did" style="flex:1"><div class="f-label">Device ID</div><div class="f-bits">bits 5:0</div></div>
+    <div class="field f-dat" style="flex:4"><div class="f-label">Response Data</div><div class="f-bits">bytes 4–11 (8 bytes)</div><div class="f-desc">Param value / status / firmware info — command dependent</div></div>
+  </div>
+
+  <div class="section-title" style="font-size:0.88rem">USB-Exclusive Commands</div>
+  <div class="table-wrap" style="margin-bottom:24px"><table>
+    <thead><tr><th>USB Cmd Type</th><th>API Class</th><th>API Index</th><th>Name</th><th>Effect</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">0x1 (Extended)</td><td class="mono">0x00</td><td class="mono">0x01</td><td>Enter DFU Bootloader</td><td>Puts device into firmware update mode. USB disconnects — reconnect after flashing.</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="section-title" style="font-size:0.88rem">Python Construction Example</div>
+  <div class="code-block">
+<span style="color:var(--text-dim)"># Build and send a 12-byte USB packet: set duty cycle +0.5 on device 1</span>
+<span style="color:var(--blue)">import</span> struct, serial
+
+ser = serial.<span style="color:var(--green)">Serial</span>(<span style="color:var(--yellow)">'/dev/ttyUSB0'</span>, baudrate=<span style="color:var(--yellow)">115200</span>, timeout=<span style="color:var(--yellow)">0.1</span>)
+
+<span style="color:var(--text-dim)"># ── Assemble the 32-bit Command ID ─────────────────────</span>
+cmd_id = (
+    (<span style="color:var(--red)">0x02</span> &lt;&lt; <span style="color:var(--yellow)">24</span>) |  <span style="color:var(--text-dim)"># Device Type: Motor Controller</span>
+    (<span style="color:var(--red)">0x05</span> &lt;&lt; <span style="color:var(--yellow)">16</span>) |  <span style="color:var(--text-dim)"># Manufacturer: REV Robotics</span>
+    (<span style="color:var(--red)">0x00</span> &lt;&lt; <span style="color:var(--yellow)">10</span>) |  <span style="color:var(--text-dim)"># API Class: Control (0x00)</span>
+    (<span style="color:var(--red)">0x00</span> &lt;&lt;  <span style="color:var(--yellow)">6</span>) |  <span style="color:var(--text-dim)"># API Index: Setpoint (0x00)</span>
+     <span style="color:var(--red)">0x01</span>           <span style="color:var(--text-dim)"># Device ID: 1 (DNC for direct USB)</span>
+)
+
+<span style="color:var(--text-dim)"># ── Build the 8-byte data payload ──────────────────────</span>
+payload = struct.<span style="color:var(--green)">pack</span>(<span style="color:var(--yellow)">'&lt;fBBxx'</span>,
+    <span style="color:var(--yellow)">0.5</span>,   <span style="color:var(--text-dim)"># float32: setpoint value</span>
+    <span style="color:var(--yellow)">0</span>,     <span style="color:var(--text-dim)"># uint8:   control type (0=duty cycle)</span>
+    <span style="color:var(--yellow)">0</span>      <span style="color:var(--text-dim)"># uint8:   PID slot (0–3)</span>
+)          <span style="color:var(--text-dim)"># xx = 2 padding bytes → total 8</span>
+
+<span style="color:var(--text-dim)"># ── Combine into final 12-byte packet ──────────────────</span>
+packet = struct.<span style="color:var(--green)">pack</span>(<span style="color:var(--yellow)">'&lt;I'</span>, cmd_id) + payload  <span style="color:var(--text-dim)"># 4 + 8 = 12 bytes</span>
+
+ser.<span style="color:var(--green)">write</span>(packet)
+response = ser.<span style="color:var(--green)">read</span>(<span style="color:var(--yellow)">12</span>)  <span style="color:var(--text-dim)"># always read 12 bytes back</span>
+
+<span style="color:var(--text-dim)"># ── Parse response Command ID ──────────────────────────</span>
+resp_id = struct.<span style="color:var(--green)">unpack_from</span>(<span style="color:var(--yellow)">'&lt;I'</span>, response, <span style="color:var(--yellow)">0</span>)[<span style="color:var(--yellow)">0</span>]
+resp_type = (resp_id >> <span style="color:var(--yellow)">29</span>) &amp; <span style="color:var(--red)">0x7</span>  <span style="color:var(--text-dim"># 0=Ack, 1=Data</span>
+resp_data = response[<span style="color:var(--yellow)">4</span>:]            <span style="color:var(--text-dim)"># 8 bytes of payload</span>
+  </div>
+
+  <div class="section-title" style="font-size:0.88rem">USB vs CAN Comparison</div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Property</th><th>CAN (via adapter)</th><th>USB-Serial (direct)</th></tr></thead>
+    <tbody>
+      <tr><td>Packet size</td><td>4B ID + 0–8B data (variable)</td><td>Fixed 12 bytes (4B ID + 8B data)</td></tr>
+      <tr><td>Responses</td><td>Only some commands respond</td><td>Every command gets a 12-byte response</td></tr>
+      <tr><td>Device ID field</td><td>Used for bus addressing</td><td>DNC — one device per USB connection</td></tr>
+      <tr><td>Heartbeat required?</td><td>Yes — every 20ms</td><td>Yes — same requirement</td></tr>
+      <tr><td>CAN bus needed?</td><td>Yes + termination resistors</td><td>No — USB-C cable only</td></tr>
+      <tr><td>Multiple devices?</td><td>Yes (up to 62)</td><td>One at a time</td></tr>
+      <tr><td>Hardware needed</td><td>USB-to-CAN adapter (CANable etc.)</td><td>USB-C cable only</td></tr>
+    </tbody>
+  </table></div>
+</div>
+
+<footer>REV SPARK MAX / SPARK Flex CAN Reference · Firmware 24.0.x · Source: docs.revrobotics.com</footer>
+
+<script>
+  function show(tab, btn) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    btn.classList.add('active');
+  }
+</script>
+</body>
+</html>
