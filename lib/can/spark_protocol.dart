@@ -122,6 +122,24 @@ const int kParamReverseSoftLimitEnabled = 47;
 const int kParamFollowerId = 48;
 const int kParamFollowerConfig = 49;
 
+// FeedForward Slot 0 (provisional IDs — verify against firmware spec)
+// These correspond to the new FeedForwardConfig API that replaces the
+// deprecated kF velocity feedforward.
+const int kParamSlot0FfKs = 50;
+const int kParamSlot0FfKv = 51;
+const int kParamSlot0FfKa = 52;
+const int kParamSlot0FfKg = 53;
+const int kParamSlot0FfKcos = 54;
+const int kParamSlot0FfKcosRatio = 55;
+
+// FeedForward Slot 1 (provisional IDs)
+const int kParamSlot1FfKs = 56;
+const int kParamSlot1FfKv = 57;
+const int kParamSlot1FfKa = 58;
+const int kParamSlot1FfKg = 59;
+const int kParamSlot1FfKcos = 60;
+const int kParamSlot1FfKcosRatio = 61;
+
 // Idle modes
 const int kIdleModeCoast = 0;
 const int kIdleModeBrake = 1;

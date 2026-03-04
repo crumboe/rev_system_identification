@@ -185,6 +185,11 @@ class DeviceManager {
     final parameters = SimulatedParameterApi();
     final control = SimulatedControlApi(physics);
 
+    // Wire up closed-loop PID+FF controller for the simulation.
+    final pidFf = SimulatedPidFfController(parameters, physics);
+    control.attachPidFfController(pidFf);
+    connection.controlApi = control;
+
     final device = SparkDevice(
       connection: connection,
       heartbeat: heartbeat,

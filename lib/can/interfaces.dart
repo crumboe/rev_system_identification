@@ -6,7 +6,7 @@ library;
 
 import 'dart:typed_data';
 
-import 'parameter_api.dart' show PidGains;
+import 'parameter_api.dart' show PidGains, ControllerFeedForward;
 import 'spark_protocol.dart';
 import 'status_parser.dart';
 
@@ -135,6 +135,23 @@ abstract class IParameterApi {
     required double reverseLimit,
   });
   Future<void> disableSoftLimits();
+
+  // FeedForward Slot 0
+  Future<void> setSlot0FfKs(double value);
+  Future<void> setSlot0FfKv(double value);
+  Future<void> setSlot0FfKa(double value);
+  Future<void> setSlot0FfKg(double value);
+  Future<void> setSlot0FfKcos(double value);
+  Future<void> setSlot0FfKcosRatio(double value);
+  Future<void> setFeedForwardSlot0({
+    double kS = 0.0,
+    double kV = 0.0,
+    double kA = 0.0,
+    double kG = 0.0,
+    double kCos = 0.0,
+    double kCosRatio = 0.0,
+  });
+  Future<ControllerFeedForward> getFeedForwardSlot0();
 
   // Follower
   Future<void> configureFollower(

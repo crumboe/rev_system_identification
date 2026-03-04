@@ -11,7 +11,7 @@ import 'dart:typed_data';
 import '../can/interfaces.dart';
 import '../can/spark_protocol.dart';
 import '../can/status_parser.dart';
-import '../can/parameter_api.dart' show PidGains;
+import '../can/parameter_api.dart' show PidGains, ControllerFeedForward;
 import 'simulated_physics.dart';
 
 // ---------------------------------------------------------------------------
@@ -25,6 +25,9 @@ class SimulatedSparkConnection implements ISparkConnection {
   final String _portName;
   Timer? _simTimer;
   bool _isOpen = false;
+
+  /// Reference to the control API for closed-loop tick updates.
+  SimulatedControlApi? controlApi;
 
   @override
   bool get isOpen => _isOpen;
@@ -58,6 +61,9 @@ class SimulatedSparkConnection implements ISparkConnection {
   }
 
   void _tick() {
+    // Run closed-loop PID+FF controller before physics step.
+    controlApi?.tick(0.010);
+
     physics.step(physics.commandedVoltage, 0.010);
 
     lastStatus0 = const StatusFrame0(
@@ -157,21 +163,190 @@ class SimulatedHeartbeatManager implements IHeartbeatManager {
 }
 
 // ---------------------------------------------------------------------------
+// Simulated PID + FeedForward controller
+// ---------------------------------------------------------------------------
+
+/// Emulates the SPARK's internal closed-loop PID + FeedForward controller.
+///
+/// Runs once per simulation tick (~10 ms) and computes a voltage command
+/// from the setpoint, measured state, and stored PID/FF parameters.
+class SimulatedPidFfController {
+  final SimulatedParameterApi _params;
+  final SimulatedPhysics _physics;
+
+  double _integralAccum = 0.0;
+  double _prevError = 0.0;
+  bool _firstTick = true;
+
+  SimulatedPidFfController(this._params, this._physics);
+
+  /// Reset integral accumulator and derivative state.
+  void reset() {
+    _integralAccum = 0.0;
+    _prevError = 0.0;
+    _firstTick = true;
+  }
+
+  /// Compute voltage for velocity closed-loop control.
+  ///
+  /// The SPARK's velocity PID computes:
+  ///   output = kP*error + kI*integral + kD*derivative
+  ///          + kS*sign(setpoint) + kV*setpoint
+  double computeVelocity(double setpointRpm, double dtSeconds) {
+    final kP = _params.getParamSync(kParamSlot0P);
+    final kI = _params.getParamSync(kParamSlot0I);
+    final kD = _params.getParamSync(kParamSlot0D);
+    final iZone = _params.getParamSync(kParamSlot0IZone);
+    final maxOut = _params.getParamSync(kParamSlot0MaxOutput);
+    final minOut = _params.getParamSync(kParamSlot0MinOutput);
+
+    final ffKs = _params.getParamSync(kParamSlot0FfKs);
+    final ffKv = _params.getParamSync(kParamSlot0FfKv);
+
+    final measuredRpm = _physics.noisyVelocityRpm;
+    final error = setpointRpm - measuredRpm;
+
+    // Integral with anti-windup via IZone
+    if (iZone <= 0 || error.abs() < iZone) {
+      _integralAccum += error * dtSeconds;
+    } else {
+      _integralAccum = 0.0;
+    }
+
+    // Derivative (skip first tick to avoid spike)
+    final derivative = _firstTick ? 0.0 : (error - _prevError) / dtSeconds;
+    _prevError = error;
+    _firstTick = false;
+
+    // PID output (in volts, assuming voltage compensation mode)
+    final pidOutput = kP * error + kI * _integralAccum + kD * derivative;
+
+    // FeedForward: kS*sign(setpoint) + kV*setpoint
+    final ffOutput = ffKs * (setpointRpm > 0 ? 1.0 : (setpointRpm < 0 ? -1.0 : 0.0))
+        + ffKv * setpointRpm;
+
+    // Total output clamped to nominal voltage range
+    final nomV = _physics.nominalVoltage;
+    final total = pidOutput + ffOutput;
+    return (total / nomV).clamp(minOut, maxOut) * nomV;
+  }
+
+  /// Compute voltage for position closed-loop control.
+  ///
+  /// The SPARK's position PID computes:
+  ///   output = kP*error + kI*integral + kD*derivative
+  ///          + kS*sign(error) + kG (elevator) or kCos*cos(pos) (arm)
+  double computePosition(double setpointRotations, double dtSeconds) {
+    final kP = _params.getParamSync(kParamSlot0P);
+    final kI = _params.getParamSync(kParamSlot0I);
+    final kD = _params.getParamSync(kParamSlot0D);
+    final iZone = _params.getParamSync(kParamSlot0IZone);
+    final maxOut = _params.getParamSync(kParamSlot0MaxOutput);
+    final minOut = _params.getParamSync(kParamSlot0MinOutput);
+
+    final ffKs = _params.getParamSync(kParamSlot0FfKs);
+    final ffKg = _params.getParamSync(kParamSlot0FfKg);
+    final ffKcos = _params.getParamSync(kParamSlot0FfKcos);
+    final ffKcosRatio = _params.getParamSync(kParamSlot0FfKcosRatio);
+
+    final measuredPos = _physics.noisyPositionRotations;
+    final error = setpointRotations - measuredPos;
+
+    // Integral with anti-windup
+    if (iZone <= 0 || error.abs() < iZone) {
+      _integralAccum += error * dtSeconds;
+    } else {
+      _integralAccum = 0.0;
+    }
+
+    // Derivative
+    final derivative = _firstTick ? 0.0 : (error - _prevError) / dtSeconds;
+    _prevError = error;
+    _firstTick = false;
+
+    // PID output
+    final pidOutput = kP * error + kI * _integralAccum + kD * derivative;
+
+    // FeedForward: kS*sign(error) + kG (elevator) or kCos*cos(pos) (arm)
+    // kV is NOT applied in position mode per REV docs
+    double ffOutput = ffKs * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0));
+    ffOutput += ffKg; // constant gravity (elevators); 0 for non-elevator
+    if (ffKcos != 0.0) {
+      // Arm gravity: kCos * cos(position * kCosRatio * 2π)
+      // kCosRatio converts user units → absolute rotations
+      final absRotations = measuredPos * (ffKcosRatio != 0 ? ffKcosRatio : 1.0);
+      ffOutput += ffKcos * _cos(absRotations * 2.0 * 3.14159265);
+    }
+
+    final nomV = _physics.nominalVoltage;
+    final total = pidOutput + ffOutput;
+    return (total / nomV).clamp(minOut, maxOut) * nomV;
+  }
+
+  /// Simple cos without importing dart:math in this library.
+  static double _cos(double x) {
+    // Use Taylor series approximation (sufficient for simulation).
+    // Normalize to [-π, π].
+    const pi = 3.14159265358979;
+    x = x % (2 * pi);
+    if (x > pi) x -= 2 * pi;
+    if (x < -pi) x += 2 * pi;
+    final x2 = x * x;
+    return 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Simulated control API
 // ---------------------------------------------------------------------------
 
 /// A control API that feeds voltage commands into the physics model.
+///
+/// Open-loop modes (voltage, duty cycle) pass through directly.
+/// Closed-loop modes (velocity, position) use the [SimulatedPidFfController]
+/// to emulate the SPARK's internal PID + FeedForward loop.
 class SimulatedControlApi implements IControlApi {
   final SimulatedPhysics _physics;
+  SimulatedPidFfController? _pidFf;
+
+  /// The current control mode and setpoint for closed-loop ticking.
+  int _activeControlType = kControlTypeVoltage;
+  double _activeSetpoint = 0.0;
 
   SimulatedControlApi(this._physics);
 
+  /// Attach a PID+FF controller for closed-loop simulation.
+  void attachPidFfController(SimulatedPidFfController controller) {
+    _pidFf = controller;
+  }
+
+  /// Called every simulation tick to update closed-loop output.
+  void tick(double dtSeconds) {
+    if (_pidFf == null) return;
+    if (_activeControlType == kControlTypeVelocity) {
+      _physics.commandedVoltage =
+          _pidFf!.computeVelocity(_activeSetpoint, dtSeconds);
+    } else if (_activeControlType == kControlTypePosition ||
+        _activeControlType == kControlTypeSmartMotion) {
+      _physics.commandedVoltage =
+          _pidFf!.computePosition(_activeSetpoint, dtSeconds);
+    }
+  }
+
   @override
   void setSetpoint(double value, int controlType, {int pidSlot = 0}) {
+    _activeControlType = controlType;
+    _activeSetpoint = value;
+
     if (controlType == kControlTypeVoltage) {
+      _pidFf?.reset();
       _physics.commandedVoltage = value;
     } else if (controlType == kControlTypeDutyCycle) {
+      _pidFf?.reset();
       _physics.commandedVoltage = value * _physics.nominalVoltage;
+    } else {
+      // Closed-loop modes — first tick handled immediately
+      _pidFf?.reset();
     }
   }
 
@@ -201,6 +376,9 @@ class SimulatedControlApi implements IControlApi {
 
   @override
   void stop() {
+    _activeControlType = kControlTypeVoltage;
+    _activeSetpoint = 0.0;
+    _pidFf?.reset();
     _physics.commandedVoltage = 0.0;
   }
 
@@ -224,6 +402,9 @@ class SimulatedControlApi implements IControlApi {
 
   @override
   Future<SparkResponse> factoryReset() async {
+    _pidFf?.reset();
+    _activeControlType = kControlTypeVoltage;
+    _activeSetpoint = 0.0;
     _physics.reset();
     return SparkResponse(
       responseType: kUsbResponseAck,
@@ -278,7 +459,17 @@ class SimulatedParameterApi implements IParameterApi {
     kParamReverseSoftLimitEnabled: 0.0,
     kParamFollowerId: 0.0,
     kParamFollowerConfig: 0.0,
+    // FeedForward Slot 0 defaults
+    kParamSlot0FfKs: 0.0,
+    kParamSlot0FfKv: 0.0,
+    kParamSlot0FfKa: 0.0,
+    kParamSlot0FfKg: 0.0,
+    kParamSlot0FfKcos: 0.0,
+    kParamSlot0FfKcosRatio: 0.0,
   };
+
+  /// Synchronous parameter read for the simulated PID controller.
+  double getParamSync(int paramId) => _params[paramId] ?? 0.0;
 
   @override
   Future<SparkResponse> setParameter(int paramId, double value) async {
@@ -471,5 +662,60 @@ class SimulatedParameterApi implements IParameterApi {
   }) async {
     await setParameter(kParamFollowerId, leaderDeviceId.toDouble());
     await setParameter(kParamFollowerConfig, followerType.toDouble());
+  }
+
+  // -- FeedForward Slot 0 ---------------------------------------------------
+
+  @override
+  Future<void> setSlot0FfKs(double value) =>
+      setParameter(kParamSlot0FfKs, value);
+
+  @override
+  Future<void> setSlot0FfKv(double value) =>
+      setParameter(kParamSlot0FfKv, value);
+
+  @override
+  Future<void> setSlot0FfKa(double value) =>
+      setParameter(kParamSlot0FfKa, value);
+
+  @override
+  Future<void> setSlot0FfKg(double value) =>
+      setParameter(kParamSlot0FfKg, value);
+
+  @override
+  Future<void> setSlot0FfKcos(double value) =>
+      setParameter(kParamSlot0FfKcos, value);
+
+  @override
+  Future<void> setSlot0FfKcosRatio(double value) =>
+      setParameter(kParamSlot0FfKcosRatio, value);
+
+  @override
+  Future<void> setFeedForwardSlot0({
+    double kS = 0.0,
+    double kV = 0.0,
+    double kA = 0.0,
+    double kG = 0.0,
+    double kCos = 0.0,
+    double kCosRatio = 0.0,
+  }) async {
+    await setSlot0FfKs(kS);
+    await setSlot0FfKv(kV);
+    await setSlot0FfKa(kA);
+    await setSlot0FfKg(kG);
+    await setSlot0FfKcos(kCos);
+    await setSlot0FfKcosRatio(kCosRatio);
+  }
+
+  @override
+  Future<ControllerFeedForward> getFeedForwardSlot0() async {
+    return ControllerFeedForward(
+      kS: await getParameter(kParamSlot0FfKs),
+      kV: await getParameter(kParamSlot0FfKv),
+      kA: await getParameter(kParamSlot0FfKa),
+      kG: await getParameter(kParamSlot0FfKg),
+      kCos: await getParameter(kParamSlot0FfKcos),
+      kCosRatio: await getParameter(kParamSlot0FfKcosRatio),
+    );
   }
 }

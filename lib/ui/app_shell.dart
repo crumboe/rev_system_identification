@@ -10,6 +10,7 @@ import 'screens/device_screen.dart';
 import 'screens/config_screen.dart';
 import 'screens/test_screen.dart';
 import 'screens/results_screen.dart';
+import 'screens/validation_screen.dart';
 
 /// Main application shell with side navigation.
 class AppShell extends ConsumerWidget {
@@ -50,6 +51,11 @@ class AppShell extends ConsumerWidget {
             icon: const Icon(FluentIcons.chart),
             title: const Text('Results'),
             body: const ResultsScreen(),
+          ),
+          PaneItem(
+            icon: const Icon(FluentIcons.test_beaker),
+            title: const Text('Validation'),
+            body: const ValidationScreen(),
           ),
         ],
       ),

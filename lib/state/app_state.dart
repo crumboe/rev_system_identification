@@ -10,6 +10,8 @@ import '../devices/device_manager.dart';
 import '../mechanisms/mechanism.dart';
 import '../data/test_data.dart';
 import '../sysid/test_runner.dart' show TestProgress;
+import '../sysid/validation_runner.dart'
+    show ValidationParams, ValidationResult, ValidationProgress;
 
 // ---------------------------------------------------------------------------
 // Device management
@@ -68,6 +70,10 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
 
   void setMotorInverted(bool inverted) {
     state = state.copyWith(motorInverted: inverted);
+  }
+
+  void setUseImperialUnits(bool imperial) {
+    state = state.copyWith(useImperialUnits: imperial);
   }
 
   void setIsBrushless(bool brushless) {
@@ -174,3 +180,22 @@ final testProgressProvider =
 /// Whether the user has seen the chart walkthrough (per chart key).
 final walkthroughSeenProvider =
     StateProvider.family<bool, String>((ref, chartKey) => false);
+
+// ---------------------------------------------------------------------------
+// Validation test state
+// ---------------------------------------------------------------------------
+
+/// Current validation test parameters.
+final validationParamsProvider =
+    StateProvider<ValidationParams>((ref) => const ValidationParams());
+
+/// Whether a validation test is currently running.
+final validationRunningProvider = StateProvider<bool>((ref) => false);
+
+/// Latest validation progress update.
+final validationProgressProvider =
+    StateProvider<ValidationProgress?>((ref) => null);
+
+/// Latest validation result (null until a test completes).
+final validationResultProvider =
+    StateProvider<ValidationResult?>((ref) => null);

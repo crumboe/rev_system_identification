@@ -79,6 +79,17 @@ class HomeScreen extends ConsumerWidget {
           icon: FluentIcons.chart,
           onTap: () => ref.read(selectedPageProvider.notifier).state = 4,
         ),
+        const SizedBox(height: 8),
+        _StepCard(
+          step: 6,
+          title: 'Validate Gains',
+          description:
+              'Write gains to the controller and run closed-loop step '
+              'response tests to verify performance. Check rise time, '
+              'overshoot, and steady-state error.',
+          icon: FluentIcons.test_beaker,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 5,
+        ),
         const SizedBox(height: 32),
         const InfoBar(
           title: Text('No hardware? No problem!'),

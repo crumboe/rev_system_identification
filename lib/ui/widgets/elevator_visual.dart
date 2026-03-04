@@ -13,22 +13,25 @@ import 'package:fluent_ui/fluent_ui.dart';
 
 /// A live visualization of an elevator mechanism during testing.
 ///
-/// [currentPositionIn] is the current height in inches.
-/// [forwardLimitIn] and [reverseLimitIn] are the soft limits (top/bottom).
+/// [currentPosition] is the current height in user units.
+/// [forwardLimit] and [reverseLimit] are the soft limits (top/bottom).
+/// [unitLabel] is the short label for the position unit (e.g. 'm', 'in').
 /// If [isDraggable] is true, the user can drag the carriage to set position
-/// and [onPositionChanged] is called with the new height in inches.
+/// and [onPositionChanged] is called with the new height.
 class ElevatorVisual extends StatelessWidget {
-  final double currentPositionIn;
-  final double? forwardLimitIn;
-  final double? reverseLimitIn;
+  final double currentPosition;
+  final double? forwardLimit;
+  final double? reverseLimit;
+  final String unitLabel;
   final bool isDraggable;
   final ValueChanged<double>? onPositionChanged;
 
   const ElevatorVisual({
     super.key,
-    required this.currentPositionIn,
-    this.forwardLimitIn,
-    this.reverseLimitIn,
+    required this.currentPosition,
+    this.forwardLimit,
+    this.reverseLimit,
+    this.unitLabel = 'm',
     this.isDraggable = false,
     this.onPositionChanged,
   });
@@ -62,7 +65,7 @@ class ElevatorVisual extends StatelessWidget {
               ],
               const Spacer(),
               Text(
-                '${currentPositionIn.toStringAsFixed(1)} in',
+                '${currentPosition.toStringAsFixed(2)} $unitLabel',
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
@@ -77,9 +80,10 @@ class ElevatorVisual extends StatelessWidget {
               builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
                 final painter = _ElevatorPainter(
-                  positionIn: currentPositionIn,
-                  forwardLimitIn: forwardLimitIn,
-                  reverseLimitIn: reverseLimitIn,
+                  position: currentPosition,
+                  forwardLimit: forwardLimit,
+                  reverseLimit: reverseLimit,
+                  unitLabel: unitLabel,
                   accentColor: theme.accentColor,
                   isDark: theme.brightness == Brightness.dark,
                 );
@@ -114,28 +118,30 @@ class ElevatorVisual extends StatelessWidget {
     final railBottom = size.height * 0.88;
     final railHeight = railBottom - railTop;
 
-    final minIn = reverseLimitIn ?? 0.0;
-    final maxIn = forwardLimitIn ?? 48.0;
+    final minVal = reverseLimit ?? 0.0;
+    final maxVal = forwardLimit ?? 48.0;
 
     // Map Y to position (top = max, bottom = min).
     final frac = ((railBottom - localPos.dy) / railHeight).clamp(0.0, 1.0);
-    final posIn = minIn + frac * (maxIn - minIn);
+    final pos = minVal + frac * (maxVal - minVal);
 
-    onPositionChanged?.call(posIn);
+    onPositionChanged?.call(pos);
   }
 }
 
 class _ElevatorPainter extends CustomPainter {
-  final double positionIn;
-  final double? forwardLimitIn;
-  final double? reverseLimitIn;
+  final double position;
+  final double? forwardLimit;
+  final double? reverseLimit;
+  final String unitLabel;
   final Color accentColor;
   final bool isDark;
 
   _ElevatorPainter({
-    required this.positionIn,
-    this.forwardLimitIn,
-    this.reverseLimitIn,
+    required this.position,
+    this.forwardLimit,
+    this.reverseLimit,
+    this.unitLabel = 'm',
     required this.accentColor,
     required this.isDark,
   });
@@ -154,13 +160,13 @@ class _ElevatorPainter extends CustomPainter {
     final carriageWidth = railRight - railLeft;
 
     // Determine range for mapping position to pixels.
-    final minIn = reverseLimitIn ?? 0.0;
-    final maxIn = forwardLimitIn ?? math.max(48.0, positionIn + 5);
-    final rangeIn = (maxIn - minIn).clamp(1.0, double.infinity);
+    final minVal = reverseLimit ?? 0.0;
+    final maxVal = forwardLimit ?? math.max(48.0, position + 5);
+    final rangeVal = (maxVal - minVal).clamp(1.0, double.infinity);
 
-    // Map position to Y (bottom = minIn, top = maxIn).
-    double posToY(double inches) {
-      final frac = (inches - minIn) / rangeIn;
+    // Map position to Y (bottom = minVal, top = maxVal).
+    double posToY(double v) {
+      final frac = (v - minVal) / rangeVal;
       return railBottom - frac * railHeight;
     }
 
@@ -190,9 +196,9 @@ class _ElevatorPainter extends CustomPainter {
       ..strokeWidth = 1.0;
 
     // Choose a nice tick interval.
-    final tickInterval = _niceInterval(rangeIn, 6);
-    var tickVal = (minIn / tickInterval).ceil() * tickInterval;
-    while (tickVal <= maxIn) {
+    final tickInterval = _niceInterval(rangeVal, 6);
+    var tickVal = (minVal / tickInterval).ceil() * tickInterval;
+    while (tickVal <= maxVal) {
       final y = posToY(tickVal);
       if (y >= railTop - 2 && y <= railBottom + 2) {
         canvas.drawLine(
@@ -202,8 +208,8 @@ class _ElevatorPainter extends CustomPainter {
         );
         _drawText(
           canvas,
-          '${tickVal.toStringAsFixed(0)}"',
-          Offset(railLeft - 36, y - 6),
+          tickVal.toStringAsFixed(unitLabel == 'in' ? 0 : 2),
+          Offset(railLeft - 40, y - 6),
           dimColor,
           9,
         );
@@ -212,19 +218,19 @@ class _ElevatorPainter extends CustomPainter {
     }
 
     // -- Soft limit indicators --
-    if (forwardLimitIn != null) {
-      final y = posToY(forwardLimitIn!);
+    if (forwardLimit != null) {
+      final y = posToY(forwardLimit!);
       _drawLimitLine(canvas, y, railLeft, railRight, 'MAX', fgColor);
     }
-    if (reverseLimitIn != null) {
-      final y = posToY(reverseLimitIn!);
+    if (reverseLimit != null) {
+      final y = posToY(reverseLimit!);
       _drawLimitLine(canvas, y, railLeft, railRight, 'MIN', fgColor);
     }
 
     // -- Range fill --
-    if (forwardLimitIn != null && reverseLimitIn != null) {
-      final topY = posToY(forwardLimitIn!);
-      final botY = posToY(reverseLimitIn!);
+    if (forwardLimit != null && reverseLimit != null) {
+      final topY = posToY(forwardLimit!);
+      final botY = posToY(reverseLimit!);
       final totalH = botY - topY; // pixel height (topY < botY)
 
       // Safety zone boundaries (fraction of total range).
@@ -255,7 +261,7 @@ class _ElevatorPainter extends CustomPainter {
     }
 
     // -- Carriage --
-    final carriageY = posToY(positionIn);
+    final carriageY = posToY(position);
     const carriageH = 14.0;
     final carriageRect = RRect.fromRectAndRadius(
       Rect.fromCenter(
@@ -268,10 +274,10 @@ class _ElevatorPainter extends CustomPainter {
 
     // Determine carriage color based on position within safety zone.
     Color carriageColor = accentColor;
-    if (forwardLimitIn != null && reverseLimitIn != null) {
-      final range = forwardLimitIn! - reverseLimitIn!;
+    if (forwardLimit != null && reverseLimit != null) {
+      final range = forwardLimit! - reverseLimit!;
       if (range > 0) {
-        final frac = (positionIn - reverseLimitIn!) / range;
+        final frac = (position - reverseLimit!) / range;
         if (frac < 0.10 || frac > 0.90) {
           carriageColor = const Color(0xFFDD3333);
         } else if (frac < 0.20 || frac > 0.80) {
@@ -346,7 +352,7 @@ class _ElevatorPainter extends CustomPainter {
     // -- Height label next to carriage --
     _drawText(
       canvas,
-      '${positionIn.toStringAsFixed(1)}"',
+      '${position.toStringAsFixed(unitLabel == 'in' ? 1 : 3)} $unitLabel',
       Offset(railRight + 12, carriageY - 7),
       accentColor,
       12,
@@ -426,9 +432,10 @@ class _ElevatorPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ElevatorPainter old) =>
-      positionIn != old.positionIn ||
-      forwardLimitIn != old.forwardLimitIn ||
-      reverseLimitIn != old.reverseLimitIn ||
+      position != old.position ||
+      forwardLimit != old.forwardLimit ||
+      reverseLimit != old.reverseLimit ||
+      unitLabel != old.unitLabel ||
       isDark != old.isDark;
 }
 

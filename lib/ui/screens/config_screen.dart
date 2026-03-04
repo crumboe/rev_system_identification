@@ -20,14 +20,15 @@ class ConfigScreen extends ConsumerWidget {
     final testParams = ref.watch(testParamsProvider);
     final dm = ref.watch(deviceManagerProvider);
     final device = dm.leader;
-    final isRealHardware =
-        device != null && device.isConnected && !device.isSimulated;
+    final isConnected = device != null && device.isConnected;
 
     return ScaffoldPage.scrollable(
       header: const PageHeader(title: Text('Configuration')),
       children: [
         // Hardware damage warning for gravity-loaded mechanisms
-        if (config.type.requiresSoftLimits)
+        if (config.type.requiresSoftLimits &&
+            device != null &&
+            !device.isSimulated)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
             child: InfoBar(
@@ -77,7 +78,7 @@ class ConfigScreen extends ConsumerWidget {
           content: Text(
             'Gravity: ${config.type.gravityDescription}\n'
             'Soft limits: ${config.type.requiresSoftLimits ? "Required" : "Optional"}\n'
-            'Units: ${config.type.positionUnit} / ${config.type.velocityUnit}',
+            'Units: ${config.positionUnit} / ${config.velocityUnit}',
           ),
           severity: InfoBarSeverity.info,
           isLong: true,
@@ -163,8 +164,17 @@ class ConfigScreen extends ConsumerWidget {
           isLong: true,
         ),
         const SizedBox(height: 8),
+        if (config.type == MechanismType.elevator)
+          _ConfigRow(
+            label: 'Use Imperial Units (inches)',
+            child: ToggleSwitch(
+              checked: config.useImperialUnits,
+              onChanged: (v) => configNotifier.setUseImperialUnits(v),
+              content: Text(config.useImperialUnits ? 'Inches' : 'Meters'),
+            ),
+          ),
         _ConfigRow(
-          label: 'Position (rot → ${config.type.positionUnit})',
+          label: 'Position (rot → ${config.positionUnit})',
           child: SizedBox(
             width: 150,
             child: NumberBox<double>(
@@ -175,7 +185,7 @@ class ConfigScreen extends ConsumerWidget {
           ),
         ),
         _ConfigRow(
-          label: 'Velocity (RPM → ${config.type.velocityUnit})',
+          label: 'Velocity (RPM → ${config.velocityUnit})',
           child: SizedBox(
             width: 150,
             child: NumberBox<double>(
@@ -206,7 +216,7 @@ class ConfigScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           _ConfigRow(
             label:
-                'Forward Limit (${config.type.positionUnit})',
+                'Forward Limit (${config.positionUnit})',
             child: SizedBox(
               width: 150,
               child: NumberBox<double>(
@@ -220,7 +230,7 @@ class ConfigScreen extends ConsumerWidget {
           ),
           _ConfigRow(
             label:
-                'Reverse Limit (${config.type.positionUnit})',
+                'Reverse Limit (${config.positionUnit})',
             child: SizedBox(
               width: 150,
               child: NumberBox<double>(
@@ -265,8 +275,8 @@ class ConfigScreen extends ConsumerWidget {
             ),
           ),
 
-          // Jog panel (only for real connected hardware)
-          if (isRealHardware) ...[
+          // Jog panel for mechanisms with soft limits
+          if (isConnected) ...[
             const SizedBox(height: 12),
             JogPanel(
               device: device,
@@ -277,6 +287,20 @@ class ConfigScreen extends ConsumerWidget {
                   configNotifier.setReverseSoftLimit(pos),
             ),
           ],
+        ],
+
+        // Jog panel for flywheels (no soft limits section, show standalone)
+        if (!config.type.requiresSoftLimits && isConnected) ...[
+          const SizedBox(height: 16),
+          const Text(
+            'Manual Jog',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          JogPanel(
+            device: device,
+            config: config,
+          ),
         ],
 
         const SizedBox(height: 24),

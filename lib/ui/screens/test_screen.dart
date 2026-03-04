@@ -219,7 +219,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                     segments: _liveSegments,
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.velocity,
-                                    yLabel: config.type.velocityUnit,
+                                    yLabel: config.velocityUnit,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -247,7 +247,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                     segments: _liveSegments,
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.position,
-                                    yLabel: config.type.positionUnit,
+                                    yLabel: config.positionUnit,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -286,7 +286,6 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                             ),
                           ),
                           if (device != null &&
-                              !device.isSimulated &&
                               device.isConnected) ...[
                             const SizedBox(height: 4),
                             SizedBox(
@@ -312,15 +311,15 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                         children: [
                           Expanded(
                             child: ElevatorVisual(
-                              currentPositionIn: _currentPosition,
-                              forwardLimitIn: config.forwardSoftLimit,
-                              reverseLimitIn: config.reverseSoftLimit,
+                              currentPosition: _currentPosition,
+                              forwardLimit: config.forwardSoftLimit,
+                              reverseLimit: config.reverseSoftLimit,
+                              unitLabel: config.useImperialUnits ? 'in' : 'm',
                               isDraggable: device != null && device.isSimulated && !_isRunning,
-                              onPositionChanged: (inches) => _onDragPosition(device, config, inches),
+                              onPositionChanged: (pos) => _onDragPosition(device, config, pos),
                             ),
                           ),
                           if (device != null &&
-                              !device.isSimulated &&
                               device.isConnected) ...[
                             const SizedBox(height: 4),
                             SizedBox(
@@ -335,6 +334,22 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                             ),
                           ],
                         ],
+                      ),
+                    ),
+                  ],
+                  // Flywheel: no visual, but show jog panel
+                  if (config.type == MechanismType.flywheel &&
+                      device != null &&
+                      device.isConnected) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 260,
+                      child: JogPanel(
+                        device: device,
+                        config: config,
+                        enabled: !_isRunning,
+                        onPositionChanged: (pos) =>
+                            setState(() => _currentPosition = pos),
                       ),
                     ),
                   ],
@@ -372,7 +387,6 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       _currentTest = testType;
       _liveSegments.clear();
       _startNewSegment();
-      _currentPosition = 0.0;
       _statusMessage = 'Running ${testType.displayName}...';
     });
 
@@ -428,7 +442,6 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       _statusMessage = 'Running full characterization...';
       _liveSegments.clear();
       _startNewSegment();
-      _currentPosition = 0.0;
     });
 
     _runner = TestRunner(
@@ -484,7 +497,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     MechanismConfig config,
     SysIdTestParams testParams,
   ) async {
-    final unit = config.type.positionUnit;
+    final unit = config.positionUnit;
     final status2 = device.connection.lastStatus2;
     final currentPos = status2 != null
         ? (status2.positionRotations * config.positionConversionFactor)

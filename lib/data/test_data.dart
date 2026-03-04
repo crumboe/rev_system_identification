@@ -148,23 +148,25 @@ class FeedforwardGains {
 }
 
 /// Computed PID gains from the identified plant model.
+///
+/// With the new REV FeedForwardConfig API, feedforward (kS, kV, kA, kG)
+/// is configured separately on the controller. PID handles only the
+/// closed-loop error correction.
 class PidResult {
   final double kP;
   final double kI;
   final double kD;
-  final double kF;
 
   const PidResult({
     this.kP = 0.0,
     this.kI = 0.0,
     this.kD = 0.0,
-    this.kF = 0.0,
   });
 
   @override
   String toString() =>
       'PID(P=${kP.toStringAsFixed(6)}, I=${kI.toStringAsFixed(6)}, '
-      'D=${kD.toStringAsFixed(6)}, F=${kF.toStringAsFixed(6)})';
+      'D=${kD.toStringAsFixed(6)})';
 }
 
 /// Complete results from a system identification session.

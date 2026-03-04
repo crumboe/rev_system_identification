@@ -52,11 +52,10 @@ class PidAutoTuner {
     // kD: not typically used for velocity control.
     const kD = 0.0;
 
-    // kF: feedforward in SPARK units (duty cycle per RPM).
-    // V = kV·ω → duty = (kV/nominalVoltage)·ω
-    final kF = ff.kV / nominalVoltage;
+    // Note: feedforward (kS, kV, kA, kG) is now configured separately
+    // via the controller's FeedForwardConfig, not as part of PID.
 
-    return PidResult(kP: kP, kI: kI, kD: kD, kF: kF);
+    return PidResult(kP: kP, kI: kI, kD: kD);
   }
 
   /// Compute PID gains for position control.
@@ -90,10 +89,12 @@ class PidAutoTuner {
     final kP = kPVolts / nominalVoltage;
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
 
-    // No integral or feedforward for position PID.
+    // No integral needed for position PID.
     const kI = 0.0;
-    const kF = 0.0;
 
-    return PidResult(kP: kP, kI: kI, kD: kD, kF: kF);
+    // Note: feedforward (kS, kG/kCos) is configured separately
+    // via the controller's FeedForwardConfig.
+
+    return PidResult(kP: kP, kI: kI, kD: kD);
   }
 }

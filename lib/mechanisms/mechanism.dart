@@ -40,15 +40,29 @@ extension MechanismTypeX on MechanismType {
         MechanismType.flywheel => 'None',
       };
 
-  /// Default position unit label.
+  /// Default position unit label (metric).
   String get positionUnit => switch (this) {
+        MechanismType.arm => 'degrees',
+        MechanismType.elevator => 'meters',
+        MechanismType.flywheel => 'rotations',
+      };
+
+  /// Default velocity unit label (metric).
+  String get velocityUnit => switch (this) {
+        MechanismType.arm => 'deg/s',
+        MechanismType.elevator => 'm/s',
+        MechanismType.flywheel => 'RPM',
+      };
+
+  /// Imperial position unit label.
+  String get positionUnitImperial => switch (this) {
         MechanismType.arm => 'degrees',
         MechanismType.elevator => 'inches',
         MechanismType.flywheel => 'rotations',
       };
 
-  /// Default velocity unit label.
-  String get velocityUnit => switch (this) {
+  /// Imperial velocity unit label.
+  String get velocityUnitImperial => switch (this) {
         MechanismType.arm => 'deg/s',
         MechanismType.elevator => 'in/s',
         MechanismType.flywheel => 'RPM',
@@ -81,6 +95,11 @@ class MechanismConfig {
   /// Only used for arms and elevators.
   final double? reverseSoftLimit;
 
+  /// Use imperial units (inches) instead of metric (meters) for linear
+  /// mechanisms.  Only affects elevator — arm stays in degrees, flywheel in
+  /// rotations/RPM.
+  final bool useImperialUnits;
+
   /// Whether the motor output should be inverted.
   final bool motorInverted;
 
@@ -90,6 +109,16 @@ class MechanismConfig {
   /// Smart current limit in amps.
   final double currentLimitAmps;
 
+  /// Position unit for the current config (respects [useImperialUnits]).
+  String get positionUnit => useImperialUnits
+      ? type.positionUnitImperial
+      : type.positionUnit;
+
+  /// Velocity unit for the current config (respects [useImperialUnits]).
+  String get velocityUnit => useImperialUnits
+      ? type.velocityUnitImperial
+      : type.velocityUnit;
+
   const MechanismConfig({
     required this.type,
     this.gearRatio = 1.0,
@@ -97,6 +126,7 @@ class MechanismConfig {
     this.velocityConversionFactor = 1.0,
     this.forwardSoftLimit,
     this.reverseSoftLimit,
+    this.useImperialUnits = false,
     this.motorInverted = false,
     this.isBrushless = true,
     this.currentLimitAmps = 40.0,
@@ -142,6 +172,7 @@ class MechanismConfig {
     double? velocityConversionFactor,
     double? forwardSoftLimit,
     double? reverseSoftLimit,
+    bool? useImperialUnits,
     bool? motorInverted,
     bool? isBrushless,
     double? currentLimitAmps,
@@ -155,6 +186,7 @@ class MechanismConfig {
           velocityConversionFactor ?? this.velocityConversionFactor,
       forwardSoftLimit: forwardSoftLimit ?? this.forwardSoftLimit,
       reverseSoftLimit: reverseSoftLimit ?? this.reverseSoftLimit,
+      useImperialUnits: useImperialUnits ?? this.useImperialUnits,
       motorInverted: motorInverted ?? this.motorInverted,
       isBrushless: isBrushless ?? this.isBrushless,
       currentLimitAmps: currentLimitAmps ?? this.currentLimitAmps,

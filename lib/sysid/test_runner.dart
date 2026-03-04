@@ -60,7 +60,12 @@ class TestExecutionResult {
     this.errorMessage,
   });
 
-  bool get success => stopReason == TestStopReason.completed;
+  /// A test is successful if it completed normally OR if it ended because
+  /// the mechanism reached a soft limit (which is the expected end condition
+  /// for arm/elevator quasistatic tests).
+  bool get success =>
+      stopReason == TestStopReason.completed ||
+      stopReason == TestStopReason.softLimitReached;
 }
 
 /// Runs system identification tests on a connected SPARK controller.

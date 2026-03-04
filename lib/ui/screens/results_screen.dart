@@ -2,6 +2,8 @@
 /// plots, and export options.
 library;
 
+import 'dart:math' as math;
+
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -109,7 +111,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
-          _GainsTable(ff: _ff!, mechanismType: config.type),
+          _GainsTable(ff: _ff!, config: config),
 
           const SizedBox(height: 24),
 
@@ -145,8 +147,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           // Write to controller button
           if (ref.read(deviceManagerProvider).leader != null)
             FilledButton(
-              onPressed: () => _writePidToController(ref),
-              child: const Text('Write Velocity PID to Controller'),
+              onPressed: () => _writeGainsToController(ref, config.type),
+              child: const Text('Write Gains to Controller'),
             ),
 
           const SizedBox(height: 24),
@@ -162,9 +164,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: _VoltageVelocityPlot(
-                    testRuns: qsRuns,
+                  child: _ModelFitPlot(
+                    testRuns: [...qsRuns, ...dynRuns],
                     ff: _ff!,
+                    mechanismType: config.type,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -252,24 +255,54 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     }
   }
 
-  Future<void> _writePidToController(WidgetRef ref) async {
+  Future<void> _writeGainsToController(WidgetRef ref, MechanismType mechType) async {
     final device = ref.read(deviceManagerProvider).leader;
-    if (device == null || _velPid == null) return;
+    if (device == null || _velPid == null || _ff == null) return;
 
     try {
+      // Write velocity PID gains (kP, kI, kD) to Slot 0.
+      // Set legacy kF to 0 — feedforward is now handled separately.
       await device.parameters.setPidSlot0(
         p: _velPid!.kP,
         i: _velPid!.kI,
         d: _velPid!.kD,
-        f: _velPid!.kF,
+        f: 0.0,
       );
+
+      // Write feedforward gains to Slot 0 FeedForwardConfig.
+      // Map sysid gains to the appropriate controller FF parameters
+      // based on mechanism type.
+      double kG = 0.0;
+      double kCos = 0.0;
+      double kCosRatio = 0.0;
+
+      if (mechType == MechanismType.elevator) {
+        kG = _ff!.kG;
+      } else if (mechType == MechanismType.arm) {
+        kCos = _ff!.kG; // sysid kG maps to kCos for arms
+        // kCosRatio converts user position units to absolute rotations.
+        // Default to 1.0 (assumes encoder already in rotations).
+        kCosRatio = 1.0;
+      }
+
+      await device.parameters.setFeedForwardSlot0(
+        kS: _ff!.kS,
+        kV: _ff!.kV,
+        kA: _ff!.kA,
+        kG: kG,
+        kCos: kCos,
+        kCosRatio: kCosRatio,
+      );
+
       await device.parameters.burnFlash();
 
       if (mounted) {
         await displayInfoBar(context, builder: (ctx, close) {
           return InfoBar(
             title: const Text('Success'),
-            content: const Text('PID gains written to controller and saved to flash.'),
+            content: const Text(
+              'PID + FeedForward gains written to controller and saved to flash.',
+            ),
             severity: InfoBarSeverity.success,
             action: IconButton(
               icon: const Icon(FluentIcons.clear),
@@ -283,7 +316,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         await displayInfoBar(context, builder: (ctx, close) {
           return InfoBar(
             title: const Text('Error'),
-            content: Text('Failed to write PID: $e'),
+            content: Text('Failed to write gains: $e'),
             severity: InfoBarSeverity.error,
             action: IconButton(
               icon: const Icon(FluentIcons.clear),
@@ -336,9 +369,11 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
 
 class _GainsTable extends StatelessWidget {
   final FeedforwardGains ff;
-  final MechanismType mechanismType;
+  final MechanismConfig config;
 
-  const _GainsTable({required this.ff, required this.mechanismType});
+  const _GainsTable({required this.ff, required this.config});
+
+  MechanismType get mechanismType => config.type;
 
   String get _modelEquation {
     if (mechanismType == MechanismType.arm) {
@@ -351,8 +386,8 @@ class _GainsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final posUnit = mechanismType.positionUnit;
-    final velUnit = mechanismType.velocityUnit;
+    final posUnit = config.positionUnit;
+    final velUnit = config.velocityUnit;
 
     return Card(
       child: Column(
@@ -563,7 +598,17 @@ class _PidCardState extends State<_PidCard> {
           _GainRow('kP', widget.pid.kP.toStringAsFixed(6)),
           _GainRow('kI', widget.pid.kI.toStringAsFixed(6)),
           _GainRow('kD', widget.pid.kD.toStringAsFixed(6)),
-          _GainRow('kF', widget.pid.kF.toStringAsFixed(6)),
+          const SizedBox(height: 4),
+          Text(
+            'Feedforward gains (kS, kV, kA, kG) are configured\n'
+            'separately via FeedForwardConfig on the controller.',
+            style: TextStyle(
+              fontSize: 11,
+              color: FluentTheme.of(context).typography.body?.color
+                  ?.withValues(alpha: 0.6),
+              fontStyle: FontStyle.italic,
+            ),
+          ),
           if (_showExplanation && widget.ff != null) ..._buildExplanation(theme),
         ],
       ),
@@ -604,10 +649,6 @@ class _PidCardState extends State<_PidCard> {
               Text('   = (${ff.kA.toStringAsFixed(5)} / 0.100) / 12.0', style: monoStyle),
               Text('   = ${widget.pid.kP.toStringAsFixed(6)}', style: monoStyle),
               const SizedBox(height: 4),
-              Text('kF = kV / V_nominal', style: monoStyle),
-              Text('   = ${ff.kV.toStringAsFixed(5)} / 12.0', style: monoStyle),
-              Text('   = ${widget.pid.kF.toStringAsFixed(6)}', style: monoStyle),
-              const SizedBox(height: 4),
               Text('kI = 0  (avoids integral windup)', style: monoStyle),
               Text('kD = 0  (not needed for velocity)', style: monoStyle),
             ],
@@ -616,8 +657,9 @@ class _PidCardState extends State<_PidCard> {
         const SizedBox(height: 8),
         Text(
           'kP controls how aggressively the controller corrects velocity '
-          'errors. kF is a feedforward term that predicts most of the '
-          'output, so PID only handles small corrections.',
+          'errors. Feedforward (kS, kV) is now configured separately '
+          'via the controller\u2019s FeedForwardConfig and predicts most '
+          'of the output, so PID only handles small corrections.',
           style: captionStyle,
         ),
       ];
@@ -659,7 +701,6 @@ class _PidCardState extends State<_PidCard> {
               Text('   = ${widget.pid.kD.toStringAsFixed(6)}  ${widget.pid.kD == 0 ? "(clamped \u2265 0)" : ""}', style: monoStyle),
               const SizedBox(height: 4),
               Text('kI = 0  (not needed for position)', style: monoStyle),
-              Text('kF = 0  (no velocity feedforward for position)', style: monoStyle),
             ],
           ),
         ),
@@ -676,38 +717,81 @@ class _PidCardState extends State<_PidCard> {
   }
 }
 
-class _VoltageVelocityPlot extends StatefulWidget {
+class _ModelFitPlot extends StatefulWidget {
   final List<TestRun> testRuns;
   final FeedforwardGains ff;
+  final MechanismType mechanismType;
 
-  const _VoltageVelocityPlot({required this.testRuns, required this.ff});
+  const _ModelFitPlot({
+    required this.testRuns,
+    required this.ff,
+    required this.mechanismType,
+  });
 
   @override
-  State<_VoltageVelocityPlot> createState() => _VoltageVelocityPlotState();
+  State<_ModelFitPlot> createState() => _ModelFitPlotState();
 }
 
-class _VoltageVelocityPlotState extends State<_VoltageVelocityPlot> {
+class _ModelFitPlotState extends State<_ModelFitPlot> {
   bool _walkthroughActive = false;
+
+  /// Compute the model-predicted voltage for a single data point.
+  double _predictVoltage(DataPoint dp, DataPoint? prev) {
+    final vel = dp.velocity;
+    final signVel = vel > 0 ? 1.0 : -1.0;
+    double accel = 0.0;
+    if (prev != null) {
+      final dt = dp.timestamp - prev.timestamp;
+      if (dt > 0) accel = (dp.velocity - prev.velocity) / dt;
+    }
+    double gravity = 0.0;
+    if (widget.mechanismType == MechanismType.arm) {
+      gravity = math.cos(dp.position * math.pi / 180.0);
+    } else if (widget.mechanismType == MechanismType.elevator) {
+      gravity = 1.0;
+    }
+    return widget.ff.kS * signVel +
+        widget.ff.kV * vel +
+        widget.ff.kA * accel +
+        widget.ff.kG * gravity;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Scatter plot: voltage vs velocity from quasistatic data
-    final spots = <FlSpot>[];
+    final hasGravity = widget.mechanismType.hasGravity;
+
+    // Build scatter: predicted voltage vs actual voltage,
+    // separated by test type for distinct coloring.
+    final qsSpots = <FlSpot>[];
+    final dynSpots = <FlSpot>[];
     for (final run in widget.testRuns) {
-      for (final dp in run.data) {
-        if (dp.velocity.abs() > 0.01) {
-          spots.add(FlSpot(dp.velocity, dp.voltage));
-        }
+      final data = run.data;
+      final isQs = run.testType.isQuasistatic;
+      for (var i = 0; i < data.length; i++) {
+        final dp = data[i];
+        if (dp.velocity.abs() < 1e-6) continue;
+        final prev = i > 0 ? data[i - 1] : null;
+        final predicted = _predictVoltage(dp, prev);
+        (isQs ? qsSpots : dynSpots).add(FlSpot(predicted, dp.voltage));
       }
     }
 
-    if (spots.isEmpty) {
+    final allSpots = [...qsSpots, ...dynSpots];
+    if (allSpots.isEmpty) {
       return const Card(child: Center(child: Text('No data')));
     }
 
-    // Regression line: V = kS + kV * velocity
-    final minVel = spots.map((s) => s.x).reduce((a, b) => a < b ? a : b);
-    final maxVel = spots.map((s) => s.x).reduce((a, b) => a > b ? a : b);
+    // Range for the y=x reference line
+    final allVals = allSpots.expand((s) => [s.x, s.y]);
+    final lo = allVals.reduce((a, b) => a < b ? a : b);
+    final hi = allVals.reduce((a, b) => a > b ? a : b);
+    final margin = (hi - lo) * 0.05;
+    final lineMin = lo - margin;
+    final lineMax = hi + margin;
+
+    final chartTitle = hasGravity
+        ? 'Predicted vs Actual Voltage (Full Model)'
+        : 'Predicted vs Actual Voltage';
 
     final chart = Card(
       child: Column(
@@ -715,9 +799,10 @@ class _VoltageVelocityPlotState extends State<_VoltageVelocityPlot> {
         children: [
           Row(
             children: [
-              const Expanded(
-                child: Text('Voltage vs Velocity (Quasistatic)',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Expanded(
+                child: Text(chartTitle,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600)),
               ),
               WalkthroughToggle(
                 isActive: _walkthroughActive,
@@ -726,7 +811,30 @@ class _VoltageVelocityPlotState extends State<_VoltageVelocityPlot> {
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          // Legend
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 2),
+            child: Row(
+              children: [
+                Container(width: 8, height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF4488DD), shape: BoxShape.circle)),
+                const SizedBox(width: 4),
+                const Text('Quasistatic', style: TextStyle(fontSize: 9)),
+                const SizedBox(width: 10),
+                Container(width: 8, height: 8,
+                    decoration: BoxDecoration(
+                      color: Colors.orange, shape: BoxShape.circle)),
+                const SizedBox(width: 4),
+                const Text('Dynamic', style: TextStyle(fontSize: 9)),
+                const SizedBox(width: 10),
+                Container(width: 12, height: 2,
+                    color: Colors.successPrimaryColor),
+                const SizedBox(width: 4),
+                const Text('Perfect fit', style: TextStyle(fontSize: 9)),
+              ],
+            ),
+          ),
           Expanded(
             child: LineChart(
               LineChartData(
@@ -735,63 +843,88 @@ class _VoltageVelocityPlotState extends State<_VoltageVelocityPlot> {
                   touchTooltipData: LineTouchTooltipData(
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((spot) {
-                        return LineTooltipItem(
-                          'Vel: ${spot.x.toStringAsFixed(1)}\n'
-                          'V: ${spot.y.toStringAsFixed(2)} V',
-                          const TextStyle(fontSize: 11),
-                        );
+                        if (spot.barIndex <= 1) {
+                          final label = spot.barIndex == 0
+                              ? 'QS' : 'Dyn';
+                          return LineTooltipItem(
+                            '$label — Pred: ${spot.x.toStringAsFixed(2)} V\n'
+                            'Actual: ${spot.y.toStringAsFixed(2)} V',
+                            const TextStyle(fontSize: 11),
+                          );
+                        }
+                        return null;
                       }).toList();
                     },
                   ),
                 ),
                 lineBarsData: [
-                  // Scatter data
-                  LineChartBarData(
-                    spots: spots,
-                    isCurved: false,
-                    color: Colors.blue.withValues(alpha: 0.3),
-                    barWidth: 0,
-                    dotData: FlDotData(
-                      show: true,
-                      getDotPainter: (spot, data, barData, index) =>
-                          FlDotCirclePainter(
-                        radius: 2,
-                        color: Colors.blue,
-                        strokeWidth: 0,
+                  // Quasistatic scatter (blue)
+                  if (qsSpots.isNotEmpty)
+                    LineChartBarData(
+                      spots: qsSpots,
+                      isCurved: false,
+                      color: const Color(0xFF4488DD).withValues(alpha: 0.3),
+                      barWidth: 0,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (spot, data, barData, index) =>
+                            FlDotCirclePainter(
+                          radius: 1.5,
+                          color: const Color(0xFF4488DD),
+                          strokeWidth: 0,
+                        ),
                       ),
                     ),
-                  ),
-                  // Regression line
+                  // Dynamic scatter (orange)
+                  if (dynSpots.isNotEmpty)
+                    LineChartBarData(
+                      spots: dynSpots,
+                      isCurved: false,
+                      color: Colors.orange.withValues(alpha: 0.25),
+                      barWidth: 0,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (spot, data, barData, index) =>
+                            FlDotCirclePainter(
+                          radius: 1.5,
+                          color: Colors.orange,
+                          strokeWidth: 0,
+                        ),
+                      ),
+                    ),
+                  // Perfect fit reference line (y = x)
                   LineChartBarData(
                     spots: [
-                      FlSpot(minVel, widget.ff.kS * minVel.sign + widget.ff.kV * minVel),
-                      FlSpot(maxVel, widget.ff.kS * maxVel.sign + widget.ff.kV * maxVel),
+                      FlSpot(lineMin, lineMin),
+                      FlSpot(lineMax, lineMax),
                     ],
                     isCurved: false,
-                    color: Colors.red,
+                    color: Colors.successPrimaryColor,
                     barWidth: 2,
                     dotData: const FlDotData(show: false),
+                    dashArray: [6, 3],
                   ),
                 ],
                 titlesData: FlTitlesData(
-                  topTitles:
-                      const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles:
-                      const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
                   bottomTitles: AxisTitles(
-                    axisNameWidget: const Text('Velocity',
-                        style: TextStyle(fontSize: 10)),
+                    axisNameWidget: Text(
+                        hasGravity ? 'Predicted Voltage (V)' : 'Velocity',
+                        style: const TextStyle(fontSize: 10)),
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 22,
                       getTitlesWidget: (v, _) => Text(
-                        v.toStringAsFixed(0),
+                        v.toStringAsFixed(1),
                         style: const TextStyle(fontSize: 9),
                       ),
                     ),
                   ),
                   leftTitles: AxisTitles(
-                    axisNameWidget: const Text('Voltage (V)',
+                    axisNameWidget: const Text('Actual Voltage (V)',
                         style: TextStyle(fontSize: 10)),
                     sideTitles: SideTitles(
                       showTitles: true,
@@ -803,7 +936,8 @@ class _VoltageVelocityPlotState extends State<_VoltageVelocityPlot> {
                     ),
                   ),
                 ),
-                gridData: const FlGridData(show: true, drawVerticalLine: false),
+                gridData:
+                    const FlGridData(show: true, drawVerticalLine: false),
                 borderData: FlBorderData(show: false),
               ),
             ),
@@ -814,14 +948,83 @@ class _VoltageVelocityPlotState extends State<_VoltageVelocityPlot> {
 
     return ChartWalkthrough(
       isActive: _walkthroughActive,
-      steps: voltageVelocityWalkthroughSteps(
-        kS: widget.ff.kS,
-        kV: widget.ff.kV,
-        rSquared: widget.ff.rSquared,
-      ),
+      steps: hasGravity
+          ? _gravityModelWalkthroughSteps(
+              ff: widget.ff,
+              mechanismType: widget.mechanismType,
+            )
+          : voltageVelocityWalkthroughSteps(
+              kS: widget.ff.kS,
+              kV: widget.ff.kV,
+              rSquared: widget.ff.rSquared,
+            ),
       onDismiss: () => setState(() => _walkthroughActive = false),
       child: chart,
     );
+  }
+
+  static List<WalkthroughStep> _gravityModelWalkthroughSteps({
+    required FeedforwardGains ff,
+    required MechanismType mechanismType,
+  }) {
+    final gravityDesc = mechanismType == MechanismType.arm
+        ? 'kG\u00b7cos(\u03b8) — the torque needed to hold the arm '
+            'against gravity varies with angle'
+        : 'kG — a constant voltage offset to hold the elevator '
+            'against gravity';
+
+    return [
+      const WalkthroughStep(
+        title: 'What is this chart?',
+        description:
+            'This is a predicted-vs-actual voltage plot. Each dot compares '
+            'the voltage the MODEL predicts is needed vs the voltage that '
+            'was ACTUALLY applied at that instant.\n\n'
+            'If the model were perfect, every dot would sit on the '
+            'dashed green diagonal line (predicted = actual).',
+        icon: FluentIcons.chart,
+      ),
+      WalkthroughStep(
+        title: 'The Full Model',
+        description:
+            'The complete feedforward model is:\n\n'
+            '  V = kS\u00b7sign(\u03c9) + kV\u00b7\u03c9 + kA\u00b7\u03b1 + $gravityDesc\n\n'
+            'A simple voltage-vs-velocity line can\u2019t show the gravity '
+            'term, which is why we plot predicted vs actual instead.',
+        icon: FluentIcons.variable_group,
+      ),
+      WalkthroughStep(
+        title: 'R\u00b2 — Goodness of Fit',
+        description:
+            'R\u00b2 = ${ff.rSquared.toStringAsFixed(4)}.\n\n'
+            'Points tightly clustered around the diagonal = high R\u00b2 '
+            '(good fit). Widely scattered = low R\u00b2.\n\n'
+            'R\u00b2 > 0.95 = excellent\n'
+            'R\u00b2 > 0.90 = good\n'
+            'R\u00b2 < 0.80 = check your configuration',
+        icon: FluentIcons.check_mark,
+      ),
+      WalkthroughStep(
+        title: 'Gravity Compensation',
+        description:
+            'kG = ${ff.kG.toStringAsFixed(4)} V.\n\n'
+            '$gravityDesc.\n\n'
+            'Without kG, all the gravity-related scatter would pull the '
+            'points off the diagonal.',
+        icon: FluentIcons.globe2,
+      ),
+      WalkthroughStep(
+        title: 'What to look for',
+        description:
+            'A good fit shows a tight cloud along the diagonal.\n\n'
+            'If you see a curved band the model may be missing a '
+            'non-linearity. If there\u2019s an offset, check your '
+            'motor inversion or zero offset.\n\n'
+            'Outliers far from the line may indicate binding or '
+            'intermittent faults.',
+        icon: FluentIcons.search,
+      ),
+    ];
   }
 }
 

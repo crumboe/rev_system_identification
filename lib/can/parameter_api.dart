@@ -229,6 +229,57 @@ class ParameterApi implements IParameterApi {
     await setParameter(kParamFollowerId, leaderArbId.toDouble());
     await setParameter(kParamFollowerConfig, followerType.toDouble());
   }
+
+  // -----------------------------------------------------------------------
+  // FeedForward Slot 0
+  // -----------------------------------------------------------------------
+
+  Future<void> setSlot0FfKs(double value) =>
+      setParameter(kParamSlot0FfKs, value);
+
+  Future<void> setSlot0FfKv(double value) =>
+      setParameter(kParamSlot0FfKv, value);
+
+  Future<void> setSlot0FfKa(double value) =>
+      setParameter(kParamSlot0FfKa, value);
+
+  Future<void> setSlot0FfKg(double value) =>
+      setParameter(kParamSlot0FfKg, value);
+
+  Future<void> setSlot0FfKcos(double value) =>
+      setParameter(kParamSlot0FfKcos, value);
+
+  Future<void> setSlot0FfKcosRatio(double value) =>
+      setParameter(kParamSlot0FfKcosRatio, value);
+
+  /// Set all FeedForward Slot 0 values at once.
+  Future<void> setFeedForwardSlot0({
+    double kS = 0.0,
+    double kV = 0.0,
+    double kA = 0.0,
+    double kG = 0.0,
+    double kCos = 0.0,
+    double kCosRatio = 0.0,
+  }) async {
+    await setSlot0FfKs(kS);
+    await setSlot0FfKv(kV);
+    await setSlot0FfKa(kA);
+    await setSlot0FfKg(kG);
+    await setSlot0FfKcos(kCos);
+    await setSlot0FfKcosRatio(kCosRatio);
+  }
+
+  /// Read all FeedForward Slot 0 values.
+  Future<ControllerFeedForward> getFeedForwardSlot0() async {
+    return ControllerFeedForward(
+      kS: await getParameter(kParamSlot0FfKs),
+      kV: await getParameter(kParamSlot0FfKv),
+      kA: await getParameter(kParamSlot0FfKa),
+      kG: await getParameter(kParamSlot0FfKg),
+      kCos: await getParameter(kParamSlot0FfKcos),
+      kCosRatio: await getParameter(kParamSlot0FfKcosRatio),
+    );
+  }
 }
 
 /// Represents a set of PID gains.
@@ -236,7 +287,10 @@ class PidGains {
   final double p;
   final double i;
   final double d;
+
+  /// Legacy velocity feedforward (deprecated — use [ControllerFeedForward]).
   final double f;
+
   final double iZone;
   final double maxOutput;
   final double minOutput;
@@ -255,4 +309,36 @@ class PidGains {
   String toString() =>
       'PidGains(P=$p, I=$i, D=$d, F=$f, IZone=$iZone, '
       'out=[$minOutput, $maxOutput])';
+}
+
+/// Feedforward gains stored on the SPARK controller.
+///
+/// Maps to the new REV `FeedForwardConfig` API:
+///   - [kS]: static friction (V)
+///   - [kV]: velocity gain (V / velocity-unit) — velocity modes only
+///   - [kA]: acceleration gain (V / accel-unit) — MAXMotion only
+///   - [kG]: constant gravity compensation (V) — elevators
+///   - [kCos]: cosine gravity compensation (V) — arms
+///   - [kCosRatio]: degrees-to-rotations ratio for cos() — arms
+class ControllerFeedForward {
+  final double kS;
+  final double kV;
+  final double kA;
+  final double kG;
+  final double kCos;
+  final double kCosRatio;
+
+  const ControllerFeedForward({
+    this.kS = 0.0,
+    this.kV = 0.0,
+    this.kA = 0.0,
+    this.kG = 0.0,
+    this.kCos = 0.0,
+    this.kCosRatio = 0.0,
+  });
+
+  @override
+  String toString() =>
+      'FF(kS=$kS, kV=$kV, kA=$kA, kG=$kG, kCos=$kCos, '
+      'kCosRatio=$kCosRatio)';
 }

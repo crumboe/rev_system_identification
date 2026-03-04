@@ -63,6 +63,23 @@ class ArmVisual extends StatelessWidget {
                   ),
                 ),
               ],
+              if (showZeroTooltip) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message:
+                      'Before testing, position the arm so it is perfectly '
+                      'horizontal, then zero / offset the encoder. '
+                      '0° = horizontal to the ground.',
+                  style: const TooltipThemeData(
+                    waitDuration: Duration(milliseconds: 200),
+                  ),
+                  child: Icon(
+                    FluentIcons.warning,
+                    size: 14,
+                    color: Colors.warningPrimaryColor,
+                  ),
+                ),
+              ],
               const Spacer(),
               Text(
                 '${currentAngleDeg.toStringAsFixed(1)}°',
@@ -106,27 +123,14 @@ class ArmVisual extends StatelessWidget {
               },
             ),
           ),
-          if (showZeroTooltip) ...[
-            const SizedBox(height: 4),
-            const InfoBar(
-              title: Text('Zero your arm'),
-              content: Text(
-                'Before testing, position the arm so it is perfectly '
-                'horizontal, then zero / offset the encoder. '
-                '0° = horizontal to the ground.',
-              ),
-              severity: InfoBarSeverity.warning,
-              isLong: true,
-            ),
-          ],
         ],
       ),
     );
   }
 
   void _handleDrag(Offset localPos, Size size) {
-    // Pivot is at (0.25 * width, 0.55 * height) — same as _ArmPainter.
-    final pivotX = size.width * 0.25;
+    // Pivot is at (0.35 * width, 0.55 * height) — same as _ArmPainter.
+    final pivotX = size.width * 0.35;
     final pivotY = size.height * 0.55;
     final dx = localPos.dx - pivotX;
     final dy = -(localPos.dy - pivotY); // flip Y for math coords
@@ -164,11 +168,12 @@ class _ArmPainter extends CustomPainter {
     final bgColor =
         isDark ? const Color(0xFF2A2A2A) : const Color(0xFFF5F5F5);
 
-    // Layout: pivot at left-center, arm extends right.
-    final pivotX = size.width * 0.25;
+    // Layout: pivot near center-left, arm extends right.
+    // Use 0.35 to keep the background circle and limit labels inside bounds.
+    final pivotX = size.width * 0.35;
     final pivotY = size.height * 0.55;
     final pivot = Offset(pivotX, pivotY);
-    final armLength = math.min(size.width * 0.55, size.height * 0.40);
+    final armLength = math.min(size.width * 0.45, size.height * 0.38);
 
     // -- Background circle (subtle) --
     final bgPaint = Paint()

@@ -15,7 +15,7 @@ import '../../sysid/jog_controller.dart';
 
 /// A compact jog-control panel for manual motor movement.
 ///
-/// [device] must be a connected, non-simulated [SparkDevice].
+/// [device] must be a connected [SparkDevice] (real or simulated).
 /// [config] provides the conversion factors for position display.
 /// [onPositionChanged] is called whenever the polled position changes (in
 /// user units) so the parent can update a visual indicator.
@@ -88,7 +88,7 @@ class _JogPanelState extends State<JogPanel> {
   }
 
   void _onJogDown(double sign) {
-    if (!widget.enabled || widget.device.isSimulated) return;
+    if (!widget.enabled) return;
     _jog?.startJog(sign * _jogVoltage);
     setState(() {});
   }
@@ -102,8 +102,8 @@ class _JogPanelState extends State<JogPanel> {
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
     final isJogging = _jog?.isJogging ?? false;
-    final unit = widget.config.type.positionUnit;
-    final canJog = widget.enabled && !widget.device.isSimulated;
+    final unit = widget.config.positionUnit;
+    final canJog = widget.enabled;
 
     return Card(
       child: Column(
