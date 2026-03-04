@@ -179,12 +179,23 @@ class SysIdTestParams {
   /// Minimum velocity threshold to consider "moving" (user units/s).
   final double velocityThreshold;
 
+  /// Optional current threshold (A) to auto-stop a test.
+  ///
+  /// If non-null and motor current exceeds this value for ~50ms (5
+  /// consecutive samples), the test is stopped with
+  /// [TestStopReason.currentLimitTripped].  Useful for detecting hard-stop
+  /// collisions and stall conditions.
+  ///
+  /// `null` means disabled.
+  final double? currentTripAmps;
+
   const SysIdTestParams({
     this.quasistaticRampRate = 0.25,
     this.dynamicStepVoltage = 7.0,
     this.dynamicStepDuration = 2.0,
     this.maxTestVoltage = 12.0,
     this.velocityThreshold = 0.01,
+    this.currentTripAmps,
   });
 
   /// Default params tuned for each mechanism type.
@@ -195,12 +206,14 @@ class SysIdTestParams {
           dynamicStepVoltage: 4.0,
           dynamicStepDuration: 1.5,
           maxTestVoltage: 8.0,
+          currentTripAmps: 30.0,
         ),
       MechanismType.elevator => const SysIdTestParams(
           quasistaticRampRate: 0.25,
           dynamicStepVoltage: 4.0,
           dynamicStepDuration: 1.5,
           maxTestVoltage: 8.0,
+          currentTripAmps: 30.0,
         ),
       MechanismType.flywheel => const SysIdTestParams(
           quasistaticRampRate: 0.25,
@@ -217,6 +230,7 @@ class SysIdTestParams {
     double? dynamicStepDuration,
     double? maxTestVoltage,
     double? velocityThreshold,
+    double? Function()? currentTripAmps,
   }) {
     return SysIdTestParams(
       quasistaticRampRate: quasistaticRampRate ?? this.quasistaticRampRate,
@@ -224,6 +238,8 @@ class SysIdTestParams {
       dynamicStepDuration: dynamicStepDuration ?? this.dynamicStepDuration,
       maxTestVoltage: maxTestVoltage ?? this.maxTestVoltage,
       velocityThreshold: velocityThreshold ?? this.velocityThreshold,
+      currentTripAmps:
+          currentTripAmps != null ? currentTripAmps() : this.currentTripAmps,
     );
   }
 }

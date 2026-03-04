@@ -176,27 +176,43 @@ class _ArmPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
     canvas.drawCircle(pivot, armLength + 4, bgPaint);
 
-    // -- Range of motion arc --
+    // -- Range of motion arc with safety zones --
     if (forwardLimitDeg != null && reverseLimitDeg != null) {
-      final arcPaint = Paint()
-        ..color = accentColor.withValues(alpha: 0.12)
-        ..style = PaintingStyle.fill;
-
       // Convert to radians (positive angle = CCW from horizontal-right).
       // On screen: positive angle sweeps upward (negative y).
-      final startRad = -forwardLimitDeg! * math.pi / 180.0;
-      final endRad = -reverseLimitDeg! * math.pi / 180.0;
-      final sweepRad = endRad - startRad;
-
+      final fwdRad = -forwardLimitDeg! * math.pi / 180.0;
+      final revRad = -reverseLimitDeg! * math.pi / 180.0;
+      final totalSweep = revRad - fwdRad;
       final arcRect = Rect.fromCircle(center: pivot, radius: armLength);
-      canvas.drawArc(arcRect, startRad, sweepRad, true, arcPaint);
+
+      // Safety zone boundaries (fraction of total range).
+      const redFrac = 0.10;
+      const yellowFrac = 0.20;
+
+      // Draw zones: red (0-10%), yellow (10-20%), green (20-80%),
+      //             yellow (80-90%), red (90-100%).
+      final zones = <_ZoneSpec>[
+        _ZoneSpec(0.0, redFrac, const Color(0x30FF4444)),
+        _ZoneSpec(redFrac, yellowFrac, const Color(0x30FFAA00)),
+        _ZoneSpec(yellowFrac, 1.0 - yellowFrac, const Color(0x2044BB44)),
+        _ZoneSpec(1.0 - yellowFrac, 1.0 - redFrac, const Color(0x30FFAA00)),
+        _ZoneSpec(1.0 - redFrac, 1.0, const Color(0x30FF4444)),
+      ];
+      for (final z in zones) {
+        final zStart = fwdRad + totalSweep * z.start;
+        final zSweep = totalSweep * (z.end - z.start);
+        final zPaint = Paint()
+          ..color = z.color
+          ..style = PaintingStyle.fill;
+        canvas.drawArc(arcRect, zStart, zSweep, true, zPaint);
+      }
 
       // Arc border.
       final arcBorderPaint = Paint()
         ..color = accentColor.withValues(alpha: 0.35)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5;
-      canvas.drawArc(arcRect, startRad, sweepRad, false, arcBorderPaint);
+      canvas.drawArc(arcRect, fwdRad, totalSweep, false, arcBorderPaint);
 
       // Limit labels.
       _drawLimitLabel(
@@ -269,8 +285,24 @@ class _ArmPainter extends CustomPainter {
     final endY = pivotY + armLength * math.sin(angleRad);
     final armEnd = Offset(endX, endY);
 
+    // Determine arm color based on position within safety zone.
+    Color armColor = accentColor;
+    if (forwardLimitDeg != null && reverseLimitDeg != null) {
+      final range = forwardLimitDeg! - reverseLimitDeg!;
+      if (range > 0) {
+        final frac = (angleDeg - reverseLimitDeg!) / range;
+        if (frac < 0.10 || frac > 0.90) {
+          armColor = const Color(0xFFDD3333); // red
+        } else if (frac < 0.20 || frac > 0.80) {
+          armColor = const Color(0xFFDD8800); // yellow/orange
+        } else {
+          armColor = const Color(0xFF44AA44); // green
+        }
+      }
+    }
+
     final armPaint = Paint()
-      ..color = accentColor
+      ..color = armColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4.0
       ..strokeCap = StrokeCap.round;
@@ -278,7 +310,7 @@ class _ArmPainter extends CustomPainter {
 
     // -- Weight at end of arm --
     final weightPaint = Paint()
-      ..color = accentColor
+      ..color = armColor
       ..style = PaintingStyle.fill;
     canvas.drawCircle(armEnd, 7, weightPaint);
 
@@ -388,4 +420,12 @@ class _ArmPainter extends CustomPainter {
       forwardLimitDeg != old.forwardLimitDeg ||
       reverseLimitDeg != old.reverseLimitDeg ||
       isDark != old.isDark;
+}
+
+/// Describes a colored zone within a range (fraction 0..1).
+class _ZoneSpec {
+  final double start;
+  final double end;
+  final Color color;
+  const _ZoneSpec(this.start, this.end, this.color);
 }

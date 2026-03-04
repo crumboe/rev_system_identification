@@ -18,6 +18,7 @@ import '../widgets/arm_visual.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
 import '../widgets/elevator_visual.dart';
+import '../widgets/jog_panel.dart';
 
 class TestScreen extends ConsumerStatefulWidget {
   const TestScreen({super.key});
@@ -273,25 +274,67 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                     const SizedBox(width: 8),
                     SizedBox(
                       width: 260,
-                      child: ArmVisual(
-                        currentAngleDeg: _currentPosition,
-                        forwardLimitDeg: config.forwardSoftLimit,
-                        reverseLimitDeg: config.reverseSoftLimit,
-                        isDraggable: device != null && device.isSimulated && !_isRunning,
-                        onAngleChanged: (deg) => _onDragPosition(device, config, deg),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: ArmVisual(
+                              currentAngleDeg: _currentPosition,
+                              forwardLimitDeg: config.forwardSoftLimit,
+                              reverseLimitDeg: config.reverseSoftLimit,
+                              isDraggable: device != null && device.isSimulated && !_isRunning,
+                              onAngleChanged: (deg) => _onDragPosition(device, config, deg),
+                            ),
+                          ),
+                          if (device != null &&
+                              !device.isSimulated &&
+                              device.isConnected) ...[
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              height: 190,
+                              child: JogPanel(
+                                device: device,
+                                config: config,
+                                enabled: !_isRunning,
+                                onPositionChanged: (pos) =>
+                                    setState(() => _currentPosition = pos),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
                   if (config.type == MechanismType.elevator) ...[
                     const SizedBox(width: 8),
                     SizedBox(
-                      width: 220,
-                      child: ElevatorVisual(
-                        currentPositionIn: _currentPosition,
-                        forwardLimitIn: config.forwardSoftLimit,
-                        reverseLimitIn: config.reverseSoftLimit,
-                        isDraggable: device != null && device.isSimulated && !_isRunning,
-                        onPositionChanged: (inches) => _onDragPosition(device, config, inches),
+                      width: 260,
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: ElevatorVisual(
+                              currentPositionIn: _currentPosition,
+                              forwardLimitIn: config.forwardSoftLimit,
+                              reverseLimitIn: config.reverseSoftLimit,
+                              isDraggable: device != null && device.isSimulated && !_isRunning,
+                              onPositionChanged: (inches) => _onDragPosition(device, config, inches),
+                            ),
+                          ),
+                          if (device != null &&
+                              !device.isSimulated &&
+                              device.isConnected) ...[
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              height: 190,
+                              child: JogPanel(
+                                device: device,
+                                config: config,
+                                enabled: !_isRunning,
+                                onPositionChanged: (pos) =>
+                                    setState(() => _currentPosition = pos),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -318,6 +361,12 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     MechanismConfig config,
     SysIdTestParams testParams,
   ) async {
+    // Pre-test safety confirmation for real hardware
+    if (!device.isSimulated) {
+      final confirmed = await _showPreTestConfirmation(device, config, testParams);
+      if (!confirmed) return;
+    }
+
     setState(() {
       _isRunning = true;
       _currentTest = testType;
@@ -355,8 +404,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
           ? '${testType.displayName} completed — '
               '${result.testRun!.sampleCount} samples in '
               '${result.testRun!.durationSeconds.toStringAsFixed(1)}s'
-          : 'Test stopped: ${result.stopReason.name}'
-              '${result.errorMessage != null ? " — ${result.errorMessage}" : ""}';
+          : result.stopReason == TestStopReason.currentLimitTripped
+              ? '\u26A0 Current limit tripped! Motor stopped for safety.'
+                  '${result.errorMessage != null ? " ${result.errorMessage}" : ""}'
+              : 'Test stopped: ${result.stopReason.name}'
+                  '${result.errorMessage != null ? " — ${result.errorMessage}" : ""}';
     });
   }
 
@@ -365,6 +417,12 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     MechanismConfig config,
     SysIdTestParams testParams,
   ) async {
+    // Pre-test safety confirmation for real hardware
+    if (!device.isSimulated) {
+      final confirmed = await _showPreTestConfirmation(device, config, testParams);
+      if (!confirmed) return;
+    }
+
     setState(() {
       _isRunning = true;
       _statusMessage = 'Running full characterization...';
@@ -419,6 +477,89 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     });
   }
 
+  /// Shows a pre-test safety confirmation dialog for real hardware.
+  /// Returns true if the user confirmed, false if cancelled.
+  Future<bool> _showPreTestConfirmation(
+    SparkDevice device,
+    MechanismConfig config,
+    SysIdTestParams testParams,
+  ) async {
+    final unit = config.type.positionUnit;
+    final status2 = device.connection.lastStatus2;
+    final currentPos = status2 != null
+        ? (status2.positionRotations * config.positionConversionFactor)
+        : null;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return ContentDialog(
+          title: const Text('Pre-Test Safety Check'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const InfoBar(
+                title: Text('Real Hardware Detected'),
+                content: Text(
+                  'The motor will move during this test. Verify the '
+                  'following before proceeding:',
+                ),
+                severity: InfoBarSeverity.warning,
+                isLong: true,
+              ),
+              const SizedBox(height: 12),
+              _checkItem('Area around the mechanism is clear'),
+              _checkItem('Mechanism is free to move within soft limits'),
+              _checkItem(
+                'Soft limits are correctly configured '
+                '(${config.reverseSoftLimit?.toStringAsFixed(1) ?? "?"} $unit '
+                'to ${config.forwardSoftLimit?.toStringAsFixed(1) ?? "?"} $unit)',
+              ),
+              if (currentPos != null)
+                _checkItem(
+                  'Current position: ${currentPos.toStringAsFixed(1)} $unit',
+                ),
+              _checkItem(
+                'Current trip: ${testParams.currentTripAmps != null ? "${testParams.currentTripAmps!.toStringAsFixed(0)} A" : "DISABLED"}',
+              ),
+              if (testParams.currentTripAmps == null &&
+                  config.type.requiresSoftLimits)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: InfoBar(
+                    title: Text('No current protection'),
+                    content: Text(
+                      'Current trip is disabled for a gravity-loaded '
+                      'mechanism. Consider enabling it on the Config page.',
+                    ),
+                    severity: InfoBarSeverity.error,
+                    isLong: true,
+                  ),
+                ),
+              const SizedBox(height: 8),
+              Text(
+                'Max voltage: ${testParams.maxTestVoltage.toStringAsFixed(1)} V',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            Button(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Start Test'),
+            ),
+          ],
+        );
+      },
+    );
+    return result == true;
+  }
+
   void _emergencyStop() {
     _runner?.emergencyStop();
     setState(() {
@@ -444,6 +585,25 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       setState(() => _currentPosition = userUnits);
     }
   }
+}
+
+Widget _checkItem(String text) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 2),
+          child: Icon(FluentIcons.checkbox_composite, size: 14),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text, style: const TextStyle(fontSize: 12)),
+        ),
+      ],
+    ),
+  );
 }
 
 class _TestButton extends StatelessWidget {

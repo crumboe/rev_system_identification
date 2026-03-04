@@ -225,13 +225,33 @@ class _ElevatorPainter extends CustomPainter {
     if (forwardLimitIn != null && reverseLimitIn != null) {
       final topY = posToY(forwardLimitIn!);
       final botY = posToY(reverseLimitIn!);
-      final rangeFill = Paint()
-        ..color = accentColor.withValues(alpha: 0.08)
-        ..style = PaintingStyle.fill;
-      canvas.drawRect(
-        Rect.fromLTRB(railLeft, topY, railRight, botY),
-        rangeFill,
-      );
+      final totalH = botY - topY; // pixel height (topY < botY)
+
+      // Safety zone boundaries (fraction of total range).
+      const redFrac = 0.10;
+      const yellowFrac = 0.20;
+
+      // Draw zones (note: topY = forward/max, botY = reverse/min).
+      // Fraction 0 = reverse (bottom), fraction 1 = forward (top).
+      final zones = <_ElevZone>[
+        _ElevZone(0.0, redFrac, const Color(0x30FF4444)),      // bottom red
+        _ElevZone(redFrac, yellowFrac, const Color(0x30FFAA00)), // bottom yellow
+        _ElevZone(yellowFrac, 1.0 - yellowFrac, const Color(0x2044BB44)), // green
+        _ElevZone(1.0 - yellowFrac, 1.0 - redFrac, const Color(0x30FFAA00)), // top yellow
+        _ElevZone(1.0 - redFrac, 1.0, const Color(0x30FF4444)),   // top red
+      ];
+      for (final z in zones) {
+        // frac=0 → botY, frac=1 → topY
+        final zTop = botY - z.end * totalH;
+        final zBot = botY - z.start * totalH;
+        final zPaint = Paint()
+          ..color = z.color
+          ..style = PaintingStyle.fill;
+        canvas.drawRect(
+          Rect.fromLTRB(railLeft, zTop, railRight, zBot),
+          zPaint,
+        );
+      }
     }
 
     // -- Carriage --
@@ -246,8 +266,24 @@ class _ElevatorPainter extends CustomPainter {
       const Radius.circular(3),
     );
 
+    // Determine carriage color based on position within safety zone.
+    Color carriageColor = accentColor;
+    if (forwardLimitIn != null && reverseLimitIn != null) {
+      final range = forwardLimitIn! - reverseLimitIn!;
+      if (range > 0) {
+        final frac = (positionIn - reverseLimitIn!) / range;
+        if (frac < 0.10 || frac > 0.90) {
+          carriageColor = const Color(0xFFDD3333);
+        } else if (frac < 0.20 || frac > 0.80) {
+          carriageColor = const Color(0xFFDD8800);
+        } else {
+          carriageColor = const Color(0xFF44AA44);
+        }
+      }
+    }
+
     final carriageFill = Paint()
-      ..color = accentColor
+      ..color = carriageColor
       ..style = PaintingStyle.fill;
     canvas.drawRRect(carriageRect, carriageFill);
 
@@ -394,4 +430,12 @@ class _ElevatorPainter extends CustomPainter {
       forwardLimitIn != old.forwardLimitIn ||
       reverseLimitIn != old.reverseLimitIn ||
       isDark != old.isDark;
+}
+
+/// Describes a colored zone within the elevator range (fraction 0..1).
+class _ElevZone {
+  final double start;
+  final double end;
+  final Color color;
+  const _ElevZone(this.start, this.end, this.color);
 }

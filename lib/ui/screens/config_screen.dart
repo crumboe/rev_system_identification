@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
+import '../widgets/jog_panel.dart';
 
 class ConfigScreen extends ConsumerWidget {
   const ConfigScreen({super.key});
@@ -17,10 +18,33 @@ class ConfigScreen extends ConsumerWidget {
     final configNotifier = ref.read(mechanismConfigProvider.notifier);
     final testParamsNotifier = ref.read(testParamsProvider.notifier);
     final testParams = ref.watch(testParamsProvider);
+    final dm = ref.watch(deviceManagerProvider);
+    final device = dm.leader;
+    final isRealHardware =
+        device != null && device.isConnected && !device.isSimulated;
 
     return ScaffoldPage.scrollable(
       header: const PageHeader(title: Text('Configuration')),
       children: [
+        // Hardware damage warning for gravity-loaded mechanisms
+        if (config.type.requiresSoftLimits)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: InfoBar(
+              title: const Text('\u26A0 Hardware Damage Risk'),
+              content: const Text(
+                'Arms and elevators can cause damage to your robot if '
+                'soft limits, gear ratios, or conversion factors are '
+                'incorrect. Always physically support the mechanism '
+                'before powering the motor. Use the Jog controls '
+                'below to verify motion direction and limits before '
+                'running any test.',
+              ),
+              severity: InfoBarSeverity.error,
+              isLong: true,
+            ),
+          ),
+
         // Mechanism type
         const Text(
           'Mechanism Type',
@@ -208,6 +232,51 @@ class ConfigScreen extends ConsumerWidget {
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          Expander(
+            header: const Text('Safe Operation Guide'),
+            content: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _guideStep(1,
+                    'Physically support the mechanism so it cannot '
+                    'fall when power is removed.'),
+                _guideStep(2,
+                    'Connect the device and open this Configuration page.'),
+                _guideStep(3,
+                    'Set Gear Ratio and Conversion Factors to match your '
+                    'mechanical design.'),
+                _guideStep(4,
+                    'Use Jog Forward at LOW voltage (≤1 V) to verify '
+                    'the motor moves in the expected direction. '
+                    'If it moves the wrong way, enable Motor Inverted.'),
+                _guideStep(5,
+                    'Jog to each end of travel and press '
+                    '"Set Limit Here". Set limits 5–10% inside the '
+                    'true mechanical stops to provide a safety margin.'),
+                _guideStep(6,
+                    'Enable Current Trip Protection (30 A default) '
+                    'to auto-stop if the motor stalls against a hard stop.'),
+                _guideStep(7,
+                    'Start with a low Max Test Voltage (4–6 V) for your '
+                    'first test run. Only increase after confirming safe '
+                    'operation.'),
+              ],
+            ),
+          ),
+
+          // Jog panel (only for real connected hardware)
+          if (isRealHardware) ...[
+            const SizedBox(height: 12),
+            JogPanel(
+              device: device,
+              config: config,
+              onSetForwardLimit: (pos) =>
+                  configNotifier.setForwardSoftLimit(pos),
+              onSetReverseLimit: (pos) =>
+                  configNotifier.setReverseSoftLimit(pos),
+            ),
+          ],
         ],
 
         const SizedBox(height: 24),
@@ -270,6 +339,56 @@ class ConfigScreen extends ConsumerWidget {
             ),
           ),
         ),
+        const SizedBox(height: 8),
+        _ConfigRow(
+          label: 'Current Trip Protection',
+          child: Row(
+            children: [
+              ToggleSwitch(
+                checked: testParams.currentTripAmps != null,
+                onChanged: (on) {
+                  testParamsNotifier.setCurrentTripAmps(on ? 30.0 : null);
+                },
+              ),
+              if (testParams.currentTripAmps != null) ...[
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 100,
+                  child: NumberBox<double>(
+                    value: testParams.currentTripAmps,
+                    min: 5.0,
+                    max: 80.0,
+                    onChanged: (v) =>
+                        testParamsNotifier.setCurrentTripAmps(v ?? 30.0),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text('A'),
+              ],
+            ],
+          ),
+        ),
+        if (testParams.currentTripAmps != null)
+          const Padding(
+            padding: EdgeInsets.only(left: 280, top: 2),
+            child: Text(
+              'Auto-stops the test if motor current exceeds this '
+              'threshold for ~50ms. Detects hard-stop collisions and stalls.',
+              style: TextStyle(fontSize: 11),
+            ),
+          ),
+        if (testParams.currentTripAmps == null &&
+            config.type != MechanismType.flywheel)
+          Padding(
+            padding: const EdgeInsets.only(left: 280, top: 2),
+            child: Text(
+              'Consider enabling for gravity-loaded mechanisms.',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.warningPrimaryColor,
+              ),
+            ),
+          ),
 
         const SizedBox(height: 24),
 
@@ -316,4 +435,23 @@ class _ConfigRow extends StatelessWidget {
       ),
     );
   }
+}
+
+Widget _guideStep(int number, String text) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 24,
+          child: Text(
+            '$number.',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        Expanded(child: Text(text, style: const TextStyle(fontSize: 12))),
+      ],
+    ),
+  );
 }

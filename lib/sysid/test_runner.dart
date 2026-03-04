@@ -43,6 +43,7 @@ enum TestStopReason {
   completed,
   userAborted,
   softLimitReached,
+  currentLimitTripped,
   errorOccurred,
   connectionLost,
 }
@@ -220,6 +221,10 @@ class TestRunner {
     TestStopReason stopReason = TestStopReason.completed;
     String? errorMessage;
 
+    // Consecutive over-current sample counter for debounced current trip.
+    int overCurrentCount = 0;
+    const overCurrentThreshold = 5; // ~50ms at 10ms loop rate
+
     try {
       await _prepareController();
 
@@ -268,6 +273,24 @@ class TestRunner {
               stopReason = TestStopReason.softLimitReached;
               break;
             }
+          }
+        }
+
+        // Check current trip (skip first 0.3s — inrush grace period).
+        if (testParams.currentTripAmps != null && elapsedSeconds > 0.3) {
+          final currentAmps =
+              device.connection.lastStatus1?.outputCurrentAmps ?? 0.0;
+          if (currentAmps > testParams.currentTripAmps!) {
+            overCurrentCount++;
+            if (overCurrentCount >= overCurrentThreshold) {
+              stopReason = TestStopReason.currentLimitTripped;
+              errorMessage =
+                  'Current exceeded ${testParams.currentTripAmps!.toStringAsFixed(1)} A '
+                  '(measured ${currentAmps.toStringAsFixed(1)} A)';
+              break;
+            }
+          } else {
+            overCurrentCount = 0;
           }
         }
 

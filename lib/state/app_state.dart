@@ -112,6 +112,10 @@ class TestParamsNotifier extends StateNotifier<SysIdTestParams> {
     state = state.copyWith(maxTestVoltage: voltage);
   }
 
+  void setCurrentTripAmps(double? amps) {
+    state = state.copyWith(currentTripAmps: () => amps);
+  }
+
   void loadDefaults(MechanismType type) {
     state = SysIdTestParams.forMechanism(type);
   }

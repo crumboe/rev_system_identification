@@ -51,6 +51,17 @@ class HomeScreen extends ConsumerWidget {
         const SizedBox(height: 8),
         _StepCard(
           step: 3,
+          title: 'Verify with Jog',
+          description:
+              'Use the Jog controls on the Config page to slowly move the '
+              'mechanism. Verify direction, conversion factors, and set '
+              'soft limits from actual positions.',
+          icon: FluentIcons.game,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 2,
+        ),
+        const SizedBox(height: 8),
+        _StepCard(
+          step: 4,
           title: 'Run Tests',
           description:
               'Execute quasistatic and dynamic tests. The tool will '
@@ -60,7 +71,7 @@ class HomeScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 8),
         _StepCard(
-          step: 4,
+          step: 5,
           title: 'View Results',
           description:
               'Review computed feedforward & PID gains, diagnostic plots, '
@@ -86,7 +97,11 @@ class HomeScreen extends ConsumerWidget {
           title: Text('Safety Notice'),
           content: Text(
             'Always configure soft limits for Arms and Elevators before '
-            'running tests. Keep the area around the mechanism clear. '
+            'running tests. Use the Jog controls to verify motion direction '
+            'and set limits from actual positions. Enable Current Trip '
+            'Protection to auto-stop if the motor stalls against a hard stop. '
+            'Keep the area around the mechanism clear and physically support '
+            'gravity-loaded mechanisms before powering the motor. '
             'Use the Emergency Stop button if anything goes wrong.',
           ),
           severity: InfoBarSeverity.warning,
