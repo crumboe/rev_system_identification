@@ -10,6 +10,7 @@ import 'package:fl_chart/fl_chart.dart';
 
 import '../../data/test_data.dart';
 import '../../data/csv_exporter.dart';
+import '../../data/notebook_exporter.dart';
 import '../../data/report_generator.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
@@ -18,6 +19,7 @@ import '../../sysid/pid_autotuner.dart';
 import '../widgets/bode_plot.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
+import '../widgets/concept_panel.dart';
 import '../widgets/pid_playground.dart';
 import '../widgets/pole_zero_map.dart';
 
@@ -68,6 +70,13 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               label: const Text('Export PDF Report'),
               onPressed: _ff != null
                   ? () => _exportPdf(config, testRuns)
+                  : null,
+            ),
+            CommandBarButton(
+              icon: const Icon(FluentIcons.text_document),
+              label: const Text('Export Notebook'),
+              onPressed: _ff != null
+                  ? () => _exportNotebook(config, testRuns)
                   : null,
             ),
           ],
@@ -297,6 +306,23 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                 ),
               )),
         ],
+
+        // Power visualization
+        if (testRuns.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          const Text(
+            'Energy & Power',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 220,
+            child: _PowerChart(testRuns: testRuns),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+        const ConceptPanel(),
       ],
     );
   }
@@ -749,6 +775,31 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           );
         });
       }
+    }
+  }
+
+  Future<void> _exportNotebook(
+      MechanismConfig config, List<TestRun> testRuns) async {
+    final path = await NotebookExporter.export(
+      config: config,
+      ff: _ff!,
+      velocityPid: _velPid,
+      positionPid: _posPid,
+      testRuns: testRuns,
+      validationResult: ref.read(validationResultProvider),
+    );
+    if (path != null && mounted) {
+      await displayInfoBar(context, builder: (ctx, close) {
+        return InfoBar(
+          title: const Text('Notebook Exported'),
+          content: Text('Saved to $path'),
+          severity: InfoBarSeverity.success,
+          action: IconButton(
+            icon: const Icon(FluentIcons.chrome_close),
+            onPressed: close,
+          ),
+        );
+      });
     }
   }
 }
@@ -1790,6 +1841,143 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
       steps: stepResponseWalkthroughSteps(),
       onDismiss: () => setState(() => _walkthroughActive = false),
       child: chart,
+    );
+  }
+}
+
+class _PowerChart extends StatelessWidget {
+  final List<TestRun> testRuns;
+
+  static const _colors = [
+    Color(0xFF2196F3), // blue
+    Color(0xFFFF9800), // orange
+    Color(0xFF009688), // teal
+    Color(0xFFE91E63), // magenta
+  ];
+
+  const _PowerChart({required this.testRuns});
+
+  @override
+  Widget build(BuildContext context) {
+    double peakPower = 0;
+    double totalPower = 0;
+    int totalPoints = 0;
+
+    final lineBars = <LineChartBarData>[];
+    for (var i = 0; i < testRuns.length; i++) {
+      final run = testRuns[i];
+      final spots = <FlSpot>[];
+      for (final dp in run.data) {
+        final p = (dp.voltage * dp.current).abs();
+        spots.add(FlSpot(dp.timestamp, p));
+        if (p > peakPower) peakPower = p;
+        totalPower += p;
+        totalPoints++;
+      }
+      if (spots.isEmpty) continue;
+      lineBars.add(LineChartBarData(
+        spots: spots,
+        isCurved: false,
+        color: _colors[i % _colors.length],
+        barWidth: 1.5,
+        dotData: const FlDotData(show: false),
+      ));
+    }
+
+    final avgPower = totalPoints > 0 ? totalPower / totalPoints : 0.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _PowerStat(label: 'Peak Power', value: '${peakPower.toStringAsFixed(1)} W'),
+            const SizedBox(width: 16),
+            _PowerStat(label: 'Avg Power', value: '${avgPower.toStringAsFixed(1)} W'),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: lineBars.isEmpty
+              ? const Card(child: Center(child: Text('No data')))
+              : Card(
+                  child: LineChart(
+                    LineChartData(
+                      lineBarsData: lineBars,
+                      titlesData: FlTitlesData(
+                        topTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false)),
+                        rightTitles: const AxisTitles(
+                            sideTitles: SideTitles(showTitles: false)),
+                        bottomTitles: AxisTitles(
+                          axisNameWidget: const Text('Time (s)',
+                              style: TextStyle(fontSize: 10)),
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 22,
+                            getTitlesWidget: (v, _) => Text(
+                              v.toStringAsFixed(1),
+                              style: const TextStyle(fontSize: 9),
+                            ),
+                          ),
+                        ),
+                        leftTitles: AxisTitles(
+                          axisNameWidget: const Text('Power (W)',
+                              style: TextStyle(fontSize: 10)),
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 44,
+                            getTitlesWidget: (v, _) => Text(
+                              v.toStringAsFixed(0),
+                              style: const TextStyle(fontSize: 9),
+                            ),
+                          ),
+                        ),
+                      ),
+                      gridData:
+                          const FlGridData(show: true, drawVerticalLine: false),
+                      borderData: FlBorderData(show: false),
+                      lineTouchData: LineTouchData(
+                        touchTooltipData: LineTouchTooltipData(
+                          getTooltipItems: (spots) => spots
+                              .map((s) => LineTooltipItem(
+                                    't: ${s.x.toStringAsFixed(2)}s\n'
+                                    '${s.y.toStringAsFixed(1)} W',
+                                    const TextStyle(fontSize: 10),
+                                  ))
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PowerStat extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _PowerStat({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 11)),
+            Text(value,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 14)),
+          ],
+        ),
+      ),
     );
   }
 }
