@@ -248,6 +248,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       // Store in global state for other screens.
       ref.read(feedforwardGainsProvider.notifier).state = ff;
       ref.read(pidResultProvider.notifier).state = velPid;
+      ref.read(posPidResultProvider.notifier).state = posPid;
     } catch (e) {
       setState(() {
         _analysisError = e.toString();
@@ -257,38 +258,48 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
 
   Future<void> _writeGainsToController(WidgetRef ref, MechanismType mechType) async {
     final device = ref.read(deviceManagerProvider).leader;
+    final config = ref.read(mechanismConfigProvider);
     if (device == null || _velPid == null || _ff == null) return;
 
+    // Conversion factors scale user-unit gains → native controller units.
+    // The SPARK CAN protocol always uses RPM for velocity setpoints and
+    // rotations for position setpoints.  All stored gains from the regression
+    // are in user units, so they must be scaled before being written.
+    final vcf = config.velocityConversionFactor; // user_vel per RPM
+    final pcf = config.positionConversionFactor; // user_pos per rotation
+
     try {
-      // Write velocity PID gains (kP, kI, kD) to Slot 0.
-      // Set legacy kF to 0 — feedforward is now handled separately.
+      // Write velocity PID gains (kP, kI, kD) to Slot 0, scaled to native
+      // RPM units.  kP_native = kP_user × VCF (error in RPM → duty cycle).
       await device.parameters.setPidSlot0(
-        p: _velPid!.kP,
-        i: _velPid!.kI,
-        d: _velPid!.kD,
+        p: _velPid!.kP * vcf,
+        i: _velPid!.kI * vcf,
+        d: _velPid!.kD * vcf,
         f: 0.0,
       );
 
       // Write feedforward gains to Slot 0 FeedForwardConfig.
-      // Map sysid gains to the appropriate controller FF parameters
-      // based on mechanism type.
+      // kV and kA are scaled by VCF to convert V/(user_vel) → V/RPM.
+      // kS, kG, kCos are in Volts — no scaling needed.
       double kG = 0.0;
       double kCos = 0.0;
+      // kCosRatio converts encoder rotations to the correct angle for the
+      // cosine gravity term: cos(posRot × kCosRatio × 2π).
+      // We need kCosRatio such that posRot × kCosRatio × 2π = angleDeg × π/180,
+      // i.e. kCosRatio = PCF / 360.
       double kCosRatio = 0.0;
 
       if (mechType == MechanismType.elevator) {
         kG = _ff!.kG;
       } else if (mechType == MechanismType.arm) {
         kCos = _ff!.kG; // sysid kG maps to kCos for arms
-        // kCosRatio converts user position units to absolute rotations.
-        // Default to 1.0 (assumes encoder already in rotations).
-        kCosRatio = 1.0;
+        kCosRatio = pcf / 360.0;
       }
 
       await device.parameters.setFeedForwardSlot0(
         kS: _ff!.kS,
-        kV: _ff!.kV,
-        kA: _ff!.kA,
+        kV: _ff!.kV * vcf,
+        kA: _ff!.kA * vcf,
         kG: kG,
         kCos: kCos,
         kCosRatio: kCosRatio,

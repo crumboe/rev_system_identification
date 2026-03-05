@@ -98,12 +98,18 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     final device = dm.leader;
     final ff = ref.watch(feedforwardGainsProvider);
     final velPid = ref.watch(pidResultProvider);
+    final posPid = ref.watch(posPidResultProvider);
 
     final hasGains = ff != null && velPid != null;
-    final canRun = device != null &&
+    final hasPositionGains = ff != null && posPid != null;
+    final canRunVelocity = device != null &&
         device.isConnected &&
         !_isRunning &&
         hasGains;
+    final canRunPosition = device != null &&
+        device.isConnected &&
+        !_isRunning &&
+        hasPositionGains;
 
     // Unit labels
     final velUnit = config.velocityUnit;
@@ -158,8 +164,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton(
-                  onPressed: canRun
-                      ? () => _runTest(ValidationMode.velocity, config, device)
+                  onPressed: canRunVelocity
+                      ? () => _runTest(ValidationMode.velocity, config, device, ff: ff, velPid: velPid, posPid: posPid)
                       : null,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -192,9 +198,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   ),
                   const SizedBox(width: 12),
                   FilledButton(
-                    onPressed: canRun
+                    onPressed: canRunPosition
                         ? () =>
-                            _runTest(ValidationMode.position, config, device)
+                            _runTest(ValidationMode.position, config, device, ff: ff, velPid: velPid, posPid: posPid)
                         : null,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -425,8 +431,11 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   Future<void> _runTest(
     ValidationMode mode,
     MechanismConfig config,
-    SparkDevice device,
-  ) async {
+    SparkDevice device, {
+    FeedforwardGains? ff,
+    PidResult? velPid,
+    PidResult? posPid,
+  }) async {
     final velSp = double.tryParse(_velSpCtrl.text);
     final posSp = double.tryParse(_posSpCtrl.text);
 
@@ -463,6 +472,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _runner = ValidationRunner(
       device: device,
       mechanismConfig: config,
+      feedforwardGains: ff,
+      velocityPidGains: velPid,
+      positionPidGains: posPid,
     );
 
     try {
