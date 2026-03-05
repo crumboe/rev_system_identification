@@ -372,12 +372,12 @@ class _SPlanePainter extends CustomPainter {
       final color = pole.isStable ? _stablePoleColor : _unstablePoleColor;
       _drawXMarker(canvas, Offset(px, py), color);
 
-      // Annotate wn and zeta for complex poles
+      // Annotate natural frequency (wn) and damping ratio (zeta) for complex poles
       if (pole.im.abs() > 1e-6 && pole.im > 0) {
-        final wn = pole.wn;
-        final zeta = pole.zeta;
+        final naturalFrequency = pole.wn; // rad/s
+        final dampingRatio = pole.zeta; // dimensionless (0=undamped, 1=critically damped)
         final annotation =
-            'wn=${wn.toStringAsFixed(1)}\nzeta=${zeta.toStringAsFixed(2)}';
+            'wn=${naturalFrequency.toStringAsFixed(1)}\nzeta=${dampingRatio.toStringAsFixed(2)}';
         final annotStyle = TextStyle(
             color: color.withValues(alpha: 0.85), fontSize: 9);
         _drawLabel(canvas, annotation, Offset(px + 6, py - 18), annotStyle,
