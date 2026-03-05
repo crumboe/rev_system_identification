@@ -27,15 +27,38 @@ jobs:
       - name: Build Windows executable
         run: flutter build windows --release
 
-      - name: Read version and package as ZIP
+      - name: Determine next version
+        id: version
+        shell: pwsh
+        run: |
+          # Fetch all tags so we can find the latest vX.Y.Z
+          git fetch --tags --force
+
+          # Find the highest semver tag matching v*.*.*
+          $tags = git tag -l 'v*' | Where-Object { $_ -match '^v(\d+)\.(\d+)\.(\d+)$' }
+          if ($tags) {
+            $latest = $tags | Sort-Object {
+              $_ -match '^v(\d+)\.(\d+)\.(\d+)$' | Out-Null
+              [int]$Matches[1] * 10000 + [int]$Matches[2] * 100 + [int]$Matches[3]
+            } | Select-Object -Last 1
+
+            $latest -match '^v(\d+)\.(\d+)\.(\d+)$' | Out-Null
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            $patch = [int]$Matches[3] + 1
+            $nextVersion = "$major.$minor.$patch"
+          } else {
+            $nextVersion = "1.0.0"
+          }
+
+          echo "Next version: $nextVersion"
+          echo "version=$nextVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Package as ZIP
         id: package_info
         shell: pwsh
         run: |
-          $content = Get-Content pubspec.yaml -Raw
-          if ($content -match 'version:\s+(\S+)') {
-            $version = $matches[1].Split('+')[0]
-            echo "version=$version" >> $env:GITHUB_OUTPUT
-          }
+          $version = "${{ steps.version.outputs.version }}"
 
           $buildDir = "build\windows\x64\runner\Release"
           if (-not (Test-Path $buildDir)) {
@@ -48,8 +71,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.package_info.outputs.version }}
-          name: Release v${{ steps.package_info.outputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
           files: ${{ steps.package_info.outputs.zip_path }}
           generate_release_notes: true
           make_latest: true
