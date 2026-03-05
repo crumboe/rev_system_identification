@@ -183,7 +183,7 @@ class DeviceManager {
 
     final heartbeat = SimulatedHeartbeatManager();
     final parameters = SimulatedParameterApi();
-    final control = SimulatedControlApi(physics);
+    final control = SimulatedControlApi(physics, parameters);
 
     // Wire up closed-loop PID+FF controller for the simulation.
     final pidFf = SimulatedPidFfController(parameters, physics);

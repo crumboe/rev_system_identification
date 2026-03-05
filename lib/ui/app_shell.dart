@@ -20,6 +20,11 @@ class AppShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedIndex = ref.watch(selectedPageProvider);
 
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark ||
+        (themeMode == ThemeMode.system &&
+            MediaQuery.platformBrightnessOf(context) == Brightness.dark);
+
     return NavigationView(
       pane: NavigationPane(
         selected: selectedIndex,
@@ -56,6 +61,16 @@ class AppShell extends ConsumerWidget {
             icon: const Icon(FluentIcons.test_beaker),
             title: const Text('Validation'),
             body: const ValidationScreen(),
+          ),
+        ],
+        footerItems: [
+          PaneItemAction(
+            icon: Icon(isDark ? FluentIcons.sunny : FluentIcons.clear_night),
+            title: Text(isDark ? 'Light Mode' : 'Dark Mode'),
+            onTap: () {
+              ref.read(themeModeProvider.notifier).state =
+                  isDark ? ThemeMode.light : ThemeMode.dark;
+            },
           ),
         ],
       ),

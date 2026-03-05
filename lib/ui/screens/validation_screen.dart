@@ -17,6 +17,7 @@ import '../../mechanisms/mechanism.dart';
 import '../../simulation/simulated_device.dart';
 import '../../state/app_state.dart';
 import '../../sysid/validation_runner.dart';
+import '../../can/spark_protocol.dart';
 import '../widgets/arm_visual.dart';
 import '../widgets/elevator_visual.dart';
 import '../widgets/jog_panel.dart';
@@ -51,6 +52,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   late TextEditingController _velSpCtrl;
   late TextEditingController _posSpCtrl;
 
+  // MAXMotion configuration controllers
+  late TextEditingController _mmCruiseCtrl;
+  late TextEditingController _mmAccelCtrl;
+  late TextEditingController _mmJerkCtrl;
+  late TextEditingController _mmErrorCtrl;
+  int _mmPositionMode = kMAXMotionPositionModeTrapezoidal;
+  bool _mmExpanded = false;
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +73,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _posSpCtrl =
         TextEditingController(text: defaults.positionSetpoint.toString());
 
+    // Sensible MAXMotion defaults based on mechanism type.
+    _mmCruiseCtrl = TextEditingController(
+        text: (defaults.velocitySetpoint * 0.5).toStringAsFixed(1));
+    _mmAccelCtrl = TextEditingController(
+        text: (defaults.velocitySetpoint * 2.0).toStringAsFixed(1));
+    _mmJerkCtrl = TextEditingController(text: '0');
+    _mmErrorCtrl = TextEditingController(text: '0.05');
+
     _positionPollTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => _pollPosition(),
@@ -75,6 +92,10 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _positionPollTimer?.cancel();
     _velSpCtrl.dispose();
     _posSpCtrl.dispose();
+    _mmCruiseCtrl.dispose();
+    _mmAccelCtrl.dispose();
+    _mmJerkCtrl.dispose();
+    _mmErrorCtrl.dispose();
     super.dispose();
   }
 
@@ -110,6 +131,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
         device.isConnected &&
         !_isRunning &&
         hasPositionGains;
+    final canRunMAXMotion = canRunPosition;
 
     // Unit labels
     final velUnit = config.velocityUnit;
@@ -239,7 +261,132 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                 ],
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+
+            // MAXMotion configuration panel
+            Expander(
+              header: Row(
+                children: [
+                  const Icon(FluentIcons.rocket, size: 14),
+                  const SizedBox(width: 8),
+                  const Text('MAXMotion Profile',
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 12),
+                  FilledButton(
+                    onPressed: canRunMAXMotion
+                        ? () => _runTest(
+                            ValidationMode.maxMotionPosition,
+                            config,
+                            device!,
+                            ff: ff,
+                            velPid: velPid,
+                            posPid: posPid)
+                        : null,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_isRunning &&
+                            _lastMode == ValidationMode.maxMotionPosition)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 6),
+                            child: SizedBox(
+                                width: 12,
+                                height: 12,
+                                child: ProgressRing(strokeWidth: 2)),
+                          ),
+                        const Text('Run MAXMotion Test'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              initiallyExpanded: _mmExpanded,
+              onStateChanged: (open) {
+                setState(() => _mmExpanded = open);
+              },
+              content: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 140,
+                      child: InfoLabel(
+                        label: 'Cruise vel ($velUnit)',
+                        child: TextBox(
+                          controller: _mmCruiseCtrl,
+                          enabled: !_isRunning,
+                          placeholder: velUnit,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 140,
+                      child: InfoLabel(
+                        label: 'Max accel ($velUnit/s)',
+                        child: TextBox(
+                          controller: _mmAccelCtrl,
+                          enabled: !_isRunning,
+                          placeholder: '$velUnit/s',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 140,
+                      child: InfoLabel(
+                        label: 'Max jerk ($velUnit/s\u00b2)',
+                        child: TextBox(
+                          controller: _mmJerkCtrl,
+                          enabled: !_isRunning,
+                          placeholder: '0 = trapezoidal',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 120,
+                      child: InfoLabel(
+                        label: 'Allowed error ($posUnit)',
+                        child: TextBox(
+                          controller: _mmErrorCtrl,
+                          enabled: !_isRunning,
+                          placeholder: posUnit,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 140,
+                      child: InfoLabel(
+                        label: 'Profile mode',
+                        child: ComboBox<int>(
+                          value: _mmPositionMode,
+                          items: const [
+                            ComboBoxItem(
+                              value: 0,
+                              child: Text('Trapezoidal'),
+                            ),
+                            ComboBoxItem(
+                              value: 1,
+                              child: Text('S-Curve'),
+                            ),
+                          ],
+                          onChanged: _isRunning
+                              ? null
+                              : (v) {
+                                  if (v != null) {
+                                    setState(
+                                        () => _mmPositionMode = v);
+                                  }
+                                },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
             // Live charts + mechanism visual
             Expanded(
@@ -295,9 +442,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                                   yExtractor: (dp) => dp.position,
                                   showSetpoint:
                                       _result?.mode == ValidationMode.position ||
+                                          _result?.mode ==
+                                              ValidationMode.maxMotionPosition ||
                                           (_isRunning &&
-                                              _lastMode ==
-                                                  ValidationMode.position),
+                                              (_lastMode ==
+                                                      ValidationMode.position ||
+                                                  _lastMode ==
+                                                      ValidationMode
+                                                          .maxMotionPosition)),
                                   yLabel: posUnit,
                                 ),
                               ),
@@ -443,9 +595,31 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       setState(() => _error = 'Invalid velocity setpoint.');
       return;
     }
-    if (mode == ValidationMode.position && (posSp == null)) {
+    if ((mode == ValidationMode.position ||
+            mode == ValidationMode.maxMotionPosition) &&
+        (posSp == null)) {
       setState(() => _error = 'Invalid position setpoint.');
       return;
+    }
+
+    // Build MAXMotion config if running a profiled test.
+    MAXMotionConfig? maxMotionConfig;
+    if (mode == ValidationMode.maxMotionPosition) {
+      final cruise = double.tryParse(_mmCruiseCtrl.text);
+      final accel = double.tryParse(_mmAccelCtrl.text);
+      final jerk = double.tryParse(_mmJerkCtrl.text);
+      final error = double.tryParse(_mmErrorCtrl.text);
+      if (cruise == null || accel == null || cruise <= 0 || accel <= 0) {
+        setState(() => _error = 'Invalid MAXMotion cruise velocity or max acceleration.');
+        return;
+      }
+      maxMotionConfig = MAXMotionConfig(
+        cruiseVelocity: cruise,
+        maxAcceleration: accel,
+        maxJerk: jerk ?? 0,
+        allowedError: error ?? 0,
+        positionMode: _mmPositionMode,
+      );
     }
 
     final params = ValidationParams(
@@ -453,6 +627,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       positionSetpoint: posSp ?? 0,
       holdDuration: 3.0,
       settleDuration: mode == ValidationMode.velocity ? 2.0 : 1.0,
+      maxMotionConfig: maxMotionConfig,
     );
 
     setState(() {
@@ -465,8 +640,11 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       _statusMessage = mode == ValidationMode.velocity
           ? 'Running velocity step test — setpoint: '
               '${velSp?.toStringAsFixed(1)} ${config.velocityUnit} ...'
-          : 'Running position step test — setpoint: '
-              '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...';
+          : mode == ValidationMode.maxMotionPosition
+              ? 'Running MAXMotion position test — target: '
+                  '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...'
+              : 'Running position step test — setpoint: '
+                  '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...';
     });
 
     _runner = ValidationRunner(
@@ -478,15 +656,23 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     );
 
     try {
-      final result = mode == ValidationMode.velocity
-          ? await _runner!.runVelocityTest(
-              params: params,
-              onProgress: _onProgress,
-            )
-          : await _runner!.runPositionTest(
-              params: params,
-              onProgress: _onProgress,
-            );
+      late final ValidationResult result;
+      if (mode == ValidationMode.velocity) {
+        result = await _runner!.runVelocityTest(
+          params: params,
+          onProgress: _onProgress,
+        );
+      } else if (mode == ValidationMode.maxMotionPosition) {
+        result = await _runner!.runMAXMotionPositionTest(
+          params: params,
+          onProgress: _onProgress,
+        );
+      } else {
+        result = await _runner!.runPositionTest(
+          params: params,
+          onProgress: _onProgress,
+        );
+      }
 
       if (mounted) {
         setState(() {
@@ -518,13 +704,15 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       _liveData.add(DataPoint(
         timestamp: p.elapsedSeconds,
         voltage: p.voltage,
-        velocity: _lastMode == ValidationMode.velocity ? p.measured : 0,
-        position: _lastMode == ValidationMode.position ? p.measured : 0,
+        velocity: p.velocity,
+        position: p.position,
         current: p.current,
       ));
       _liveSetpoints.add(p.setpoint);
+      final isPositionMode = _lastMode == ValidationMode.position ||
+          _lastMode == ValidationMode.maxMotionPosition;
       _currentPosition =
-          _lastMode == ValidationMode.position ? p.measured : _currentPosition;
+          isPositionMode ? p.position : _currentPosition;
     });
   }
 
@@ -567,8 +755,11 @@ class _MetricsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final modeLabel =
-        result.mode == ValidationMode.velocity ? 'Velocity' : 'Position';
+    final modeLabel = switch (result.mode) {
+      ValidationMode.velocity => 'Velocity',
+      ValidationMode.position => 'Position',
+      ValidationMode.maxMotionPosition => 'MAXMotion Position',
+    };
 
     return Card(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

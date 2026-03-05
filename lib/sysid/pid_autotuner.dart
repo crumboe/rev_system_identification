@@ -55,7 +55,12 @@ class PidAutoTuner {
     // Note: feedforward (kS, kV, kA, kG) is now configured separately
     // via the controller's FeedForwardConfig, not as part of PID.
 
-    return PidResult(kP: kP, kI: kI, kD: kD);
+    return PidResult(
+      kP: kP,
+      kI: kI,
+      kD: kD,
+      velocityTimeConstantMs: desiredTimeConstantMs,
+    );
   }
 
   /// Compute PID gains for position control.
@@ -95,6 +100,11 @@ class PidAutoTuner {
     // Note: feedforward (kS, kG/kCos) is configured separately
     // via the controller's FeedForwardConfig.
 
-    return PidResult(kP: kP, kI: kI, kD: kD);
+    return PidResult(
+      kP: kP,
+      kI: kI,
+      kD: kD,
+      positionBandwidthHz: desiredBandwidthHz,
+    );
   }
 }

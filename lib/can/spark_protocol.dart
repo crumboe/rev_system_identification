@@ -169,6 +169,17 @@ const int kParamSlot1FfKg = 211; // c_Spark_kG_1
 const int kParamSlot1FfKcos = 212; // c_Spark_kCos_1
 const int kParamSlot1FfKcosRatio = 213; // c_Spark_kCosRatio_1
 
+// MAXMotion Slot 0 (IDs 166–170)
+const int kParamMAXMotionCruiseVelocity0 = 166; // c_Spark_kMAXMotionCruiseVelocity_0
+const int kParamMAXMotionMaxAccel0 = 167;       // c_Spark_kMAXMotionMaxAccel_0
+const int kParamMAXMotionMaxJerk0 = 168;         // c_Spark_kMAXMotionMaxJerk_0
+const int kParamMAXMotionAllowedError0 = 169;    // c_Spark_kMAXMotionAllowedProfileError_0
+const int kParamMAXMotionPositionMode0 = 170;    // c_Spark_kMAXMotionPositionMode_0
+
+// MAXMotion position modes
+const int kMAXMotionPositionModeTrapezoidal = 0;
+const int kMAXMotionPositionModeSCurve = 1;
+
 // Idle modes
 const int kIdleModeCoast = 0;
 const int kIdleModeBrake = 1;

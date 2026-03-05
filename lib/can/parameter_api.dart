@@ -280,6 +280,45 @@ class ParameterApi implements IParameterApi {
       kCosRatio: await getParameter(kParamSlot0FfKcosRatio),
     );
   }
+
+  // -----------------------------------------------------------------------
+  // MAXMotion Slot 0
+  // -----------------------------------------------------------------------
+
+  /// Set cruise velocity for MAXMotion Slot 0 (in RPM).
+  Future<void> setMAXMotionCruiseVelocity(double value) =>
+      setParameter(kParamMAXMotionCruiseVelocity0, value);
+
+  /// Set maximum acceleration for MAXMotion Slot 0 (in RPM/s).
+  Future<void> setMAXMotionMaxAccel(double value) =>
+      setParameter(kParamMAXMotionMaxAccel0, value);
+
+  /// Set maximum jerk for MAXMotion Slot 0 (in RPM/s², 0 = trapezoidal).
+  Future<void> setMAXMotionMaxJerk(double value) =>
+      setParameter(kParamMAXMotionMaxJerk0, value);
+
+  /// Set allowed closed-loop error for MAXMotion Slot 0 (in rotations).
+  Future<void> setMAXMotionAllowedError(double value) =>
+      setParameter(kParamMAXMotionAllowedError0, value);
+
+  /// Set MAXMotion position mode (0 = trapezoidal, 1 = S-curve).
+  Future<void> setMAXMotionPositionMode(int mode) =>
+      setParameter(kParamMAXMotionPositionMode0, mode.toDouble());
+
+  /// Configure all MAXMotion Slot 0 parameters at once.
+  Future<void> configureMAXMotionSlot0({
+    required double cruiseVelocity,
+    required double maxAcceleration,
+    double maxJerk = 0.0,
+    double allowedError = 0.0,
+    int positionMode = 0,
+  }) async {
+    await setMAXMotionCruiseVelocity(cruiseVelocity);
+    await setMAXMotionMaxAccel(maxAcceleration);
+    await setMAXMotionMaxJerk(maxJerk);
+    await setMAXMotionAllowedError(allowedError);
+    await setMAXMotionPositionMode(positionMode);
+  }
 }
 
 /// Represents a set of PID gains.

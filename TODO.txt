@@ -1,0 +1,99 @@
+REV System Identification - TODO List
+======================================
+
+[x] 8.  Configurable PID Tuning Parameters
+        Expose velocity time constant (τ, default 100ms) and position bandwidth
+        (ω, default 5Hz) as advanced user parameters in the auto-tuner. Show the
+        effect on pole locations so experienced users can trade responsiveness
+        for stability.
+        Files: lib/sysid/pid_autotuner.dart, config UI
+
+[x] 9.  Dark/Light Theme Toggle
+        Add a light theme option. Many teams work in well-lit workshops/pits
+        where a light theme is more readable. Add toggle to app shell settings.
+        Files: lib/ui/app_shell.dart, theme definitions
+
+[x] 12. MAXMotion Profile Tuning UI
+        Add UI for configuring trapezoidal motion profile parameters (max
+        velocity, max acceleration, allowed error) for MAXMotion position and
+        velocity setpoints. The control API already supports these modes.
+        Files: lib/ui/screens/validation_screen.dart, lib/can/control_api.dart
+
+[x] 15. Print/PDF Report Generation
+        Generate a one-page summary with mechanism config, computed gains,
+        diagnostic plots, and validation metrics. Useful for FRC engineering
+        notebooks (a scored competition component).
+        Files: new lib/data/report_generator.dart, results_screen.dart
+
+[ ] 17. Unit Test Coverage
+        Add comprehensive tests:
+        - OLS regression unit tests with known-answer datasets
+        - CAN packet encode/decode round-trip tests
+        - Simulation physics accuracy tests against analytical solutions
+        - Widget tests for critical screens (safety dialog, test execution)
+        Files: test/ directory
+
+[ ] 19. Interactive Plant Model Visualizer
+        New screen with system block diagram: V → [Motor+Mechanism] → ω.
+        Students adjust kS, kV, kA, kG sliders and watch the simulated step
+        response change in real-time. Builds intuition about what each
+        feedforward constant physically means. Reuse existing simulation engines.
+        Files: new lib/ui/screens/plant_visualizer_screen.dart
+
+[ ] 20. Bode Plot / Frequency Response Display
+        From identified kV and kA, compute and display the open-loop Bode plot
+        of the first-order (velocity) or second-order (position) plant. Overlay
+        the closed-loop response with tuned PID gains. Annotate gain margin,
+        phase margin, and bandwidth.
+        Files: new lib/ui/widgets/bode_plot.dart, results_screen.dart
+
+[ ] 21. Pole-Zero Map Visualization
+        Show closed-loop poles on the s-plane. Let students see how changing PID
+        gains moves the poles — critically damped, underdamped, overdamped,
+        unstable. Color-code the stability regions. Connects pid_autotuner.dart
+        math to visual intuition.
+        Files: new lib/ui/widgets/pole_zero_map.dart, results_screen.dart
+
+[ ] 22. Step-by-Step Regression Walkthrough (Simulation Only)
+        "Explain the Math" mode on results screen walks through OLS regression:
+        1. Show velocity/voltage data points
+        2. Build matrix equation: V = kS·sign(ω) + kV·ω + kA·α
+        3. Solve via least squares: β = (XᵀX)⁻¹Xᵀy
+        4. Show computed coefficients and their meaning
+        Use KaTeX-rendered equations, highlight corresponding data on scatter
+        plot at each step. Only available in simulation mode.
+        Files: lib/ui/screens/results_screen.dart, new walkthrough widget
+
+[ ] 23. "What If" PID Gain Playground (Simulation Only)
+        After auto-tuning, let students manually adjust kP, kI, kD and see the
+        predicted step response change using the identified plant model. Show
+        rise time, overshoot, and steady-state error updating live. Teaches
+        cause-and-effect of gain changes. Simulation only to prevent hardware
+        damage from untested gains.
+        Files: new lib/ui/widgets/pid_playground.dart, validation_screen.dart
+
+[ ] 24. Concept Glossary / Tooltip Encyclopedia
+        Extend existing tooltip pattern across the entire app:
+        - Config screen: gear ratio effect on kV, why current limits matter
+        - Test screen: quasistatic vs dynamic test purpose
+        - Validation screen: rise time, overshoot, SS error interpretation
+        Add a dedicated "Concepts" reference panel accessible from any screen.
+        Files: all screen files, new lib/ui/widgets/concept_panel.dart
+
+[ ] 27. Energy & Power Visualization
+        Display power consumed (V·I) and mechanical power delivered (τ·ω) during
+        tests. Show efficiency (mechanical/electrical). Connects characterization
+        to battery sizing, thermal limits, and gear ratio selection.
+        Files: lib/ui/screens/test_screen.dart, results_screen.dart
+
+[ ] 28. Before/After Comparison for PID Gains
+        Show open-loop (feedforward only) vs closed-loop (FF + PID) step
+        responses on the same chart. Demonstrates viscerally why feedback control
+        exists and what PID adds beyond feedforward.
+        Files: lib/ui/screens/validation_screen.dart, results_screen.dart
+
+[ ] 30. Export to Engineering Notebook
+        Generate formatted summary for FRC engineering notebook entry: test
+        methodology, results, analysis, and conclusions. Include key plots as
+        images. Reinforces technical writing alongside control theory learning.
+        Files: new lib/data/notebook_exporter.dart, results_screen.dart

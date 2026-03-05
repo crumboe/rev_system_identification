@@ -153,6 +153,20 @@ abstract class IParameterApi {
   });
   Future<ControllerFeedForward> getFeedForwardSlot0();
 
+  // MAXMotion Slot 0
+  Future<void> setMAXMotionCruiseVelocity(double value);
+  Future<void> setMAXMotionMaxAccel(double value);
+  Future<void> setMAXMotionMaxJerk(double value);
+  Future<void> setMAXMotionAllowedError(double value);
+  Future<void> setMAXMotionPositionMode(int mode);
+  Future<void> configureMAXMotionSlot0({
+    required double cruiseVelocity,
+    required double maxAcceleration,
+    double maxJerk,
+    double allowedError,
+    int positionMode,
+  });
+
   // Follower
   Future<void> configureFollower(
     int leaderDeviceId, {

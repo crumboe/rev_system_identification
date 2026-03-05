@@ -157,10 +157,18 @@ class PidResult {
   final double kI;
   final double kD;
 
+  /// The velocity time constant (ms) used during auto-tuning, if applicable.
+  final double? velocityTimeConstantMs;
+
+  /// The position bandwidth (Hz) used during auto-tuning, if applicable.
+  final double? positionBandwidthHz;
+
   const PidResult({
     this.kP = 0.0,
     this.kI = 0.0,
     this.kD = 0.0,
+    this.velocityTimeConstantMs,
+    this.positionBandwidthHz,
   });
 
   @override

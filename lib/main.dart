@@ -2,6 +2,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:system_theme/system_theme.dart';
 
+import 'state/app_state.dart';
 import 'ui/app_shell.dart';
 
 void main() async {
@@ -10,15 +11,17 @@ void main() async {
   runApp(const ProviderScope(child: RevSysIdApp()));
 }
 
-class RevSysIdApp extends StatelessWidget {
+class RevSysIdApp extends ConsumerWidget {
   const RevSysIdApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
+
     return FluentApp(
       title: 'REV System Identification Tool',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
+      themeMode: themeMode,
       darkTheme: FluentThemeData(
         brightness: Brightness.dark,
         accentColor: Colors.blue,

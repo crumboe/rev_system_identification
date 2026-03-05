@@ -323,15 +323,28 @@ class SimulatedPidFfController {
 /// Open-loop modes (voltage, duty cycle) pass through directly.
 /// Closed-loop modes (velocity, position) use the [SimulatedPidFfController]
 /// to emulate the SPARK's internal PID + FeedForward loop.
+///
+/// MAXMotion position mode additionally runs a trapezoidal motion profile
+/// generator that limits cruise velocity and acceleration before feeding
+/// the profiled setpoint into the PID position controller.
 class SimulatedControlApi implements IControlApi {
   final SimulatedPhysics _physics;
+  final SimulatedParameterApi _paramApi;
   SimulatedPidFfController? _pidFf;
 
   /// The current control mode and setpoint for closed-loop ticking.
   int _activeControlType = kControlTypeVoltage;
   double _activeSetpoint = 0.0;
 
-  SimulatedControlApi(this._physics);
+  // MAXMotion profile state --------------------------------------------------
+  /// Current profiled position setpoint (rotations) fed to the PID.
+  double _profiledSetpoint = 0.0;
+  /// Current profiled velocity (rotations / s) used to advance the profile.
+  double _profiledVelocity = 0.0;
+  /// Whether the profile has been initialised for the current move.
+  bool _profileInitialised = false;
+
+  SimulatedControlApi(this._physics, this._paramApi);
 
   /// Attach a PID+FF controller for closed-loop simulation.
   void attachPidFfController(SimulatedPidFfController controller) {
@@ -344,10 +357,104 @@ class SimulatedControlApi implements IControlApi {
     if (_activeControlType == kControlTypeVelocity) {
       _physics.commandedVoltage =
           _pidFf!.computeVelocity(_activeSetpoint, dtSeconds);
-    } else if (_activeControlType == kControlTypePosition ||
-        _activeControlType == kControlTypeMAXMotionPosition) {
+    } else if (_activeControlType == kControlTypeMAXMotionPosition) {
+      // Run trapezoidal motion profile to produce an intermediate setpoint.
+      _advanceProfile(dtSeconds);
+      _physics.commandedVoltage =
+          _pidFf!.computePosition(_profiledSetpoint, dtSeconds);
+    } else if (_activeControlType == kControlTypePosition) {
       _physics.commandedVoltage =
           _pidFf!.computePosition(_activeSetpoint, dtSeconds);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // MAXMotion trapezoidal profile generator
+  // -------------------------------------------------------------------------
+
+  /// Advance the trapezoidal motion profile by [dt] seconds.
+  ///
+  /// Reads cruise velocity (RPM) and max acceleration (RPM/s) from the stored
+  /// MAXMotion parameters and clamps the profiled velocity accordingly.
+  /// The profiled setpoint is then advanced by the (clamped) velocity.
+  void _advanceProfile(double dt) {
+    if (!_profileInitialised) {
+      // Start the profile from the current measured position.
+      _profiledSetpoint = _physics.noisyPositionRotations;
+      _profiledVelocity = 0.0;
+      _profileInitialised = true;
+    }
+
+    // Read profile parameters (stored in native RPM / RPM-per-second units).
+    final cruiseRpm =
+        _paramApi.getParamSync(kParamMAXMotionCruiseVelocity0).abs();
+    final maxAccelRpmPerS =
+        _paramApi.getParamSync(kParamMAXMotionMaxAccel0).abs();
+    final allowedErrorRot =
+        _paramApi.getParamSync(kParamMAXMotionAllowedError0).abs();
+
+    // Convert RPM → rotations/s for the profile math.
+    final cruiseRotPerS = cruiseRpm / 60.0;
+    final maxAccelRotPerS2 = maxAccelRpmPerS / 60.0;
+
+    final errorRot = _activeSetpoint - _profiledSetpoint;
+
+    // If within allowed error, snap to target and zero velocity.
+    if (errorRot.abs() <= allowedErrorRot && allowedErrorRot > 0) {
+      _profiledSetpoint = _activeSetpoint;
+      _profiledVelocity = 0.0;
+      return;
+    }
+
+    final direction = errorRot >= 0 ? 1.0 : -1.0;
+    final absError = errorRot.abs();
+
+    // Compute the distance needed to decelerate from current speed to zero
+    // at maxAccel:  d_decel = v² / (2 * a).
+    final absVel = _profiledVelocity.abs();
+    final decelDist = maxAccelRotPerS2 > 0
+        ? (absVel * absVel) / (2.0 * maxAccelRotPerS2)
+        : 0.0;
+
+    // Decide whether to accelerate, cruise, or decelerate.
+    double desiredVel;
+    if (absError <= decelDist && absVel > 0) {
+      // Decelerate towards target.
+      desiredVel = direction *
+          (absVel - maxAccelRotPerS2 * dt).clamp(0.0, double.infinity);
+    } else {
+      // Accelerate or cruise.
+      desiredVel = direction * cruiseRotPerS;
+    }
+
+    // Apply acceleration limit.
+    if (maxAccelRotPerS2 > 0) {
+      final maxDeltaV = maxAccelRotPerS2 * dt;
+      final deltaV = desiredVel - _profiledVelocity;
+      if (deltaV.abs() > maxDeltaV) {
+        _profiledVelocity += maxDeltaV * (deltaV >= 0 ? 1.0 : -1.0);
+      } else {
+        _profiledVelocity = desiredVel;
+      }
+    } else {
+      _profiledVelocity = desiredVel;
+    }
+
+    // Clamp velocity to cruise.
+    if (_profiledVelocity.abs() > cruiseRotPerS && cruiseRotPerS > 0) {
+      _profiledVelocity = cruiseRotPerS * (_profiledVelocity >= 0 ? 1.0 : -1.0);
+    }
+
+    // Advance setpoint.
+    _profiledSetpoint += _profiledVelocity * dt;
+
+    // Don't overshoot the target.
+    if (direction > 0 && _profiledSetpoint > _activeSetpoint) {
+      _profiledSetpoint = _activeSetpoint;
+      _profiledVelocity = 0.0;
+    } else if (direction < 0 && _profiledSetpoint < _activeSetpoint) {
+      _profiledSetpoint = _activeSetpoint;
+      _profiledVelocity = 0.0;
     }
   }
 
@@ -363,6 +470,13 @@ class SimulatedControlApi implements IControlApi {
     } else if (controlType == kControlTypeDutyCycle) {
       _pidFf?.reset();
       _physics.commandedVoltage = value * _physics.nominalVoltage;
+    } else if (controlType == kControlTypeMAXMotionPosition) {
+      // Reset profile state when switching to MAXMotion so the profile
+      // starts from the current position.
+      if (previousControlType != controlType) {
+        _pidFf?.reset();
+        _profileInitialised = false;
+      }
     } else {
       // Closed-loop modes — only reset PID when switching from a different
       // control type.  A real SPARK does NOT reset its PID state on every
@@ -488,6 +602,12 @@ class SimulatedParameterApi implements IParameterApi {
     kParamSlot0FfKg: 0.0,
     kParamSlot0FfKcos: 0.0,
     kParamSlot0FfKcosRatio: 0.0,
+    // MAXMotion Slot 0 defaults
+    kParamMAXMotionCruiseVelocity0: 0.0,
+    kParamMAXMotionMaxAccel0: 0.0,
+    kParamMAXMotionMaxJerk0: 0.0,
+    kParamMAXMotionAllowedError0: 0.0,
+    kParamMAXMotionPositionMode0: 0.0,
   };
 
   /// Synchronous parameter read for the simulated PID controller.
@@ -739,5 +859,42 @@ class SimulatedParameterApi implements IParameterApi {
       kCos: await getParameter(kParamSlot0FfKcos),
       kCosRatio: await getParameter(kParamSlot0FfKcosRatio),
     );
+  }
+
+  // -- MAXMotion Slot 0 -----------------------------------------------------
+
+  @override
+  Future<void> setMAXMotionCruiseVelocity(double value) =>
+      setParameter(kParamMAXMotionCruiseVelocity0, value);
+
+  @override
+  Future<void> setMAXMotionMaxAccel(double value) =>
+      setParameter(kParamMAXMotionMaxAccel0, value);
+
+  @override
+  Future<void> setMAXMotionMaxJerk(double value) =>
+      setParameter(kParamMAXMotionMaxJerk0, value);
+
+  @override
+  Future<void> setMAXMotionAllowedError(double value) =>
+      setParameter(kParamMAXMotionAllowedError0, value);
+
+  @override
+  Future<void> setMAXMotionPositionMode(int mode) =>
+      setParameter(kParamMAXMotionPositionMode0, mode.toDouble());
+
+  @override
+  Future<void> configureMAXMotionSlot0({
+    required double cruiseVelocity,
+    required double maxAcceleration,
+    double maxJerk = 0.0,
+    double allowedError = 0.0,
+    int positionMode = 0,
+  }) async {
+    await setMAXMotionCruiseVelocity(cruiseVelocity);
+    await setMAXMotionMaxAccel(maxAcceleration);
+    await setMAXMotionMaxJerk(maxJerk);
+    await setMAXMotionAllowedError(allowedError);
+    await setMAXMotionPositionMode(positionMode);
   }
 }

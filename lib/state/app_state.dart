@@ -4,6 +4,7 @@
 /// mechanism configuration, test runs, and computed results.
 library;
 
+import 'package:fluent_ui/fluent_ui.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../devices/device_manager.dart';
@@ -185,6 +186,13 @@ final walkthroughSeenProvider =
     StateProvider.family<bool, String>((ref, chartKey) => false);
 
 // ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+
+/// Current theme mode (dark, light, or system).
+final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.dark);
+
+// ---------------------------------------------------------------------------
 // Validation test state
 // ---------------------------------------------------------------------------
 
@@ -202,3 +210,74 @@ final validationProgressProvider =
 /// Latest validation result (null until a test completes).
 final validationResultProvider =
     StateProvider<ValidationResult?>((ref) => null);
+
+// ---------------------------------------------------------------------------
+// PID tuning parameters (advanced)
+// ---------------------------------------------------------------------------
+
+/// Configurable PID auto-tuning parameters.
+///
+/// These control the aggressiveness of the auto-tuned PID gains.
+/// Defaults match the original hardcoded values.
+class PidTuningParams {
+  /// Desired closed-loop time constant for velocity control (ms).
+  ///
+  /// Smaller values → faster response but less stability margin.
+  /// Range: 20–500 ms. Default: 100 ms.
+  final double velocityTimeConstantMs;
+
+  /// Desired closed-loop bandwidth for position control (Hz).
+  ///
+  /// Higher values → faster response but more sensitive to noise.
+  /// Range: 1–20 Hz. Default: 5 Hz.
+  final double positionBandwidthHz;
+
+  const PidTuningParams({
+    this.velocityTimeConstantMs = 100.0,
+    this.positionBandwidthHz = 5.0,
+  });
+
+  PidTuningParams copyWith({
+    double? velocityTimeConstantMs,
+    double? positionBandwidthHz,
+  }) {
+    return PidTuningParams(
+      velocityTimeConstantMs:
+          velocityTimeConstantMs ?? this.velocityTimeConstantMs,
+      positionBandwidthHz:
+          positionBandwidthHz ?? this.positionBandwidthHz,
+    );
+  }
+
+  /// Velocity time constant clamped to valid range.
+  static double clampVelocityTau(double ms) => ms.clamp(20.0, 500.0);
+
+  /// Position bandwidth clamped to valid range.
+  static double clampPositionBw(double hz) => hz.clamp(1.0, 20.0);
+}
+
+/// Current PID tuning parameters.
+final pidTuningParamsProvider =
+    StateNotifierProvider<PidTuningParamsNotifier, PidTuningParams>((ref) {
+  return PidTuningParamsNotifier();
+});
+
+class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
+  PidTuningParamsNotifier() : super(const PidTuningParams());
+
+  void setVelocityTimeConstant(double ms) {
+    state = state.copyWith(
+      velocityTimeConstantMs: PidTuningParams.clampVelocityTau(ms),
+    );
+  }
+
+  void setPositionBandwidth(double hz) {
+    state = state.copyWith(
+      positionBandwidthHz: PidTuningParams.clampPositionBw(hz),
+    );
+  }
+
+  void reset() {
+    state = const PidTuningParams();
+  }
+}

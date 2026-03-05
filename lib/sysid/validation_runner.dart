@@ -2,9 +2,11 @@
 /// computed PID + FeedForward gains to verify that the identified model
 /// produces good real (or simulated) control performance.
 ///
-/// Supports two modes:
+/// Supports three modes:
 ///   - **Velocity step**: commands a target RPM and records the response.
 ///   - **Position step**: commands a target position and records the response.
+///   - **MAXMotion position**: uses the SPARK MAXMotion profiled position
+///     controller with configurable cruise velocity, acceleration, and jerk.
 library;
 
 import 'dart:async';
@@ -21,6 +23,7 @@ import '../mechanisms/mechanism.dart';
 enum ValidationMode {
   velocity,
   position,
+  maxMotionPosition,
 }
 
 /// Parameters for a validation test.
@@ -43,11 +46,15 @@ class ValidationParams {
   /// How long to record after releasing the setpoint (seconds).
   final double settleDuration;
 
+  /// MAXMotion profile configuration (null = use standard PID control).
+  final MAXMotionConfig? maxMotionConfig;
+
   const ValidationParams({
     this.velocitySetpoint = 1000.0,
     this.positionSetpoint = 0.5,
     this.holdDuration = 3.0,
     this.settleDuration = 1.0,
+    this.maxMotionConfig,
   });
 
   /// Sensible defaults for each mechanism type.
@@ -82,12 +89,66 @@ class ValidationParams {
     double? positionSetpoint,
     double? holdDuration,
     double? settleDuration,
+    MAXMotionConfig? maxMotionConfig,
   }) {
     return ValidationParams(
       velocitySetpoint: velocitySetpoint ?? this.velocitySetpoint,
       positionSetpoint: positionSetpoint ?? this.positionSetpoint,
       holdDuration: holdDuration ?? this.holdDuration,
       settleDuration: settleDuration ?? this.settleDuration,
+      maxMotionConfig: maxMotionConfig ?? this.maxMotionConfig,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MAXMotion configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for a MAXMotion trapezoidal/S-curve position profile.
+///
+/// All velocity and acceleration values are in **user units** — they will be
+/// converted to native RPM / RPM-per-second before being written to the
+/// controller.
+class MAXMotionConfig {
+  /// Maximum velocity during the cruise phase (user velocity units).
+  final double cruiseVelocity;
+
+  /// Maximum acceleration (user velocity units / second).
+  final double maxAcceleration;
+
+  /// Maximum jerk for S-curve profiling (user velocity units / s²).
+  /// Set to 0 for trapezoidal profiling.
+  final double maxJerk;
+
+  /// Allowed closed-loop error at the target (user position units).
+  /// The controller considers the profile complete when error is within this.
+  final double allowedError;
+
+  /// Position mode: 0 = trapezoidal, 1 = S-curve.
+  final int positionMode;
+
+  const MAXMotionConfig({
+    required this.cruiseVelocity,
+    required this.maxAcceleration,
+    this.maxJerk = 0.0,
+    this.allowedError = 0.0,
+    this.positionMode = 0,
+  });
+
+  MAXMotionConfig copyWith({
+    double? cruiseVelocity,
+    double? maxAcceleration,
+    double? maxJerk,
+    double? allowedError,
+    int? positionMode,
+  }) {
+    return MAXMotionConfig(
+      cruiseVelocity: cruiseVelocity ?? this.cruiseVelocity,
+      maxAcceleration: maxAcceleration ?? this.maxAcceleration,
+      maxJerk: maxJerk ?? this.maxJerk,
+      allowedError: allowedError ?? this.allowedError,
+      positionMode: positionMode ?? this.positionMode,
     );
   }
 }
@@ -101,6 +162,8 @@ class ValidationProgress {
   final double elapsedSeconds;
   final double setpoint;
   final double measured;
+  final double velocity;
+  final double position;
   final double voltage;
   final double current;
   final int sampleCount;
@@ -110,6 +173,8 @@ class ValidationProgress {
     required this.elapsedSeconds,
     required this.setpoint,
     required this.measured,
+    required this.velocity,
+    required this.position,
     required this.voltage,
     required this.current,
     required this.sampleCount,
@@ -160,7 +225,9 @@ class ValidationResult {
 
     for (var i = 0; i < data.length; i++) {
       final measured =
-          mode == ValidationMode.velocity ? data[i].velocity : data[i].position;
+          mode == ValidationMode.velocity
+              ? data[i].velocity
+              : data[i].position;
       if (t10 == null && measured >= threshold10) {
         t10 = data[i].timestamp;
       }
@@ -185,7 +252,9 @@ class ValidationResult {
     int count = 0;
     for (var i = startIdx; i < data.length; i++) {
       final measured =
-          mode == ValidationMode.velocity ? data[i].velocity : data[i].position;
+          mode == ValidationMode.velocity
+              ? data[i].velocity
+              : data[i].position;
       sumError += (setpoints[i] - measured).abs();
       count++;
     }
@@ -201,7 +270,9 @@ class ValidationResult {
     double maxMeasured = 0;
     for (final dp in data) {
       final measured =
-          mode == ValidationMode.velocity ? dp.velocity : dp.position;
+          mode == ValidationMode.velocity
+              ? dp.velocity
+              : dp.position;
       if (measured > maxMeasured) maxMeasured = measured;
     }
 
@@ -344,6 +415,40 @@ class ValidationRunner {
     );
   }
 
+  /// Write PID + FeedForward gains **and** MAXMotion profile parameters to
+  /// Slot 0 for a MAXMotion position test.
+  ///
+  /// The position PID gains are written identically to a normal position
+  /// test.  In addition the MAXMotion cruise velocity, max acceleration,
+  /// max jerk, allowed error and position mode are written.
+  ///
+  /// User-unit values are converted to native units before writing:
+  ///   cruiseVelocity_native = cruiseVelocity_user / VCF  (RPM)
+  ///   maxAcceleration_native = maxAcceleration_user / VCF  (RPM/s)
+  ///   maxJerk_native = maxJerk_user / VCF  (RPM/s²)
+  ///   allowedError_native = allowedError_user / PCF  (rotations)
+  Future<void> _prepareForMAXMotionTest(MAXMotionConfig config) async {
+    // First write PID + FF gains exactly as for a normal position test.
+    await _prepareForPositionTest();
+
+    final vcf = mechanismConfig.velocityConversionFactor;
+    final pcf = mechanismConfig.positionConversionFactor;
+
+    // Convert user units → native units.
+    final nativeCruise = vcf != 0 ? config.cruiseVelocity / vcf : config.cruiseVelocity;
+    final nativeAccel  = vcf != 0 ? config.maxAcceleration / vcf : config.maxAcceleration;
+    final nativeJerk   = vcf != 0 ? config.maxJerk / vcf : config.maxJerk;
+    final nativeError  = pcf != 0 ? config.allowedError / pcf : config.allowedError;
+
+    await device.parameters.configureMAXMotionSlot0(
+      cruiseVelocity: nativeCruise,
+      maxAcceleration: nativeAccel,
+      maxJerk: nativeJerk,
+      allowedError: nativeError,
+      positionMode: config.positionMode,
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Test methods
   // -------------------------------------------------------------------------
@@ -378,6 +483,22 @@ class ValidationRunner {
     );
   }
 
+  /// Run a MAXMotion profiled position test.
+  ///
+  /// Configures the SPARK's MAXMotion controller with cruise velocity,
+  /// max acceleration, max jerk, and allowed error, then commands a
+  /// profiled position setpoint and records the response.
+  Future<ValidationResult> runMAXMotionPositionTest({
+    required ValidationParams params,
+    void Function(ValidationProgress)? onProgress,
+  }) async {
+    return _runTest(
+      mode: ValidationMode.maxMotionPosition,
+      params: params,
+      onProgress: onProgress,
+    );
+  }
+
   Future<ValidationResult> _runTest({
     required ValidationMode mode,
     required ValidationParams params,
@@ -404,6 +525,8 @@ class ValidationRunner {
     String? error;
 
     final totalDuration = params.holdDuration + params.settleDuration;
+    // MAXMotion tests run until manually stopped (no time limit).
+    final untimed = mode == ValidationMode.maxMotionPosition;
 
     try {
       // Write the appropriate gains to the controller for this test type.
@@ -411,6 +534,9 @@ class ValidationRunner {
       // (RPM / rotations) units as required by the SPARK CAN protocol.
       if (mode == ValidationMode.velocity) {
         await _prepareForVelocityTest();
+      } else if (mode == ValidationMode.maxMotionPosition &&
+                 params.maxMotionConfig != null) {
+        await _prepareForMAXMotionTest(params.maxMotionConfig!);
       } else {
         await _prepareForPositionTest();
       }
@@ -426,7 +552,7 @@ class ValidationRunner {
       while (!_abortRequested) {
         final elapsed = stopwatch.elapsedMilliseconds / 1000.0;
 
-        if (elapsed >= totalDuration) {
+        if (!untimed && elapsed >= totalDuration) {
           completed = true;
           break;
         }
@@ -444,6 +570,16 @@ class ValidationRunner {
                   ? setpoint / mechanismConfig.velocityConversionFactor
                   : setpoint;
           device.control.setVelocity(rpmSetpoint);
+        } else if (mode == ValidationMode.maxMotionPosition) {
+          // MAXMotion profiled position: always command the target position.
+          // The profile generation (trapezoidal / S-curve) is handled
+          // on-controller using the parameters written during preparation.
+          setpoint = params.positionSetpoint;
+          final rotSetpoint =
+              mechanismConfig.positionConversionFactor != 0
+                  ? setpoint / mechanismConfig.positionConversionFactor
+                  : setpoint;
+          device.control.setSmartMotion(rotSetpoint);
         } else {
           // Position hold: always command the target position (including during
           // the settle phase so the mechanism holds still while we observe).
@@ -488,7 +624,11 @@ class ValidationRunner {
             elapsedSeconds: elapsed,
             setpoint: setpoint,
             measured:
-                mode == ValidationMode.velocity ? velocity : position,
+                mode == ValidationMode.velocity
+                    ? velocity
+                    : position,
+            velocity: velocity,
+            position: position,
             voltage: dp.voltage,
             current: dp.current,
             sampleCount: data.length,

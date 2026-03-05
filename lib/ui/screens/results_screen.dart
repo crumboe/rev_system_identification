@@ -10,6 +10,7 @@ import 'package:fl_chart/fl_chart.dart';
 
 import '../../data/test_data.dart';
 import '../../data/csv_exporter.dart';
+import '../../data/report_generator.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
 import '../../sysid/feedforward_analyzer.dart';
@@ -59,6 +60,13 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   ? () => _exportWpiLib(testRuns)
                   : null,
             ),
+            CommandBarButton(
+              icon: const Icon(FluentIcons.print),
+              label: const Text('Export PDF Report'),
+              onPressed: _ff != null
+                  ? () => _exportPdf(config, testRuns)
+                  : null,
+            ),
           ],
         ),
       ),
@@ -68,7 +76,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           children: [
             FilledButton(
               onPressed:
-                  canAnalyze ? () => _runAnalysis(qsRuns, dynRuns, config) : null,
+                  canAnalyze ? () => _runAnalysis(qsRuns, dynRuns, config,
+                      tuningParams: ref.read(pidTuningParamsProvider)) : null,
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Text('Compute Feedforward & PID'),
@@ -121,6 +130,16 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
+
+          // Advanced PID tuning parameters
+          _PidTuningPanel(
+            onRetune: _ff != null
+                ? () => _runAnalysis(qsRuns, dynRuns, config,
+                    tuningParams: ref.read(pidTuningParamsProvider))
+                : null,
+          ),
+          const SizedBox(height: 12),
+
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -231,8 +250,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   void _runAnalysis(
     List<TestRun> qsRuns,
     List<TestRun> dynRuns,
-    MechanismConfig config,
-  ) {
+    MechanismConfig config, {
+    PidTuningParams tuningParams = const PidTuningParams(),
+  }) {
     try {
       final ff = FeedforwardAnalyzer.analyze(
         quasistaticRuns: qsRuns,
@@ -243,11 +263,13 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       final velPid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: config.type,
+        desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
       );
 
       final posPid = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: config.type,
+        desiredBandwidthHz: tuningParams.positionBandwidthHz,
       );
 
       setState(() {
@@ -400,6 +422,46 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           ),
         );
       });
+    }
+  }
+
+  Future<void> _exportPdf(
+      MechanismConfig config, List<TestRun> runs) async {
+    try {
+      final path = await ReportGenerator.generate(
+        config: config,
+        ff: _ff!,
+        velocityPid: _velPid,
+        positionPid: _posPid,
+        testRuns: runs,
+      );
+      if (path != null && mounted) {
+        await displayInfoBar(context, builder: (ctx, close) {
+          return InfoBar(
+            title: const Text('Report saved'),
+            content: Text('PDF saved to: $path'),
+            severity: InfoBarSeverity.success,
+            action: IconButton(
+              icon: const Icon(FluentIcons.clear),
+              onPressed: close,
+            ),
+          );
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        await displayInfoBar(context, builder: (ctx, close) {
+          return InfoBar(
+            title: const Text('Export failed'),
+            content: Text('$e'),
+            severity: InfoBarSeverity.error,
+            action: IconButton(
+              icon: const Icon(FluentIcons.clear),
+              onPressed: close,
+            ),
+          );
+        });
+      }
     }
   }
 }
@@ -584,6 +646,234 @@ class _GainRow extends StatelessWidget {
 enum _PidMode { velocity, position }
 enum _WriteMode { velocity, position }
 
+/// Collapsible panel for advanced PID tuning parameters.
+class _PidTuningPanel extends ConsumerStatefulWidget {
+  final VoidCallback? onRetune;
+
+  const _PidTuningPanel({this.onRetune});
+
+  @override
+  ConsumerState<_PidTuningPanel> createState() => _PidTuningPanelState();
+}
+
+class _PidTuningPanelState extends ConsumerState<_PidTuningPanel> {
+  late TextEditingController _tauController;
+  late TextEditingController _bwController;
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final params = ref.read(pidTuningParamsProvider);
+    _tauController =
+        TextEditingController(text: params.velocityTimeConstantMs.toStringAsFixed(0));
+    _bwController =
+        TextEditingController(text: params.positionBandwidthHz.toStringAsFixed(1));
+  }
+
+  @override
+  void dispose() {
+    _tauController.dispose();
+    _bwController.dispose();
+    super.dispose();
+  }
+
+  void _onTauChanged(double value) {
+    ref.read(pidTuningParamsProvider.notifier).setVelocityTimeConstant(value);
+    _tauController.text = value.round().toString();
+  }
+
+  void _onBwChanged(double value) {
+    ref.read(pidTuningParamsProvider.notifier).setPositionBandwidth(value);
+    _bwController.text = value.toStringAsFixed(1);
+  }
+
+  void _onTauEdited(String text) {
+    final val = double.tryParse(text);
+    if (val != null) {
+      ref.read(pidTuningParamsProvider.notifier).setVelocityTimeConstant(val);
+    }
+  }
+
+  void _onBwEdited(String text) {
+    final val = double.tryParse(text);
+    if (val != null) {
+      ref.read(pidTuningParamsProvider.notifier).setPositionBandwidth(val);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final params = ref.watch(pidTuningParamsProvider);
+    final theme = FluentTheme.of(context);
+    final isDefault = params.velocityTimeConstantMs == 100.0 &&
+        params.positionBandwidthHz == 5.0;
+
+    return Expander(
+      initiallyExpanded: _expanded,
+      onStateChanged: (open) => setState(() => _expanded = open),
+      header: Row(
+        children: [
+          const Icon(FluentIcons.settings, size: 14),
+          const SizedBox(width: 8),
+          const Text('Advanced PID Tuning Parameters'),
+          if (!isDefault) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                color: theme.accentColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'Modified',
+                style: TextStyle(fontSize: 10, color: theme.accentColor),
+              ),
+            ),
+          ],
+        ],
+      ),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Adjust these parameters to control how aggressively the '
+            'auto-tuned PID gains respond. Changing these values requires '
+            're-computing the PID gains.',
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.typography.body?.color?.withValues(alpha: 0.7),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Velocity time constant
+          Row(
+            children: [
+              SizedBox(
+                width: 200,
+                child: Text(
+                  'Velocity time constant (τ)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: theme.typography.body?.color,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Slider(
+                  value: params.velocityTimeConstantMs,
+                  min: 20,
+                  max: 500,
+                  divisions: 48,
+                  label:
+                      '${params.velocityTimeConstantMs.round()} ms',
+                  onChanged: _onTauChanged,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 60,
+                child: TextBox(
+                  controller: _tauController,
+                  suffix: const Text('ms'),
+                  onSubmitted: _onTauEdited,
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 200),
+            child: Text(
+              'Smaller → faster velocity response, less stability margin. '
+              'Default: 100 ms.',
+              style: TextStyle(
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                color: theme.typography.body?.color?.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Position bandwidth
+          Row(
+            children: [
+              SizedBox(
+                width: 200,
+                child: Text(
+                  'Position bandwidth (ω)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: theme.typography.body?.color,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Slider(
+                  value: params.positionBandwidthHz,
+                  min: 1,
+                  max: 20,
+                  divisions: 38,
+                  label:
+                      '${params.positionBandwidthHz.toStringAsFixed(1)} Hz',
+                  onChanged: _onBwChanged,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 60,
+                child: TextBox(
+                  controller: _bwController,
+                  suffix: const Text('Hz'),
+                  onSubmitted: _onBwEdited,
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 200),
+            child: Text(
+              'Higher → faster position response, more sensitive to noise. '
+              'Default: 5.0 Hz.',
+              style: TextStyle(
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                color: theme.typography.body?.color?.withValues(alpha: 0.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          Row(
+            children: [
+              FilledButton(
+                onPressed: widget.onRetune,
+                child: const Text('Re-compute PID Gains'),
+              ),
+              const SizedBox(width: 12),
+              if (!isDefault)
+                Button(
+                  onPressed: () {
+                    ref.read(pidTuningParamsProvider.notifier).reset();
+                    final defaults = const PidTuningParams();
+                    _tauController.text =
+                        defaults.velocityTimeConstantMs.toStringAsFixed(0);
+                    _bwController.text =
+                        defaults.positionBandwidthHz.toStringAsFixed(1);
+                  },
+                  child: const Text('Reset to Defaults'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PidCard extends StatefulWidget {
   final String title;
   final PidResult pid;
@@ -678,6 +968,9 @@ class _PidCardState extends State<_PidCard> {
     final captionStyle = TextStyle(fontSize: 12, color: explainColor, height: 1.5);
 
     if (widget.mode == _PidMode.velocity) {
+      final tauMs = widget.pid.velocityTimeConstantMs ?? 100.0;
+      final tauS = tauMs / 1000.0;
+      final isCustomTau = tauMs != 100.0;
       return [
         const Divider(),
         const SizedBox(height: 8),
@@ -688,7 +981,8 @@ class _PidCardState extends State<_PidCard> {
           'The motor + mechanism acts like a first-order system:\n'
           '    G(s) = 1 / (kA\u00b7s + kV)\n\n'
           'We design a PI controller using model-inversion, targeting a '
-          'closed-loop time constant \u03c4 = 100 ms:',
+          'closed-loop time constant \u03c4 = ${tauMs.round()} ms'
+          '${isCustomTau ? " (custom)" : " (default)"}:',
           style: captionStyle,
         ),
         const SizedBox(height: 8),
@@ -702,7 +996,7 @@ class _PidCardState extends State<_PidCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('kP = (kA / \u03c4) / V_nominal', style: monoStyle),
-              Text('   = (${ff.kA.toStringAsFixed(5)} / 0.100) / 12.0', style: monoStyle),
+              Text('   = (${ff.kA.toStringAsFixed(5)} / ${tauS.toStringAsFixed(3)}) / 12.0', style: monoStyle),
               Text('   = ${widget.pid.kP.toStringAsFixed(6)}', style: monoStyle),
               const SizedBox(height: 4),
               Text('kI = 0  (avoids integral windup)', style: monoStyle),
@@ -713,7 +1007,10 @@ class _PidCardState extends State<_PidCard> {
         const SizedBox(height: 8),
         Text(
           'kP controls how aggressively the controller corrects velocity '
-          'errors. Feedforward (kS, kV) is now configured separately '
+          'errors. '
+          '${isCustomTau ? "You chose \u03c4 = ${tauMs.round()} ms — " : ""}'
+          '${tauMs < 100 ? "faster than default (more aggressive)." : tauMs > 100 ? "slower than default (more conservative)." : ""}'
+          ' Feedforward (kS, kV) is now configured separately '
           'via the controller\u2019s FeedForwardConfig and predicts most '
           'of the output, so PID only handles small corrections.',
           style: captionStyle,
@@ -721,8 +1018,9 @@ class _PidCardState extends State<_PidCard> {
       ];
     } else {
       // Position PID
-      const bwHz = 5.0;
+      final bwHz = widget.pid.positionBandwidthHz ?? 5.0;
       final omega = 2.0 * 3.14159265 * bwHz;
+      final isCustomBw = bwHz != 5.0;
       return [
         const Divider(),
         const SizedBox(height: 8),
@@ -734,8 +1032,9 @@ class _PidCardState extends State<_PidCard> {
           'second-order system:\n'
           '    G(s) = 1 / (kA\u00b7s\u00b2 + kV\u00b7s)\n\n'
           'We use pole placement for a critically-damped response '
-          'at ${bwHz.toStringAsFixed(0)} Hz bandwidth '
-          '(\u03c9 = ${omega.toStringAsFixed(1)} rad/s):',
+          'at ${bwHz.toStringAsFixed(1)} Hz bandwidth '
+          '(\u03c9 = ${omega.toStringAsFixed(1)} rad/s)'
+          '${isCustomBw ? " (custom)" : " (default)"}:',
           style: captionStyle,
         ),
         const SizedBox(height: 8),
@@ -765,7 +1064,9 @@ class _PidCardState extends State<_PidCard> {
           'kP creates a restoring force proportional to position error. '
           'kD provides damping (like shock absorbers) to prevent oscillation. '
           'The "2\u00b7kA\u00b7\u03c9 \u2212 kV" subtracts the system\u2019s '
-          'natural damping (kV) so we don\u2019t over-damp.',
+          'natural damping (kV) so we don\u2019t over-damp.'
+          '${isCustomBw ? " Bandwidth set to ${bwHz.toStringAsFixed(1)} Hz" : ""}'
+          '${isCustomBw && bwHz > 5 ? " (faster than default)." : isCustomBw && bwHz < 5 ? " (slower than default)." : ""}',
           style: captionStyle,
         ),
       ];

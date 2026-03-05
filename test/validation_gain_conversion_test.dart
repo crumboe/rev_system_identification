@@ -183,8 +183,102 @@ void main() {
     test('kG is not scaled for elevator (gravity is in Volts)', () {
       // kG for elevator is a constant voltage — no unit conversion needed.
       // Just verify it passes through unchanged.
-      const kGNative = ff.kG; // no multiplication needed
+      final kGNative = ff.kG; // no multiplication needed
       expect(kGNative, closeTo(ff.kG, 1e-9));
+    });
+  });
+  // ---------------------------------------------------------------------------
+  // Configurable PID tuning parameters (Feature #8)
+  // ---------------------------------------------------------------------------
+
+  group('Configurable PID tuning parameters', () {
+    const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
+
+    test('velocity PID kP scales inversely with time constant', () {
+      final pidDefault = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredTimeConstantMs: 100.0,
+      );
+      final pidFast = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredTimeConstantMs: 50.0,
+      );
+      final pidSlow = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredTimeConstantMs: 200.0,
+      );
+
+      // Faster time constant → higher kP.
+      expect(pidFast.kP, greaterThan(pidDefault.kP));
+      // Slower time constant → lower kP.
+      expect(pidSlow.kP, lessThan(pidDefault.kP));
+      // kP should be exactly kA/tau/12.
+      expect(pidFast.kP, closeTo(ff.kA / 0.050 / 12.0, 1e-9));
+      expect(pidSlow.kP, closeTo(ff.kA / 0.200 / 12.0, 1e-9));
+      // Tuning parameter is stored in result.
+      expect(pidFast.velocityTimeConstantMs, equals(50.0));
+      expect(pidSlow.velocityTimeConstantMs, equals(200.0));
+      expect(pidDefault.velocityTimeConstantMs, equals(100.0));
+    });
+
+    test('position PID gains scale with bandwidth', () {
+      final pidDefault = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredBandwidthHz: 5.0,
+      );
+      final pidFast = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredBandwidthHz: 10.0,
+      );
+      final pidSlow = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredBandwidthHz: 2.0,
+      );
+
+      // Higher bandwidth → higher kP (ω² scales quadratically).
+      expect(pidFast.kP, greaterThan(pidDefault.kP));
+      expect(pidSlow.kP, lessThan(pidDefault.kP));
+
+      // Verify exact kP = kA * ω² / 12.
+      const pi = 3.14159265;
+      final omega10 = 2.0 * pi * 10.0;
+      expect(pidFast.kP, closeTo(ff.kA * omega10 * omega10 / 12.0, 1e-6));
+
+      // Tuning parameter is stored in result.
+      expect(pidFast.positionBandwidthHz, equals(10.0));
+      expect(pidSlow.positionBandwidthHz, equals(2.0));
+      expect(pidDefault.positionBandwidthHz, equals(5.0));
+    });
+
+    test('default tuning params match original hardcoded values', () {
+      final velPidDefault = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+      );
+      final velPidExplicit = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredTimeConstantMs: 100.0,
+      );
+      expect(velPidDefault.kP, closeTo(velPidExplicit.kP, 1e-12));
+
+      final posPidDefault = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+      );
+      final posPidExplicit = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredBandwidthHz: 5.0,
+      );
+      expect(posPidDefault.kP, closeTo(posPidExplicit.kP, 1e-12));
+      expect(posPidDefault.kD, closeTo(posPidExplicit.kD, 1e-12));
     });
   });
 }
