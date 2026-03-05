@@ -183,8 +183,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
                 const SizedBox(width: 24),
 
-                // Position setpoint (not for flywheel)
-                if (config.type != MechanismType.flywheel) ...[
+                // Position setpoint
+                ...[
                   SizedBox(
                     width: 160,
                     child: InfoLabel(

@@ -42,7 +42,11 @@ const int kSystemIndexFactoryReset = 0x05;
 const int kSystemIndexIdQuery = 0x06;
 const int kSystemIndexIdAssign = 0x07;
 
-// Status frame indices
+// Status frame indices — legacy protocol (apiClass 0x06)
+// Legacy status frames are still emitted by ≥25.0 firmware but Status 0
+// contains only dummy data (applied_output=0, all faults set) for old
+// follower backward-compat.  Real telemetry now uses the "new" status
+// frames at kApiClassNewStatus (0x2E).
 const int kStatusIndex0 = 0x00; // Applied output, faults
 const int kStatusIndex1 = 0x01; // Velocity, temp, voltage, current
 const int kStatusIndex2 = 0x02; // Position
@@ -51,13 +55,29 @@ const int kStatusIndex4 = 0x04; // Alternate encoder
 const int kStatusIndex5 = 0x05; // Absolute encoder position
 const int kStatusIndex6 = 0x06; // Absolute encoder velocity
 
-// Control types for setpoint command
+// New status frame API class — firmware ≥25.0 (2026.0.4 protocol)
+// These frames carry the ACTUAL telemetry; decode with parseNewStatusFrame().
+// Frame IDs: SPARK_STATUS_0..9 = apiClass 0x2E, apiIndex 0..9
+const int kApiClassNewStatus = 0x2E;
+const int kNewStatusIndex0 = 0x00; // Applied output, voltage, current, temp, limits
+const int kNewStatusIndex1 = 0x01; // Faults, warnings (bitfields)
+const int kNewStatusIndex2 = 0x02; // Primary encoder velocity + position
+const int kNewStatusIndex3 = 0x03; // Analog sensor
+const int kNewStatusIndex4 = 0x04; // External/alt encoder
+const int kNewStatusIndex5 = 0x05; // Duty-cycle encoder
+const int kNewStatusIndex6 = 0x06; // Duty-cycle raw
+const int kNewStatusIndex7 = 0x07; // I accumulation
+const int kNewStatusIndex8 = 0x08; // Setpoint + isAtSetpoint + pidSlot
+const int kNewStatusIndex9 = 0x09; // MAXMotion setpoint position/velocity
+
+// Control types for setpoint command — from REVLib 2026.0.4
 const int kControlTypeDutyCycle = 0;
 const int kControlTypeVelocity = 1;
 const int kControlTypeVoltage = 2;
 const int kControlTypePosition = 3;
-const int kControlTypeSmartMotion = 4;
-const int kControlTypeCurrent = 5;
+const int kControlTypeCurrent = 4;
+const int kControlTypeMAXMotionPosition = 5;
+const int kControlTypeMAXMotionVelocity = 6;
 
 // USB command types (bits 31:29 of the 32-bit command word)
 const int kUsbCmdTypeStandard = 0x00;
@@ -80,65 +100,74 @@ const int kHeartbeatFlagEnabled = 0x01;
 const int kHeartbeatFlagAutonomous = 0x02;
 
 // ---------------------------------------------------------------------------
-// Parameter IDs
+// Parameter IDs — from REVLib 2026.0.4 CANSparkParameters.h
+// Source: maven.revrobotics.com/com/revrobotics/frc/REVLib-driver/2026.0.4/
+//         REVLib-driver-2026.0.4-headers.zip → rev/CANSparkParameters.h
 // ---------------------------------------------------------------------------
 
-const int kParamCanId = 0;
-const int kParamMotorType = 2;
-const int kParamIdleMode = 5;
-const int kParamOpenLoopRampRate = 8;
-const int kParamMotorInverted = 14;
-const int kParamPositionConvFactor = 17;
-const int kParamVelocityConvFactor = 18;
+const int kParamCanId = 0; // c_Spark_kCANID
+const int kParamMotorType = 2; // c_Spark_kMotorType
+const int kParamIdleMode = 6; // c_Spark_kIdleMode
+const int kParamOpenLoopRampRate = 56; // c_Spark_kOpenLoopRampRate
+const int kParamMotorInverted = 45; // c_Spark_kInverted
+const int kParamPositionConvFactor = 112; // c_Spark_kPositionConversionFactor
+const int kParamVelocityConvFactor = 113; // c_Spark_kVelocityConversionFactor
 
-// PID Slot 0 (IDs 22–29)
-const int kParamSlot0P = 22;
-const int kParamSlot0I = 23;
-const int kParamSlot0D = 24;
-const int kParamSlot0F = 25;
-const int kParamSlot0IZone = 26;
-const int kParamSlot0DFilter = 27;
-const int kParamSlot0MaxOutput = 28;
-const int kParamSlot0MinOutput = 29;
+// PID Slot 0 (IDs 13–20)
+const int kParamSlot0P = 13; // c_Spark_kP_0
+const int kParamSlot0I = 14; // c_Spark_kI_0
+const int kParamSlot0D = 15; // c_Spark_kD_0
+const int kParamSlot0F = 16; // c_Spark_kV_0 (velocity feedforward)
+const int kParamSlot0IZone = 17; // c_Spark_kIZone_0
+const int kParamSlot0DFilter = 18; // c_Spark_kDFilter_0
+const int kParamSlot0MinOutput = 19; // c_Spark_kOutputMin_0
+const int kParamSlot0MaxOutput = 20; // c_Spark_kOutputMax_0
 
-// PID Slot 1 (IDs 30–37)
-const int kParamSlot1P = 30;
-const int kParamSlot1I = 31;
-const int kParamSlot1D = 32;
-const int kParamSlot1F = 33;
-const int kParamSlot1IZone = 34;
-const int kParamSlot1DFilter = 35;
-const int kParamSlot1MaxOutput = 36;
-const int kParamSlot1MinOutput = 37;
+// PID Slot 1 (IDs 21–28)
+const int kParamSlot1P = 21; // c_Spark_kP_1
+const int kParamSlot1I = 22; // c_Spark_kI_1
+const int kParamSlot1D = 23; // c_Spark_kD_1
+const int kParamSlot1F = 24; // c_Spark_kV_1
+const int kParamSlot1IZone = 25; // c_Spark_kIZone_1
+const int kParamSlot1DFilter = 26; // c_Spark_kDFilter_1
+const int kParamSlot1MinOutput = 27; // c_Spark_kOutputMin_1
+const int kParamSlot1MaxOutput = 28; // c_Spark_kOutputMax_1
 
-const int kParamSmartCurrentLimit = 35;
-const int kParamSecondaryCurrentLimit = 38;
+const int kParamSmartCurrentLimit = 59; // c_Spark_kSmartCurrentStallLimit
+const int kParamSmartCurrentFreeLimit = 60; // c_Spark_kSmartCurrentFreeLimit
+const int kParamSmartCurrentConfig = 61; // c_Spark_kSmartCurrentConfig
+const int kParamSecondaryCurrentLimit = 60; // alias for free-limit
 
-const int kParamForwardSoftLimit = 44;
-const int kParamForwardSoftLimitEnabled = 45;
-const int kParamReverseSoftLimit = 46;
-const int kParamReverseSoftLimitEnabled = 47;
+const int kParamCompensatedNominalVoltage = 75; // c_Spark_kCompensatedNominalVoltage
+const int kParamClosedLoopRampRate = 114; // c_Spark_kClosedLoopRampRate
 
-const int kParamFollowerId = 48;
-const int kParamFollowerConfig = 49;
+const int kParamForwardSoftLimit = 115; // c_Spark_kSoftLimitForward
+const int kParamForwardSoftLimitEnabled = 54; // c_Spark_kSoftLimitFwdEn
+const int kParamReverseSoftLimit = 116; // c_Spark_kSoftLimitReverse
+const int kParamReverseSoftLimitEnabled = 55; // c_Spark_kSoftLimitRevEn
 
-// FeedForward Slot 0 (provisional IDs — verify against firmware spec)
-// These correspond to the new FeedForwardConfig API that replaces the
-// deprecated kF velocity feedforward.
-const int kParamSlot0FfKs = 50;
-const int kParamSlot0FfKv = 51;
-const int kParamSlot0FfKa = 52;
-const int kParamSlot0FfKg = 53;
-const int kParamSlot0FfKcos = 54;
-const int kParamSlot0FfKcosRatio = 55;
+const int kParamFollowerId = 194; // c_Spark_kFollowerModeLeaderId
+const int kParamFollowerConfig = 195; // c_Spark_kFollowerModeIsInverted
 
-// FeedForward Slot 1 (provisional IDs)
-const int kParamSlot1FfKs = 56;
-const int kParamSlot1FfKv = 57;
-const int kParamSlot1FfKa = 58;
-const int kParamSlot1FfKg = 59;
-const int kParamSlot1FfKcos = 60;
-const int kParamSlot1FfKcosRatio = 61;
+// FeedForward Slot 0 — verified from REVLib 2026.0.4 headers.
+// NOTE: kV lives at kParamSlot0F (ID 16) — the old velocity-FF parameter.
+// kS, kA, kG, kCos, kCosRatio are new firmware params (IDs 204–208).
+// These require SPARK Flex or SPARK MAX firmware ≥25.0 to be accepted;
+// older firmware will return "Invalid parameter id".
+const int kParamSlot0FfKs = 204; // c_Spark_kS_0
+const int kParamSlot0FfKv = 16; // c_Spark_kV_0 (same as kParamSlot0F)
+const int kParamSlot0FfKa = 205; // c_Spark_kA_0
+const int kParamSlot0FfKg = 206; // c_Spark_kG_0
+const int kParamSlot0FfKcos = 207; // c_Spark_kCos_0
+const int kParamSlot0FfKcosRatio = 208; // c_Spark_kCosRatio_0
+
+// FeedForward Slot 1
+const int kParamSlot1FfKs = 209; // c_Spark_kS_1
+const int kParamSlot1FfKv = 24; // c_Spark_kV_1 (same as kParamSlot1F)
+const int kParamSlot1FfKa = 210; // c_Spark_kA_1
+const int kParamSlot1FfKg = 211; // c_Spark_kG_1
+const int kParamSlot1FfKcos = 212; // c_Spark_kCos_1
+const int kParamSlot1FfKcosRatio = 213; // c_Spark_kCosRatio_1
 
 // Idle modes
 const int kIdleModeCoast = 0;

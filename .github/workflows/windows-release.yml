@@ -24,28 +24,32 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build MSIX installer
-        run: dart run msix:create
+      - name: Build Windows executable
+        run: flutter build windows --release
 
-      - name: Find MSIX installer and read version
+      - name: Read version and package as ZIP
         id: package_info
         shell: pwsh
         run: |
-          $msixFile = Get-ChildItem -Path build -Recurse -Filter "*.msix" | Select-Object -First 1
-          if (-not $msixFile) { Write-Error "No .msix file found in build directory"; exit 1 }
-          echo "msix_path=$($msixFile.FullName)" >> $env:GITHUB_OUTPUT
-
           $content = Get-Content pubspec.yaml -Raw
           if ($content -match 'version:\s+(\S+)') {
             $version = $matches[1].Split('+')[0]
             echo "version=$version" >> $env:GITHUB_OUTPUT
           }
 
+          $buildDir = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $buildDir)) {
+            $buildDir = "build\windows\runner\Release"
+          }
+          $zipPath = "rev_system_identification-v$version-windows.zip"
+          Compress-Archive -Path "$buildDir\*" -DestinationPath $zipPath
+          echo "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.package_info.outputs.version }}
           name: Release v${{ steps.package_info.outputs.version }}
-          files: ${{ steps.package_info.outputs.msix_path }}
+          files: ${{ steps.package_info.outputs.zip_path }}
           generate_release_notes: true
           make_latest: true

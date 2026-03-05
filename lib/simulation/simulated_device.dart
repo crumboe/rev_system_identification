@@ -197,6 +197,7 @@ class SimulatedPidFfController {
   /// The SPARK's velocity PID computes:
   ///   output = kP*error + kI*integral + kD*derivative
   ///          + kS*sign(setpoint) + kV*setpoint
+  ///          + kG (elevator) or kCos*cos(pos) (arm)
   double computeVelocity(double setpointRpm, double dtSeconds) {
     final kP = _params.getParamSync(kParamSlot0P);
     final kI = _params.getParamSync(kParamSlot0I);
@@ -207,6 +208,9 @@ class SimulatedPidFfController {
 
     final ffKs = _params.getParamSync(kParamSlot0FfKs);
     final ffKv = _params.getParamSync(kParamSlot0FfKv);
+    final ffKg = _params.getParamSync(kParamSlot0FfKg);
+    final ffKcos = _params.getParamSync(kParamSlot0FfKcos);
+    final ffKcosRatio = _params.getParamSync(kParamSlot0FfKcosRatio);
 
     final measuredRpm = _physics.noisyVelocityRpm;
     final error = setpointRpm - measuredRpm;
@@ -223,15 +227,23 @@ class SimulatedPidFfController {
     _prevError = error;
     _firstTick = false;
 
-    // PID output (in volts, assuming voltage compensation mode)
-    final pidOutput = kP * error + kI * _integralAccum + kD * derivative;
+    // PID output is in duty-cycle units (autotuner divides by nominalVoltage).
+    // Convert to volts so it can be summed with feedforward (which is in volts).
+    final nomV = _physics.nominalVoltage;
+    final pidOutput = (kP * error + kI * _integralAccum + kD * derivative) * nomV;
 
-    // FeedForward: kS*sign(setpoint) + kV*setpoint
-    final ffOutput = ffKs * (setpointRpm > 0 ? 1.0 : (setpointRpm < 0 ? -1.0 : 0.0))
+    // FeedForward: kS*sign(setpoint) + kV*setpoint + gravity compensation
+    double ffOutput = ffKs * (setpointRpm > 0 ? 1.0 : (setpointRpm < 0 ? -1.0 : 0.0))
         + ffKv * setpointRpm;
+    ffOutput += ffKg; // constant gravity (elevators); 0 for non-elevator
+    if (ffKcos != 0.0) {
+      // Arm gravity: kCos * cos(position * kCosRatio * 2π)
+      final measuredPos = _physics.noisyPositionRotations;
+      final absRotations = measuredPos * (ffKcosRatio != 0 ? ffKcosRatio : 1.0);
+      ffOutput += ffKcos * _cos(absRotations * 2.0 * 3.14159265);
+    }
 
     // Total output clamped to nominal voltage range
-    final nomV = _physics.nominalVoltage;
     final total = pidOutput + ffOutput;
     return (total / nomV).clamp(minOut, maxOut) * nomV;
   }
@@ -269,8 +281,10 @@ class SimulatedPidFfController {
     _prevError = error;
     _firstTick = false;
 
-    // PID output
-    final pidOutput = kP * error + kI * _integralAccum + kD * derivative;
+    // PID output is in duty-cycle units (autotuner divides by nominalVoltage).
+    // Convert to volts so it can be summed with feedforward (which is in volts).
+    final nomV = _physics.nominalVoltage;
+    final pidOutput = (kP * error + kI * _integralAccum + kD * derivative) * nomV;
 
     // FeedForward: kS*sign(error) + kG (elevator) or kCos*cos(pos) (arm)
     // kV is NOT applied in position mode per REV docs
@@ -283,7 +297,6 @@ class SimulatedPidFfController {
       ffOutput += ffKcos * _cos(absRotations * 2.0 * 3.14159265);
     }
 
-    final nomV = _physics.nominalVoltage;
     final total = pidOutput + ffOutput;
     return (total / nomV).clamp(minOut, maxOut) * nomV;
   }
@@ -332,7 +345,7 @@ class SimulatedControlApi implements IControlApi {
       _physics.commandedVoltage =
           _pidFf!.computeVelocity(_activeSetpoint, dtSeconds);
     } else if (_activeControlType == kControlTypePosition ||
-        _activeControlType == kControlTypeSmartMotion) {
+        _activeControlType == kControlTypeMAXMotionPosition) {
       _physics.commandedVoltage =
           _pidFf!.computePosition(_activeSetpoint, dtSeconds);
     }
@@ -340,6 +353,7 @@ class SimulatedControlApi implements IControlApi {
 
   @override
   void setSetpoint(double value, int controlType, {int pidSlot = 0}) {
+    final previousControlType = _activeControlType;
     _activeControlType = controlType;
     _activeSetpoint = value;
 
@@ -350,8 +364,12 @@ class SimulatedControlApi implements IControlApi {
       _pidFf?.reset();
       _physics.commandedVoltage = value * _physics.nominalVoltage;
     } else {
-      // Closed-loop modes — first tick handled immediately
-      _pidFf?.reset();
+      // Closed-loop modes — only reset PID when switching from a different
+      // control type.  A real SPARK does NOT reset its PID state on every
+      // setpoint write; integral and derivative must accumulate.
+      if (previousControlType != controlType) {
+        _pidFf?.reset();
+      }
     }
   }
 
@@ -373,7 +391,7 @@ class SimulatedControlApi implements IControlApi {
 
   @override
   void setSmartMotion(double rotations, {int pidSlot = 0}) =>
-      setSetpoint(rotations, kControlTypeSmartMotion, pidSlot: pidSlot);
+      setSetpoint(rotations, kControlTypeMAXMotionPosition, pidSlot: pidSlot);
 
   @override
   void setCurrent(double amps, {int pidSlot = 0}) =>
@@ -451,7 +469,7 @@ class SimulatedParameterApi implements IParameterApi {
     kParamSlot0P: 0.0,
     kParamSlot0I: 0.0,
     kParamSlot0D: 0.0,
-    kParamSlot0F: 0.0,
+    kParamSlot0F: 0.0, // = kParamSlot0FfKv (same ID: velocity FF)
     kParamSlot0IZone: 0.0,
     kParamSlot0DFilter: 0.0,
     kParamSlot0MaxOutput: 1.0,
@@ -464,9 +482,8 @@ class SimulatedParameterApi implements IParameterApi {
     kParamReverseSoftLimitEnabled: 0.0,
     kParamFollowerId: 0.0,
     kParamFollowerConfig: 0.0,
-    // FeedForward Slot 0 defaults
+    // FeedForward Slot 0 defaults (kV omitted — shared with kParamSlot0F)
     kParamSlot0FfKs: 0.0,
-    kParamSlot0FfKv: 0.0,
     kParamSlot0FfKa: 0.0,
     kParamSlot0FfKg: 0.0,
     kParamSlot0FfKcos: 0.0,

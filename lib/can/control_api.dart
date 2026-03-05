@@ -51,9 +51,9 @@ class ControlApi implements IControlApi {
   void setPosition(double rotations, {int pidSlot = 0}) =>
       setSetpoint(rotations, kControlTypePosition, pidSlot: pidSlot);
 
-  /// Set SmartMotion setpoint in rotations (profiled closed-loop).
+  /// Set MAXMotion position setpoint in rotations (profiled closed-loop).
   void setSmartMotion(double rotations, {int pidSlot = 0}) =>
-      setSetpoint(rotations, kControlTypeSmartMotion, pidSlot: pidSlot);
+      setSetpoint(rotations, kControlTypeMAXMotionPosition, pidSlot: pidSlot);
 
   /// Set current setpoint in amps (closed-loop).
   void setCurrent(double amps, {int pidSlot = 0}) =>
@@ -120,7 +120,12 @@ class ControlApi implements IControlApi {
 
   /// Configure frame rates optimized for system identification data
   /// collection (fast velocity & position, slower everything else).
+  ///
+  /// Sends both the legacy frame-rate CAN commands (apiClass 0x07) AND
+  /// writes the status-period parameters (IDs 158–165, 199, 224) so that
+  /// both old (<25.0) and new (≥25.0) firmware respects the settings.
   void configureForSysId() {
+    // Legacy frame-rate commands (apiClass 0x07).
     setStatusFrameRate(0, 10); // Applied output — 10ms
     setStatusFrameRate(1, 10); // Velocity, voltage, current — 10ms
     setStatusFrameRate(2, 10); // Position — 10ms

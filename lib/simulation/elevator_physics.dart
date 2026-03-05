@@ -67,7 +67,7 @@ class ElevatorPhysics implements SimulatedPhysics {
     this.currentPerVolt = 3.5,
     this.noiseLevel = 0.015,
     this.minPositionIn = 0.0,
-    this.maxPositionIn = 48.0,
+    this.maxPositionIn = 78.74,  // ~2 meters
     this.inchesPerRotation = 1.504,  // ~1.5" sprocket with 16:1 reduction
     int? randomSeed,
   }) : _rng = Random(randomSeed);

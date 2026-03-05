@@ -194,18 +194,127 @@ StatusFrame4 parseStatusFrame4(Uint8List payload) {
 /// Determine which status frame a [SparkResponse] represents and parse it.
 ///
 /// Returns `null` if the response is not a status frame.
+/// Supports both the legacy protocol (apiClass 0x06, firmware <25.0) and
+/// the new protocol (apiClass 0x2E, firmware ≥25.0).
 Object? parseStatusFrame(SparkResponse response) {
-  if (response.apiClass != kApiClassStatus) return null;
+  // Legacy status frames (apiClass 0x06) — firmware <25.0 or backward-compat.
+  // NOTE: On firmware ≥25.0, legacy Status 0 sends DUMMY data
+  // (applied_output=0, all faults set). It exists only so old SPARKs
+  // trying to follow this one don't move unexpectedly.
+  if (response.apiClass == kApiClassStatus) {
+    return switch (response.apiIndex) {
+      kStatusIndex0 => parseStatusFrame0(response.payload),
+      kStatusIndex1 => parseStatusFrame1(response.payload),
+      kStatusIndex2 => parseStatusFrame2(response.payload),
+      kStatusIndex3 => parseStatusFrame3(response.payload),
+      kStatusIndex4 => parseStatusFrame4(response.payload),
+      kStatusIndex5 => StatusFrame5(
+          absoluteEncoderPosition:
+              readFloat32(response.payload, 0)),
+      _ => null,
+    };
+  }
 
-  return switch (response.apiIndex) {
-    kStatusIndex0 => parseStatusFrame0(response.payload),
-    kStatusIndex1 => parseStatusFrame1(response.payload),
-    kStatusIndex2 => parseStatusFrame2(response.payload),
-    kStatusIndex3 => parseStatusFrame3(response.payload),
-    kStatusIndex4 => parseStatusFrame4(response.payload),
-    kStatusIndex5 => StatusFrame5(
-        absoluteEncoderPosition:
-            readFloat32(response.payload, 0)),
-    _ => null,
-  };
+  // New status frames (apiClass 0x2E) — firmware ≥25.0 (2026.0.4 protocol).
+  // These carry the REAL telemetry data. When these arrive, they should
+  // be preferred over legacy frames for populating cached status.
+  if (response.apiClass == kApiClassNewStatus) {
+    return switch (response.apiIndex) {
+      kNewStatusIndex0 => parseNewStatusFrame0(response.payload),
+      kNewStatusIndex2 => parseNewStatusFrame2(response.payload),
+      _ => null,
+    };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// New protocol status frame parsers (firmware ≥25.0)
+// ---------------------------------------------------------------------------
+
+/// Parse new-protocol Status Frame 0 (apiClass 0x2E, index 0).
+///
+/// Byte layout (from CANSparkFrames.h `spark_status_0_t`):
+///   Bytes 0–1: int16_t applied_output (scale ≈ 3.082e−5 → [-1, +1])
+///   Bytes 2–3: uint16_t voltage       (scale ≈ 0.00733 → Volts)
+///   Bytes 4–5: uint16_t current       (scale ≈ 0.03663 → Amps)
+///   Byte  6:   uint8_t  motor_temperature (°C)
+///   Byte  7:   packed flags (limit switches, inverted, model, etc.)
+///
+/// This replaces the legacy Status 0 + Status 1 combined, since the new
+/// Status 0 contains voltage, current, and temperature that had been in
+/// the old Status 1.
+StatusFrame0 parseNewStatusFrame0AsLegacy0(Uint8List payload) {
+  final bd = ByteData.sublistView(payload);
+  final rawOutput = bd.getInt16(0, Endian.little);
+  // Scale per header: 3.082369457075716e-05, but ≈ 1/32443 ≈ 1/32767 range.
+  final appliedOutput = rawOutput * 3.082369457075716e-05;
+
+  // Byte 7 packed flags — we map to legacy "flags" field.
+  final flags = payload[7];
+
+  return StatusFrame0(
+    appliedOutput: appliedOutput,
+    faults: 0,        // Individual faults are now in new Status 1
+    stickyFaults: 0,
+    flags: flags,
+  );
+}
+
+/// Parse new-protocol Status Frame 0 and extract the Status 1-equivalent
+/// data (voltage, current, temperature) that used to live in legacy Status 1.
+StatusFrame1 parseNewStatusFrame0AsLegacy1(Uint8List payload) {
+  final bd = ByteData.sublistView(payload);
+  final rawVoltage = bd.getUint16(2, Endian.little);
+  final rawCurrent = bd.getUint16(4, Endian.little);
+  final temperatureC = payload[6];
+
+  // Scale factors from CANSparkFrames.h:
+  final busVoltage = rawVoltage * 0.0073260073260073;
+  final outputCurrentAmps = rawCurrent * 0.0366300366300366;
+
+  return StatusFrame1(
+    velocityRpm: 0.0,  // Velocity is now in new Status 2
+    temperatureC: temperatureC,
+    busVoltage: busVoltage,
+    outputCurrentAmps: outputCurrentAmps,
+  );
+}
+
+/// Combined parse of new-protocol Status Frame 0 returning both a
+/// [StatusFrame0] and a partial [StatusFrame1] (voltage/current/temp).
+///
+/// Call this once and split the result to update both cached frames.
+({StatusFrame0 status0, StatusFrame1 partialStatus1}) parseNewStatusFrame0(
+    Uint8List payload) {
+  return (
+    status0: parseNewStatusFrame0AsLegacy0(payload),
+    partialStatus1: parseNewStatusFrame0AsLegacy1(payload),
+  );
+}
+
+/// Parse new-protocol Status Frame 2 (apiClass 0x2E, index 2).
+///
+/// Byte layout (from CANSparkFrames.h `spark_status_2_t`):
+///   Bytes 0–3: float32 primary_encoder_velocity (RPM by default)
+///   Bytes 4–7: float32 primary_encoder_position (rotations by default)
+///
+/// This single frame replaces both legacy Status 1 (velocity) and
+/// legacy Status 2 (position).
+({StatusFrame1? velocityUpdate, StatusFrame2 status2}) parseNewStatusFrame2(
+    Uint8List payload) {
+  final bd = ByteData.sublistView(payload);
+  final velocityRpm = bd.getFloat32(0, Endian.little);
+  final positionRotations = bd.getFloat32(4, Endian.little);
+
+  return (
+    velocityUpdate: StatusFrame1(
+      velocityRpm: velocityRpm,
+      temperatureC: 0,        // Temp is in new Status 0 now
+      busVoltage: 0.0,        // Voltage is in new Status 0 now
+      outputCurrentAmps: 0.0, // Current is in new Status 0 now
+    ),
+    status2: StatusFrame2(positionRotations: positionRotations),
+  );
 }

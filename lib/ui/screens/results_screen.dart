@@ -130,6 +130,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   pid: _velPid!,
                   ff: _ff,
                   mode: _PidMode.velocity,
+                  config: config,
                 )),
               const SizedBox(width: 12),
               if (_posPid != null)
@@ -138,17 +139,29 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   pid: _posPid!,
                   ff: _ff,
                   mode: _PidMode.position,
+                  config: config,
                 )),
             ],
           ),
 
           const SizedBox(height: 16),
 
-          // Write to controller button
+          // Write to controller buttons
           if (ref.read(deviceManagerProvider).leader != null)
-            FilledButton(
-              onPressed: () => _writeGainsToController(ref, config.type),
-              child: const Text('Write Gains to Controller'),
+            Row(
+              children: [
+                FilledButton(
+                  onPressed: () => _writeGainsToController(
+                    ref, config.type, _WriteMode.velocity),
+                  child: const Text('Write Velocity Gains'),
+                ),
+                const SizedBox(width: 12),
+                FilledButton(
+                  onPressed: () => _writeGainsToController(
+                    ref, config.type, _WriteMode.position),
+                  child: const Text('Write Position Gains'),
+                ),
+              ],
             ),
 
           const SizedBox(height: 24),
@@ -256,10 +269,12 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     }
   }
 
-  Future<void> _writeGainsToController(WidgetRef ref, MechanismType mechType) async {
+  Future<void> _writeGainsToController(
+    WidgetRef ref, MechanismType mechType, _WriteMode writeMode,
+  ) async {
     final device = ref.read(deviceManagerProvider).leader;
     final config = ref.read(mechanismConfigProvider);
-    if (device == null || _velPid == null || _ff == null) return;
+    if (device == null || _ff == null) return;
 
     // Conversion factors scale user-unit gains → native controller units.
     // The SPARK CAN protocol always uses RPM for velocity setpoints and
@@ -269,14 +284,27 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final pcf = config.positionConversionFactor; // user_pos per rotation
 
     try {
-      // Write velocity PID gains (kP, kI, kD) to Slot 0, scaled to native
-      // RPM units.  kP_native = kP_user × VCF (error in RPM → duty cycle).
-      await device.parameters.setPidSlot0(
-        p: _velPid!.kP * vcf,
-        i: _velPid!.kI * vcf,
-        d: _velPid!.kD * vcf,
-        f: 0.0,
-      );
+      if (writeMode == _WriteMode.velocity && _velPid != null) {
+        // Write velocity PID gains (kP, kI, kD) to Slot 0, scaled to native
+        // RPM units.  kP_native = kP_user × VCF (error in RPM → duty cycle).
+        await device.parameters.setPidSlot0(
+          p: _velPid!.kP * vcf,
+          i: _velPid!.kI * vcf,
+          d: _velPid!.kD * vcf,
+          f: 0.0,
+        );
+      } else if (writeMode == _WriteMode.position && _posPid != null) {
+        // Write position PID gains to Slot 0, scaled to native rotation
+        // units.  kP_native = kP_user × PCF (error in rotations → duty cycle).
+        await device.parameters.setPidSlot0(
+          p: _posPid!.kP * pcf,
+          i: _posPid!.kI * pcf,
+          d: _posPid!.kD * pcf,
+          f: 0.0,
+        );
+      } else {
+        return;
+      }
 
       // Write feedforward gains to Slot 0 FeedForwardConfig.
       // kV and kA are scaled by VCF to convert V/(user_vel) → V/RPM.
@@ -308,11 +336,13 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       await device.parameters.burnFlash();
 
       if (mounted) {
+        final modeLabel = writeMode == _WriteMode.velocity
+            ? 'Velocity' : 'Position';
         await displayInfoBar(context, builder: (ctx, close) {
           return InfoBar(
             title: const Text('Success'),
-            content: const Text(
-              'PID + FeedForward gains written to controller and saved to flash.',
+            content: Text(
+              '$modeLabel PID + FeedForward gains written to controller and saved to flash.',
             ),
             severity: InfoBarSeverity.success,
             action: IconButton(
@@ -397,7 +427,6 @@ class _GainsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final posUnit = config.positionUnit;
     final velUnit = config.velocityUnit;
 
     return Card(
@@ -419,7 +448,7 @@ class _GainsTable extends StatelessWidget {
           ),
           _GainRow(
             'kV (Velocity)',
-            '${ff.kV.toStringAsFixed(5)} V·s/$posUnit',
+            '${ff.kV.toStringAsFixed(5)} V/$velUnit',
             tooltip:
                 'kV — Velocity Constant\n\n'
                 'The voltage required per unit of velocity ($velUnit) '
@@ -433,7 +462,7 @@ class _GainsTable extends StatelessWidget {
           ),
           _GainRow(
             'kA (Acceleration)',
-            '${ff.kA.toStringAsFixed(5)} V·s²/$posUnit',
+            '${ff.kA.toStringAsFixed(5)} V·s/$velUnit',
             tooltip:
                 'kA — Acceleration Constant\n\n'
                 'The voltage required per unit of acceleration to '
@@ -553,18 +582,21 @@ class _GainRow extends StatelessWidget {
 }
 
 enum _PidMode { velocity, position }
+enum _WriteMode { velocity, position }
 
 class _PidCard extends StatefulWidget {
   final String title;
   final PidResult pid;
   final FeedforwardGains? ff;
   final _PidMode mode;
+  final MechanismConfig? config;
 
   const _PidCard({
     required this.title,
     required this.pid,
     this.ff,
     this.mode = _PidMode.velocity,
+    this.config,
   });
 
   @override
@@ -573,6 +605,16 @@ class _PidCard extends StatefulWidget {
 
 class _PidCardState extends State<_PidCard> {
   bool _showExplanation = false;
+
+  String get _pidUnitNote {
+    final cfg = widget.config;
+    if (cfg == null) return '';
+    if (widget.mode == _PidMode.velocity) {
+      return 'Units: duty-cycle per ${cfg.velocityUnit}';
+    } else {
+      return 'Units: duty-cycle per ${cfg.positionUnit}';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -606,11 +648,14 @@ class _PidCardState extends State<_PidCard> {
             ],
           ),
           const SizedBox(height: 8),
-          _GainRow('kP', widget.pid.kP.toStringAsFixed(6)),
+          _GainRow('kP', widget.pid.kP.toStringAsFixed(6),
+            tooltip: _pidUnitNote),
           _GainRow('kI', widget.pid.kI.toStringAsFixed(6)),
           _GainRow('kD', widget.pid.kD.toStringAsFixed(6)),
           const SizedBox(height: 4),
           Text(
+            'These are user-unit gains — use them directly in WPILib\n'
+            'after setting your encoder\'s conversion factors.\n'
             'Feedforward gains (kS, kV, kA, kG) are configured\n'
             'separately via FeedForwardConfig on the controller.',
             style: TextStyle(

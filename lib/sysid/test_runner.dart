@@ -118,13 +118,12 @@ class TestRunner {
     // Clear any ramp rate (we want instant response for dynamic tests).
     await params.setOpenLoopRampRate(0.0);
 
-    // Set conversion factors.
-    await params.setPositionConversionFactor(
-      mechanismConfig.positionConversionFactor,
-    );
-    await params.setVelocityConversionFactor(
-      mechanismConfig.velocityConversionFactor,
-    );
+    // Set conversion factors to 1.0 on the controller — this app reads
+    // raw RPM/rotations from CAN status frames and converts client-side.
+    // Writing the actual user factors would risk double-conversion since
+    // the SPARK firmware does NOT apply them to CAN status frame values.
+    await params.setPositionConversionFactor(1.0);
+    await params.setVelocityConversionFactor(1.0);
 
     // Set motor inversion.
     await params.setMotorInverted(mechanismConfig.motorInverted);

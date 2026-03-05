@@ -58,7 +58,7 @@ class ValidationParams {
     return switch (type) {
       MechanismType.flywheel => const ValidationParams(
           velocitySetpoint: 1000.0, // RPM
-          positionSetpoint: 0,      // not used
+          positionSetpoint: 10.0,   // rotations
           holdDuration: 3.0,
           settleDuration: 2.0,
         ),

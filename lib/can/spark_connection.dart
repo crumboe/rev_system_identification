@@ -138,10 +138,16 @@ class SparkConnection implements ISparkConnection {
 
   /// Stream of only status frames, parsed into typed objects.
   Stream<Object> get statusFrames => _responseController.stream
-      .where((r) => r.apiClass == kApiClassStatus)
+      .where((r) =>
+          r.apiClass == kApiClassStatus ||
+          r.apiClass == kApiClassNewStatus)
       .map((r) => parseStatusFrame(r))
       .where((obj) => obj != null)
       .cast<Object>();
+
+  /// Whether we have received at least one new-protocol status frame.
+  /// Once true, we prefer new-protocol data over legacy data.
+  bool _usingNewProtocol = false;
 
   void _onDataReceived(Uint8List data) {
     _rxBuffer.add(data);
@@ -156,8 +162,50 @@ class SparkConnection implements ISparkConnection {
 
       final response = decodePacket(packet);
 
-      // Update cached status frames.
-      if (response.apiClass == kApiClassStatus) {
+      // Update cached status frames — support BOTH legacy and new protocol.
+      //
+      // Legacy protocol (apiClass 0x06, firmware <25.0):
+      //   Status 0 → applied output, faults
+      //   Status 1 → velocity, temp, voltage, current
+      //   Status 2 → position
+      //
+      // New protocol (apiClass 0x2E, firmware ≥25.0):
+      //   New Status 0 → applied output, voltage, current, temp
+      //   New Status 2 → velocity + position
+      //
+      // Once we see a new-protocol frame, we stop updating from legacy
+      // frames (which send dummy data on ≥25.0 firmware).
+      if (response.apiClass == kApiClassNewStatus) {
+        _usingNewProtocol = true;
+        final parsed = parseStatusFrame(response);
+        if (parsed is ({StatusFrame0 status0, StatusFrame1 partialStatus1})) {
+          // New Status 0 provides applied output AND voltage/current/temp.
+          lastStatus0 = parsed.status0;
+          // Merge voltage/current/temp from new Status 0 with velocity from
+          // new Status 2 (which may have arrived separately).
+          final prev = lastStatus1;
+          lastStatus1 = StatusFrame1(
+            velocityRpm: prev?.velocityRpm ?? 0.0,
+            temperatureC: parsed.partialStatus1.temperatureC,
+            busVoltage: parsed.partialStatus1.busVoltage,
+            outputCurrentAmps: parsed.partialStatus1.outputCurrentAmps,
+          );
+        } else if (parsed
+            is ({StatusFrame1? velocityUpdate, StatusFrame2 status2})) {
+          // New Status 2 provides velocity + position.
+          lastStatus2 = parsed.status2;
+          if (parsed.velocityUpdate != null) {
+            final prev = lastStatus1;
+            lastStatus1 = StatusFrame1(
+              velocityRpm: parsed.velocityUpdate!.velocityRpm,
+              temperatureC: prev?.temperatureC ?? 0,
+              busVoltage: prev?.busVoltage ?? 0.0,
+              outputCurrentAmps: prev?.outputCurrentAmps ?? 0.0,
+            );
+          }
+        }
+      } else if (response.apiClass == kApiClassStatus && !_usingNewProtocol) {
+        // Only use legacy frames if we haven't seen new-protocol frames.
         final parsed = parseStatusFrame(response);
         if (parsed is StatusFrame0) lastStatus0 = parsed;
         if (parsed is StatusFrame1) lastStatus1 = parsed;
