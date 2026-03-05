@@ -60,6 +60,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   riverpod_generator: ^2.6.0
   build_runner: ^2.4.0
+  msix: ^3.16.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -102,3 +103,10 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+msix_config:
+  display_name: REV System Identification
+  publisher_display_name: crumboe
+  identity_name: com.crumboe.revsystemidentification
+  msix_version: 1.0.0.0
+  install_certificate: false
