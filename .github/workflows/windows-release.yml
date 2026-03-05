@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:  # Allow manual trigger from Actions tab
 
 permissions:
   contents: write
@@ -15,6 +16,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history + tags for version detection
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -31,9 +34,6 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          # Fetch all tags so we can find the latest vX.Y.Z
-          git fetch --tags --force
-
           # Find the highest semver tag matching v*.*.*
           $tags = git tag -l 'v*' | Where-Object { $_ -match '^v(\d+)\.(\d+)\.(\d+)$' }
           if ($tags) {
