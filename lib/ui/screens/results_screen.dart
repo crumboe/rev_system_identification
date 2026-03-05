@@ -18,6 +18,7 @@ import '../../sysid/pid_autotuner.dart';
 import '../widgets/bode_plot.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
+import '../widgets/pole_zero_map.dart';
 
 class ResultsScreen extends ConsumerStatefulWidget {
   const ResultsScreen({super.key});
@@ -221,6 +222,22 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           SizedBox(
             height: 350,
             child: BodePlot(
+              ff: _ff!,
+              velPid: _velPid,
+              posPid: _posPid,
+            ),
+          ),
+
+          // Pole-Zero Map
+          const SizedBox(height: 24),
+          const Text(
+            'Pole-Zero Map',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 350,
+            child: PoleZeroMap(
               ff: _ff!,
               velPid: _velPid,
               posPid: _posPid,

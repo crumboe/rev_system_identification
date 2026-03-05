@@ -461,14 +461,14 @@ class _BodePlotState extends State<BodePlot> {
 
   Widget _buildMarginsBanner(StabilityMargins m) {
     final gm = m.gainMarginDb.isInfinite
-        ? '∞'
+        ? 'inf'
         : '${m.gainMarginDb.toStringAsFixed(1)} dB';
     final pm = m.phaseMarginDeg.isInfinite
-        ? '∞'
-        : '${m.phaseMarginDeg.toStringAsFixed(1)}°';
+        ? 'inf'
+        : '${m.phaseMarginDeg.toStringAsFixed(1)} deg';
     final bw = m.bandwidthRadPerSec > 0
         ? '${(m.bandwidthRadPerSec / (2 * math.pi)).toStringAsFixed(1)} Hz'
-        : '—';
+        : '--';
 
     final stable = (m.gainMarginDb.isInfinite || m.gainMarginDb > 0) &&
         (m.phaseMarginDeg.isInfinite || m.phaseMarginDeg > 0);
@@ -478,7 +478,7 @@ class _BodePlotState extends State<BodePlot> {
       child: InfoBar(
         title: Text(stable ? 'Stable' : 'Unstable'),
         content: Text(
-          'Gain Margin: $gm  •  Phase Margin: $pm  •  Bandwidth: $bw',
+          'Gain Margin: $gm  |  Phase Margin: $pm  |  Bandwidth: $bw',
         ),
         severity:
             stable ? InfoBarSeverity.success : InfoBarSeverity.error,
