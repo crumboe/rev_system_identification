@@ -25,27 +25,43 @@ REV System Identification - TODO List
         notebooks (a scored competition component).
         Files: new lib/data/report_generator.dart, results_screen.dart
 
-[ ] 17. Unit Test Coverage
+[x] 17. Unit Test Coverage
         Add comprehensive tests:
         - OLS regression unit tests with known-answer datasets
         - CAN packet encode/decode round-trip tests
         - Simulation physics accuracy tests against analytical solutions
         - Widget tests for critical screens (safety dialog, test execution)
         Files: test/ directory
+        DONE: 213 tests across 11 files — spark_protocol (35), status_parser (27),
+        feedforward_analyzer (15), mechanism (24), physics (33), simulated_pid_ff (20),
+        maxmotion_profile (5), validation_result (16), pid_autotuner (12),
+        test_data (6), validation_gain_conversion (15), widget_test (1). All green.
 
-[ ] 19. Interactive Plant Model Visualizer
+[x] 19. Interactive Plant Model Visualizer
         New screen with system block diagram: V → [Motor+Mechanism] → ω.
         Students adjust kS, kV, kA, kG sliders and watch the simulated step
         response change in real-time. Builds intuition about what each
         feedforward constant physically means. Reuse existing simulation engines.
         Files: new lib/ui/screens/plant_visualizer_screen.dart
+        DONE: New "Plant Model" tab (index 6) with mechanism selector, kS/kV/kA/kG
+        sliders, step voltage/duration controls, three charts (velocity, position,
+        voltage), block diagram with steady-state annotation, compare mode to
+        freeze & overlay curves, educational walkthrough. 17 unit tests.
 
-[ ] 20. Bode Plot / Frequency Response Display
+[x] 20. Bode Plot / Frequency Response Display
         From identified kV and kA, compute and display the open-loop Bode plot
         of the first-order (velocity) or second-order (position) plant. Overlay
         the closed-loop response with tuned PID gains. Annotate gain margin,
         phase margin, and bandwidth.
         Files: new lib/ui/widgets/bode_plot.dart, results_screen.dart
+        DONE: New BodePlot widget with magnitude (dB) and phase (°) charts.
+        Shows plant G(s), open-loop L(s)=C(s)·G(s), closed-loop T(s)=L/(1+L).
+        Velocity/position mode toggle, clickable legend to show/hide traces,
+        gain margin & phase margin & bandwidth annotations with stability
+        InfoBar. Integrated into Results screen after diagnostic plots.
+        27 unit tests covering frequency response computation, known-answer
+        checks (corner freq magnitude/phase), rolloff slopes, stability margins,
+        and edge cases.
 
 [ ] 21. Pole-Zero Map Visualization
         Show closed-loop poles on the s-plane. Let students see how changing PID
@@ -53,6 +69,9 @@ REV System Identification - TODO List
         unstable. Color-code the stability regions. Connects pid_autotuner.dart
         math to visual intuition.
         Files: new lib/ui/widgets/pole_zero_map.dart, results_screen.dart
+
+[ ] 21.5 GAIN MARGIN, PHASE MARGIN, AND BANDWIDTH SHOW CHARACTERS THAT ARE NOT DEFINED AND SHOW UP AS THE X IN A BOX CHARACTER INSTEAD. CHANGE FONT OR FIND A WAY TO 
+        DISPLAY THOSE NUMBERS BETTER
 
 [ ] 22. Step-by-Step Regression Walkthrough (Simulation Only)
         "Explain the Math" mode on results screen walks through OLS regression:

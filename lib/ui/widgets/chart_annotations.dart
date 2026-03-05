@@ -6,6 +6,8 @@ library;
 
 import 'package:fluent_ui/fluent_ui.dart' show FluentIcons;
 
+import '../../data/test_data.dart';
+import '../widgets/bode_plot.dart';
 import 'chart_walkthrough.dart';
 
 // ---------------------------------------------------------------------------
@@ -202,6 +204,177 @@ List<WalkthroughStep> liveChartWalkthroughSteps() {
           '\u2022 Position exceeding soft limits = stop immediately!\n\n'
           'Use the EMERGENCY STOP button (top right) if anything looks wrong.',
       icon: FluentIcons.warning,
+    ),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Bode Plot walkthrough (frequency response)
+// ---------------------------------------------------------------------------
+
+/// Walkthrough steps for the Bode plot (frequency response).
+List<WalkthroughStep> bodeWalkthroughSteps({
+  required BodePlotMode mode,
+  required FeedforwardGains ff,
+  StabilityMargins? margins,
+}) {
+  final isVelocity = mode == BodePlotMode.velocity;
+  final plantOrder = isVelocity ? 'first-order' : 'second-order';
+  final plantEq = isVelocity
+      ? 'G(s) = 1 / (kA\u00b7s + kV)'
+      : 'G(s) = 1 / (kA\u00b7s\u00b2 + kV\u00b7s)';
+  final cornerDesc = isVelocity
+      ? 'The corner frequency is kV/kA = '
+          '${ff.kA > 0 ? (ff.kV / ff.kA).toStringAsFixed(1) : "\u221e"} rad/s. '
+          'Below this frequency the plant passes signals through; above it, '
+          'the output rolls off at \u221220 dB per decade.'
+      : 'The plant has an integrator (1/s) plus a first-order lag, so it '
+          'already starts rolling off from very low frequencies. The combined '
+          'rolloff is \u221240 dB per decade at high frequency.';
+
+  String marginDesc;
+  if (margins != null &&
+      !margins.phaseMarginDeg.isInfinite &&
+      margins.phaseMarginFreq > 0) {
+    marginDesc =
+        'Your current phase margin is ${margins.phaseMarginDeg.toStringAsFixed(1)}\u00b0 '
+        'at ${margins.phaseMarginFreq.toStringAsFixed(1)} rad/s.';
+  } else {
+    marginDesc = 'Your system has infinite phase margin (very stable).';
+  }
+
+  String gmDesc;
+  if (margins != null &&
+      !margins.gainMarginDb.isInfinite &&
+      margins.gainMarginFreq > 0) {
+    gmDesc =
+        'Your gain margin is ${margins.gainMarginDb.toStringAsFixed(1)} dB '
+        'at ${margins.gainMarginFreq.toStringAsFixed(1)} rad/s. You could '
+        'multiply your gains by up to '
+        '${(margins.gainMarginDb / 20.0).toStringAsFixed(1)}x before instability.';
+  } else {
+    gmDesc = 'Your system has infinite gain margin \u2014 the phase never '
+        'reaches \u2212180\u00b0, so no amount of proportional gain alone '
+        'would destabilize it.';
+  }
+
+  String bwDesc;
+  if (margins != null && margins.bandwidthRadPerSec > 0) {
+    final bwHz = margins.bandwidthRadPerSec / (2 * 3.14159265);
+    bwDesc = 'Your closed-loop bandwidth is '
+        '${bwHz.toStringAsFixed(1)} Hz. Disturbances slower than this will '
+        'be rejected; faster ones will pass through.';
+  } else {
+    bwDesc = 'Bandwidth could not be determined \u2014 the closed-loop gain '
+        'may not drop to \u22123 dB within the plotted range.';
+  }
+
+  return [
+    const WalkthroughStep(
+      title: 'What is a Bode plot?',
+      description:
+          'A Bode plot shows how a system responds to sinusoidal inputs at '
+          'different frequencies. Instead of a single step input (like a step '
+          'response), we ask: "If I wiggle the input at 1 Hz, 10 Hz, 100 Hz, '
+          'etc., how big is the output and how delayed is it?"\n\n'
+          'The top chart shows MAGNITUDE (how much the output is amplified or '
+          'attenuated, in dB). The bottom chart shows PHASE (how much the '
+          'output lags behind the input, in degrees).',
+      icon: FluentIcons.chart_series,
+    ),
+    WalkthroughStep(
+      title: 'The Plant Transfer Function',
+      description:
+          'Your identified motor model is a $plantOrder system:\n\n'
+          '  $plantEq\n\n'
+          'where kV = ${ff.kV.toStringAsFixed(4)} and '
+          'kA = ${ff.kA.toStringAsFixed(4)}.\n\n'
+          '$cornerDesc',
+      icon: FluentIcons.variable_group,
+    ),
+    const WalkthroughStep(
+      title: 'The Three Traces',
+      description:
+          'Dashed blue = Plant G(s) alone (no controller).\n'
+          'Solid orange = Open-loop L(s) = C(s)\u00b7G(s), which is the '
+          'plant with the PID controller in series.\n'
+          'Solid green = Closed-loop T(s) = L/(1+L), which is what you '
+          'actually get when feedback is connected.\n\n'
+          'Click any legend item to show/hide that trace.',
+      icon: FluentIcons.filter,
+    ),
+    const WalkthroughStep(
+      title: 'Reading the Magnitude Chart',
+      description:
+          '0 dB means the output equals the input. Positive dB = amplification, '
+          'negative dB = attenuation.\n\n'
+          'Key things to look for:\n'
+          '\u2022 Where the open-loop (orange) crosses 0 dB \u2014 this is '
+          'the "gain crossover frequency"\n'
+          '\u2022 The closed-loop (green) should be flat near 0 dB at low '
+          'frequencies (good tracking) and roll off at high frequencies\n'
+          '\u2022 Any resonant peak in the closed-loop suggests underdamping',
+      icon: FluentIcons.up,
+    ),
+    const WalkthroughStep(
+      title: 'Reading the Phase Chart',
+      description:
+          'Phase shows how much the output signal lags behind the input.\n\n'
+          '0\u00b0 = perfectly in phase (output tracks input instantly)\n'
+          '\u221290\u00b0 = quarter-cycle lag (first-order system at corner freq)\n'
+          '\u2212180\u00b0 = half-cycle lag (DANGER \u2014 your correction '
+          'pushes the WRONG way!)\n\n'
+          'The dashed grey line marks \u2212180\u00b0. If the open-loop '
+          'has gain > 0 dB when phase reaches \u2212180\u00b0, the system '
+          'is unstable.',
+      icon: FluentIcons.sync_folder,
+    ),
+    WalkthroughStep(
+      title: 'Phase Margin \u2014 How Close to Instability?',
+      description:
+          'Phase margin = how many extra degrees of phase lag the system '
+          'can tolerate before going unstable.\n\n'
+          'It is measured at the gain crossover frequency (where |L| = 0 dB): '
+          'phase margin = phase + 180\u00b0.\n\n'
+          '$marginDesc\n\n'
+          'For FRC robots, 30\u201360\u00b0 of phase margin is typical and safe. '
+          'Below 20\u00b0 you\u2019ll see oscillations.',
+      icon: FluentIcons.warning,
+    ),
+    WalkthroughStep(
+      title: 'Gain Margin \u2014 How Much Extra Gain?',
+      description:
+          'Gain margin asks: "How much could I multiply the controller gain '
+          'before the system goes unstable?"\n\n'
+          'It is measured where the phase crosses \u2212180\u00b0. The gain '
+          'margin is the distance (in dB) from |L| down to 0 dB at that '
+          'frequency. The red vertical line on the magnitude chart shows this.\n\n'
+          '$gmDesc',
+      icon: FluentIcons.scale_volume,
+    ),
+    WalkthroughStep(
+      title: 'Bandwidth \u2014 How Fast Can You Go?',
+      description:
+          'Bandwidth is the frequency where the closed-loop magnitude drops '
+          'to \u22123 dB (half power). It tells you how fast the system can '
+          'respond to commands.\n\n'
+          '$bwDesc\n\n'
+          'Higher bandwidth = faster response, but also more sensitivity to '
+          'noise and resonance.',
+      icon: FluentIcons.speed_high,
+    ),
+    const WalkthroughStep(
+      title: 'What to Do With This Information',
+      description:
+          'If phase margin is low (< 30\u00b0):\n'
+          '  \u2192 Reduce kP or increase the desired time constant\n\n'
+          'If bandwidth is too low (slow response):\n'
+          '  \u2192 Increase kP carefully, watching phase margin\n\n'
+          'If the closed-loop shows a resonant peak:\n'
+          '  \u2192 Add or increase kD (derivative) to add damping\n\n'
+          'The Bode plot lets you predict these effects BEFORE testing '
+          'on the actual robot!',
+      icon: FluentIcons.lightbulb,
     ),
   ];
 }

@@ -6,6 +6,7 @@
 library;
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:pdf/pdf.dart';
@@ -13,6 +14,7 @@ import 'package:pdf/widgets.dart' as pw;
 
 import '../mechanisms/mechanism.dart';
 import '../sysid/validation_runner.dart';
+import '../ui/widgets/bode_plot.dart';
 import 'test_data.dart';
 
 /// Generates a PDF report summarising system identification results.
@@ -64,6 +66,80 @@ class ReportGenerator {
         ),
       ),
     );
+
+    // ── Page 2: Diagnostic Plots ──────────────────────────────────────
+    final qsRuns = testRuns.where((r) => r.testType.isQuasistatic).toList();
+    final dynRuns = testRuns.where((r) => r.testType.isDynamic).toList();
+    final hasPlotData = testRuns.isNotEmpty;
+    final hasBode = ff.kA > 0 && ff.kV > 0;
+
+    if (hasPlotData || hasBode) {
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.letter,
+          margin: const pw.EdgeInsets.all(40),
+          build: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Diagnostic Plots',
+                style: pw.TextStyle(
+                    fontSize: 18, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Divider(thickness: 1),
+              pw.SizedBox(height: 8),
+              if (hasPlotData)
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: _buildModelFitChart(
+                        [...qsRuns, ...dynRuns],
+                        ff,
+                        config.type,
+                      ),
+                    ),
+                    pw.SizedBox(width: 12),
+                    pw.Expanded(
+                      child: _buildStepResponseChart(dynRuns),
+                    ),
+                  ],
+                ),
+              if (hasPlotData) pw.SizedBox(height: 16),
+              if (hasBode) ...[
+                pw.Text(
+                  'Frequency Response (Bode Plot)',
+                  style: pw.TextStyle(
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.blueGrey800),
+                ),
+                pw.SizedBox(height: 6),
+                // Velocity Bode
+                if (velocityPid != null) ...[
+                  pw.Text('Velocity Loop',
+                      style: pw.TextStyle(
+                          fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                  pw.SizedBox(height: 4),
+                  _buildBodePdfPlot(ff, velocityPid, BodePlotMode.velocity),
+                  pw.SizedBox(height: 10),
+                ],
+                // Position Bode
+                if (positionPid != null) ...[
+                  pw.Text('Position Loop',
+                      style: pw.TextStyle(
+                          fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                  pw.SizedBox(height: 4),
+                  _buildBodePdfPlot(ff, positionPid, BodePlotMode.position),
+                ],
+              ],
+              pw.Spacer(),
+              _buildFooter(),
+            ],
+          ),
+        ),
+      );
+    }
 
     final bytes = await pdf.save();
     await File(path).writeAsBytes(bytes);
@@ -438,6 +514,460 @@ class ReportGenerator {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Diagnostic plot builders (Page 2)
+  // ---------------------------------------------------------------------------
+
+  /// Draw a simplified model-fit scatter plot (predicted vs actual voltage).
+  static pw.Widget _buildModelFitChart(
+    List<TestRun> testRuns,
+    FeedforwardGains ff,
+    MechanismType mechanismType,
+  ) {
+    // Collect predicted vs actual voltage pairs
+    final points = <_PdfPoint>[];
+    for (final run in testRuns) {
+      final data = run.data;
+      for (var i = 0; i < data.length; i++) {
+        final dp = data[i];
+        if (dp.velocity.abs() < 1e-6) continue;
+        final prev = i > 0 ? data[i - 1] : null;
+        final signVel = dp.velocity > 0 ? 1.0 : -1.0;
+        double accel = 0.0;
+        if (prev != null) {
+          final dt = dp.timestamp - prev.timestamp;
+          if (dt > 0) accel = (dp.velocity - prev.velocity) / dt;
+        }
+        double gravity = 0.0;
+        if (mechanismType == MechanismType.arm) {
+          gravity = math.cos(dp.position * math.pi / 180.0);
+        } else if (mechanismType == MechanismType.elevator) {
+          gravity = 1.0;
+        }
+        final predicted = ff.kS * signVel +
+            ff.kV * dp.velocity.abs() +
+            ff.kA * accel +
+            ff.kG * gravity;
+        points.add(_PdfPoint(predicted, dp.voltage));
+      }
+    }
+
+    if (points.isEmpty) {
+      return pw.Text('No data for model fit chart.',
+          style: const pw.TextStyle(fontSize: 9));
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text('Predicted vs Actual Voltage',
+            style: pw.TextStyle(
+                fontSize: 11, fontWeight: pw.FontWeight.bold)),
+        pw.SizedBox(height: 4),
+        pw.SizedBox(
+          height: 140,
+          child: pw.CustomPaint(
+            size: const PdfPoint(240, 140),
+            painter: (canvas, size) =>
+                _drawScatterPlot(canvas, size, points),
+          ),
+        ),
+        pw.SizedBox(height: 2),
+        pw.Text(
+          'R\u00b2 = ${ff.rSquared.toStringAsFixed(4)}  '
+          '(${points.length} data points)',
+          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+        ),
+      ],
+    );
+  }
+
+  /// Draw a simplified step response chart.
+  static pw.Widget _buildStepResponseChart(List<TestRun> dynRuns) {
+    if (dynRuns.isEmpty) {
+      return pw.Text('No dynamic test data.',
+          style: const pw.TextStyle(fontSize: 9));
+    }
+
+    final allPoints = <List<_PdfPoint>>[];
+    for (final run in dynRuns) {
+      final pts = run.data
+          .map((dp) => _PdfPoint(dp.timestamp, dp.velocity))
+          .toList();
+      if (pts.isNotEmpty) allPoints.add(pts);
+    }
+
+    if (allPoints.isEmpty) {
+      return pw.Text('No step response data.',
+          style: const pw.TextStyle(fontSize: 9));
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text('Step Response (Dynamic)',
+            style: pw.TextStyle(
+                fontSize: 11, fontWeight: pw.FontWeight.bold)),
+        pw.SizedBox(height: 4),
+        pw.SizedBox(
+          height: 140,
+          child: pw.CustomPaint(
+            size: const PdfPoint(240, 140),
+            painter: (canvas, size) =>
+                _drawMultiLineChart(canvas, size, allPoints,
+                    xLabel: 'Time (s)', yLabel: 'Velocity'),
+          ),
+        ),
+        pw.SizedBox(height: 2),
+        pw.Text(
+          '${dynRuns.length} dynamic run(s)',
+          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+        ),
+      ],
+    );
+  }
+
+  /// Build the Bode plot section for PDF.
+  static pw.Widget _buildBodePdfPlot(
+    FeedforwardGains ff,
+    PidResult pid,
+    BodePlotMode mode,
+  ) {
+    final data = computeBodeData(
+      ff: ff,
+      pid: pid,
+      mode: mode,
+      numPoints: 200,
+    );
+
+    final m = data.margins;
+    final gm = m.gainMarginDb.isInfinite
+        ? '\u221e'
+        : '${m.gainMarginDb.toStringAsFixed(1)} dB';
+    final pm = m.phaseMarginDeg.isInfinite
+        ? '\u221e'
+        : '${m.phaseMarginDeg.toStringAsFixed(1)}\u00b0';
+    final bw = m.bandwidthRadPerSec > 0
+        ? '${(m.bandwidthRadPerSec / (2 * math.pi)).toStringAsFixed(1)} Hz'
+        : '\u2014';
+
+    // Convert frequency response to plottable points
+    final plantMag = data.plant
+        .map((d) => _PdfPoint(
+            math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
+            d.magnitudeDb))
+        .toList();
+    final olMag = data.openLoop
+        .map((d) => _PdfPoint(
+            math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
+            d.magnitudeDb))
+        .toList();
+    final clMag = data.closedLoop
+        .map((d) => _PdfPoint(
+            math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
+            d.magnitudeDb))
+        .toList();
+
+    final plantPhase = data.plant
+        .map((d) => _PdfPoint(
+            math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
+            d.phaseDeg))
+        .toList();
+    final olPhase = data.openLoop
+        .map((d) => _PdfPoint(
+            math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
+            d.phaseDeg))
+        .toList();
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Expanded(
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('Magnitude (dB)',
+                      style: const pw.TextStyle(fontSize: 9)),
+                  pw.SizedBox(height: 2),
+                  pw.SizedBox(
+                    height: 110,
+                    child: pw.CustomPaint(
+                      size: const PdfPoint(230, 110),
+                      painter: (canvas, size) => _drawBodeChart(
+                        canvas,
+                        size,
+                        [plantMag, olMag, clMag],
+                        [PdfColors.blue, PdfColors.orange, PdfColors.green],
+                        zeroLine: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            pw.SizedBox(width: 12),
+            pw.Expanded(
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('Phase (\u00b0)',
+                      style: const pw.TextStyle(fontSize: 9)),
+                  pw.SizedBox(height: 2),
+                  pw.SizedBox(
+                    height: 110,
+                    child: pw.CustomPaint(
+                      size: const PdfPoint(230, 110),
+                      painter: (canvas, size) => _drawBodeChart(
+                        canvas,
+                        size,
+                        [plantPhase, olPhase],
+                        [PdfColors.blue, PdfColors.orange],
+                        zeroLine: -180,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 4),
+        pw.Row(
+          children: [
+            _pdfLegendDot(PdfColors.blue, 'Plant G(s)'),
+            pw.SizedBox(width: 12),
+            _pdfLegendDot(PdfColors.orange, 'Open-Loop L(s)'),
+            pw.SizedBox(width: 12),
+            _pdfLegendDot(PdfColors.green, 'Closed-Loop T(s)'),
+          ],
+        ),
+        pw.SizedBox(height: 4),
+        pw.Container(
+          padding: const pw.EdgeInsets.all(6),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(3)),
+            color: PdfColors.grey100,
+          ),
+          child: pw.Text(
+            'Gain Margin: $gm  \u2022  Phase Margin: $pm  \u2022  Bandwidth: $bw',
+            style: const pw.TextStyle(fontSize: 9),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static pw.Widget _pdfLegendDot(PdfColor color, String label) {
+    return pw.Row(
+      mainAxisSize: pw.MainAxisSize.min,
+      children: [
+        pw.Container(
+          width: 8,
+          height: 3,
+          decoration: pw.BoxDecoration(color: color),
+        ),
+        pw.SizedBox(width: 3),
+        pw.Text(label, style: const pw.TextStyle(fontSize: 8)),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Low-level PDF chart drawing helpers
+  // ---------------------------------------------------------------------------
+
+  static void _drawScatterPlot(
+    PdfGraphics canvas,
+    PdfPoint size,
+    List<_PdfPoint> points,
+  ) {
+    const margin = 20.0;
+    final plotW = size.x - margin * 2;
+    final plotH = size.y - margin * 2;
+
+    // Find data range
+    final xVals = points.map((p) => p.x);
+    final yVals = points.map((p) => p.y);
+    var xMin = xVals.reduce(math.min);
+    var xMax = xVals.reduce(math.max);
+    var yMin = yVals.reduce(math.min);
+    var yMax = yVals.reduce(math.max);
+    if (xMax == xMin) xMax = xMin + 1;
+    if (yMax == yMin) yMax = yMin + 1;
+
+    // Draw axes
+    canvas
+      ..setStrokeColor(PdfColors.grey600)
+      ..setLineWidth(0.5)
+      ..drawLine(margin, margin, margin, size.y - margin)
+      ..strokePath()
+      ..drawLine(margin, margin, size.x - margin, margin)
+      ..strokePath();
+
+    // Draw y=x reference line (green)
+    canvas
+      ..setStrokeColor(PdfColors.green)
+      ..setLineWidth(0.5);
+    final lo = math.max(xMin, yMin);
+    final hi = math.min(xMax, yMax);
+    if (hi > lo) {
+      final x1 = margin + (lo - xMin) / (xMax - xMin) * plotW;
+      final y1 = margin + (lo - yMin) / (yMax - yMin) * plotH;
+      final x2 = margin + (hi - xMin) / (xMax - xMin) * plotW;
+      final y2 = margin + (hi - yMin) / (yMax - yMin) * plotH;
+      canvas
+        ..drawLine(x1, y1, x2, y2)
+        ..strokePath();
+    }
+
+    // Draw scatter points (subsample if too many)
+    canvas
+      ..setColor(PdfColors.blue400)
+      ..setStrokeColor(PdfColors.blue400)
+      ..setLineWidth(0.3);
+    final step = points.length > 500 ? (points.length / 500).ceil() : 1;
+    for (var i = 0; i < points.length; i += step) {
+      final p = points[i];
+      final px = margin + (p.x - xMin) / (xMax - xMin) * plotW;
+      final py = margin + (p.y - yMin) / (yMax - yMin) * plotH;
+      canvas
+        ..drawRect(px - 0.5, py - 0.5, 1, 1)
+        ..strokePath();
+    }
+  }
+
+  static void _drawMultiLineChart(
+    PdfGraphics canvas,
+    PdfPoint size,
+    List<List<_PdfPoint>> series, {
+    String xLabel = '',
+    String yLabel = '',
+  }) {
+    const margin = 20.0;
+    final plotW = size.x - margin * 2;
+    final plotH = size.y - margin * 2;
+
+    final allX = series.expand((s) => s.map((p) => p.x));
+    final allY = series.expand((s) => s.map((p) => p.y));
+    var xMin = allX.reduce(math.min);
+    var xMax = allX.reduce(math.max);
+    var yMin = allY.reduce(math.min);
+    var yMax = allY.reduce(math.max);
+    if (xMax == xMin) xMax = xMin + 1;
+    if (yMax == yMin) yMax = yMin + 1;
+
+    // Axes
+    canvas
+      ..setStrokeColor(PdfColors.grey600)
+      ..setLineWidth(0.5)
+      ..drawLine(margin, margin, margin, size.y - margin)
+      ..strokePath()
+      ..drawLine(margin, margin, size.x - margin, margin)
+      ..strokePath();
+
+    final colors = [PdfColors.orange, PdfColors.teal, PdfColors.purple];
+    for (var si = 0; si < series.length; si++) {
+      final pts = series[si];
+      if (pts.length < 2) continue;
+      canvas
+        ..setStrokeColor(colors[si % colors.length])
+        ..setLineWidth(0.8);
+      final first = pts.first;
+      canvas.moveTo(
+        margin + (first.x - xMin) / (xMax - xMin) * plotW,
+        margin + (first.y - yMin) / (yMax - yMin) * plotH,
+      );
+      for (var i = 1; i < pts.length; i++) {
+        final p = pts[i];
+        canvas.lineTo(
+          margin + (p.x - xMin) / (xMax - xMin) * plotW,
+          margin + (p.y - yMin) / (yMax - yMin) * plotH,
+        );
+      }
+      canvas.strokePath();
+    }
+  }
+
+  static void _drawBodeChart(
+    PdfGraphics canvas,
+    PdfPoint size,
+    List<List<_PdfPoint>> series,
+    List<PdfColor> colors, {
+    double? zeroLine,
+  }) {
+    const margin = 20.0;
+    final plotW = size.x - margin * 2;
+    final plotH = size.y - margin * 2;
+
+    final allX = series.expand((s) => s.map((p) => p.x));
+    final allY = series.expand((s) => s.map((p) => p.y));
+    var xMin = allX.reduce(math.min);
+    var xMax = allX.reduce(math.max);
+    var yMin = allY.reduce(math.min);
+    var yMax = allY.reduce(math.max);
+    if (xMax == xMin) xMax = xMin + 1;
+    if (yMax == yMin) yMax = yMin + 1;
+    // Add small padding
+    final yPad = (yMax - yMin) * 0.05;
+    yMin -= yPad;
+    yMax += yPad;
+
+    // Axes
+    canvas
+      ..setStrokeColor(PdfColors.grey600)
+      ..setLineWidth(0.5)
+      ..drawLine(margin, margin, margin, size.y - margin)
+      ..strokePath()
+      ..drawLine(margin, margin, size.x - margin, margin)
+      ..strokePath();
+
+    // Zero/reference line
+    if (zeroLine != null && zeroLine >= yMin && zeroLine <= yMax) {
+      final zy = margin + (zeroLine - yMin) / (yMax - yMin) * plotH;
+      canvas
+        ..setStrokeColor(PdfColors.grey400)
+        ..setLineWidth(0.3)
+        ..drawLine(margin, zy, size.x - margin, zy)
+        ..strokePath();
+    }
+
+    // Draw grid: 3 horizontal lines
+    canvas.setStrokeColor(PdfColors.grey200);
+    canvas.setLineWidth(0.2);
+    for (var i = 1; i <= 3; i++) {
+      final fy = margin + plotH * i / 4;
+      canvas
+        ..drawLine(margin, fy, size.x - margin, fy)
+        ..strokePath();
+    }
+
+    // Draw series
+    for (var si = 0; si < series.length; si++) {
+      final pts = series[si];
+      if (pts.length < 2) continue;
+      canvas
+        ..setStrokeColor(colors[si % colors.length])
+        ..setLineWidth(si == 0 ? 0.6 : 1.0);
+      final first = pts.first;
+      canvas.moveTo(
+        margin + (first.x - xMin) / (xMax - xMin) * plotW,
+        margin + (first.y - yMin) / (yMax - yMin) * plotH,
+      );
+      for (var i = 1; i < pts.length; i++) {
+        final p = pts[i];
+        canvas.lineTo(
+          margin + (p.x - xMin) / (xMax - xMin) * plotW,
+          margin + (p.y - yMin) / (yMax - yMin) * plotH,
+        );
+      }
+      canvas.strokePath();
+    }
+  }
+
   static Future<String?> _pickSavePath(MechanismConfig config) async {
     final timestamp = DateTime.now()
         .toIso8601String()
@@ -453,4 +983,10 @@ class ReportGenerator {
       allowedExtensions: ['pdf'],
     );
   }
+}
+
+/// Simple 2D point for PDF chart drawing.
+class _PdfPoint {
+  final double x, y;
+  const _PdfPoint(this.x, this.y);
 }

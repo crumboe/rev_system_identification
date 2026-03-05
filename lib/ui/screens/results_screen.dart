@@ -15,6 +15,7 @@ import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
 import '../../sysid/feedforward_analyzer.dart';
 import '../../sysid/pid_autotuner.dart';
+import '../widgets/bode_plot.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
 
@@ -207,6 +208,22 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   child: _StepResponsePlot(testRuns: dynRuns),
                 ),
               ],
+            ),
+          ),
+
+          // Bode Plot — Frequency Response
+          const SizedBox(height: 24),
+          const Text(
+            'Frequency Response (Bode Plot)',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 350,
+            child: BodePlot(
+              ff: _ff!,
+              velPid: _velPid,
+              posPid: _posPid,
             ),
           ),
         ],
