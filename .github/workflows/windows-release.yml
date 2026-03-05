@@ -37,27 +37,23 @@ jobs:
 
       - name: Determine next version
         id: version
-        shell: pwsh
+        shell: bash
         run: |
-          # Find the highest semver tag matching v*.*.*
-          $tags = git tag -l 'v*' | Where-Object { $_ -match '^v(\d+)\.(\d+)\.(\d+)$' }
-          if ($tags) {
-            $latest = $tags | Sort-Object {
-              $_ -match '^v(\d+)\.(\d+)\.(\d+)$' | Out-Null
-              [int]$Matches[1] * 10000 + [int]$Matches[2] * 100 + [int]$Matches[3]
-            } | Select-Object -Last 1
-
-            $latest -match '^v(\d+)\.(\d+)\.(\d+)$' | Out-Null
-            $major = [int]$Matches[1]
-            $minor = [int]$Matches[2]
-            $patch = [int]$Matches[3] + 1
-            $nextVersion = "$major.$minor.$patch"
-          } else {
-            $nextVersion = "1.0.0"
-          }
-
-          echo "Next version: $nextVersion"
-          echo "version=$nextVersion" >> $env:GITHUB_OUTPUT
+          # Get the latest vX.Y.Z tag, default to v0.0.0 if none exist
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+          echo "Latest tag: $LATEST"
+          # Strip the 'v' prefix and split
+          VER="${LATEST#v}"
+          MAJOR=$(echo "$VER" | cut -d. -f1)
+          MINOR=$(echo "$VER" | cut -d. -f2)
+          PATCH=$(echo "$VER" | cut -d. -f3)
+          PATCH=$((PATCH + 1))
+          NEXT="$MAJOR.$MINOR.$PATCH"
+          echo "Next version: $NEXT"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
 
       - name: Package as ZIP
         id: package_info
