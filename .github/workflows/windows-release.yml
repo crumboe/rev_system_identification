@@ -1,0 +1,51 @@
+name: Windows Release Build
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build MSIX installer
+        run: dart run msix:create
+
+      - name: Find MSIX installer and read version
+        id: package_info
+        shell: pwsh
+        run: |
+          $msixFile = Get-ChildItem -Path build -Recurse -Filter "*.msix" | Select-Object -First 1
+          if (-not $msixFile) { Write-Error "No .msix file found in build directory"; exit 1 }
+          echo "msix_path=$($msixFile.FullName)" >> $env:GITHUB_OUTPUT
+
+          $content = Get-Content pubspec.yaml -Raw
+          if ($content -match 'version:\s+(\S+)') {
+            $version = $matches[1].Split('+')[0]
+            echo "version=$version" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.package_info.outputs.version }}
+          name: Release v${{ steps.package_info.outputs.version }}
+          files: ${{ steps.package_info.outputs.msix_path }}
+          generate_release_notes: true
+          make_latest: true
