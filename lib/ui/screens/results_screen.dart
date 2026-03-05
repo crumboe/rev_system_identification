@@ -18,6 +18,7 @@ import '../../sysid/pid_autotuner.dart';
 import '../widgets/bode_plot.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
+import '../widgets/pid_playground.dart';
 import '../widgets/pole_zero_map.dart';
 
 class ResultsScreen extends ConsumerStatefulWidget {
@@ -124,6 +125,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 12),
           _GainsTable(ff: _ff!, config: config),
 
+          // Regression walkthrough
+          const SizedBox(height: 16),
+          _buildRegressionWalkthrough(qsRuns, dynRuns),
+
           const SizedBox(height: 24),
 
           // PID gains
@@ -184,6 +189,21 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                 ),
               ],
             ),
+
+          const SizedBox(height: 24),
+
+          // PID Playground
+          const Text(
+            '"What If" PID Gain Playground',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Simulation only — adjust gains to see predicted step response.',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          PidPlayground(ff: _ff!, initialPid: _velPid),
 
           const SizedBox(height: 24),
 
@@ -278,6 +298,239 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               )),
         ],
       ],
+    );
+  }
+
+  Widget _buildRegressionWalkthrough(
+    List<TestRun> qsRuns,
+    List<TestRun> dynRuns,
+  ) {
+    final ff = _ff!;
+    final mechType = ref.read(mechanismConfigProvider).type;
+
+    final totalSamples = [...qsRuns, ...dynRuns]
+        .fold<int>(0, (sum, r) => sum + r.sampleCount);
+    final qsCount = qsRuns.length;
+    final dynCount = dynRuns.length;
+
+    final hasGravity = mechType.hasGravity;
+    final theme = FluentTheme.of(context);
+    const monoStyle = TextStyle(fontFamily: 'Consolas', fontSize: 12);
+    final captionStyle = TextStyle(
+      fontSize: 12,
+      color: theme.typography.body?.color?.withValues(alpha: 0.75),
+      height: 1.5,
+    );
+
+    // Shared builder for a numbered step card.
+    Widget stepCard(int number, String title, List<Widget> children) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.accentColor.withValues(alpha: 0.04),
+            border: Border.all(
+                color: theme.accentColor.withValues(alpha: 0.15)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: theme.accentColor,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        '$number',
+                        style: const TextStyle(
+                          color: Color(0xFFFFFFFF),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ...children,
+            ],
+          ),
+        ),
+      );
+    }
+
+    final gravityTermLabel = mechType == MechanismType.arm
+        ? '\n• kG · cos(θ) — gravity torque (arm, varies with angle)'
+        : mechType == MechanismType.elevator
+            ? '\n• kG — constant gravity compensation (elevator)'
+            : '';
+
+    final gravityColLabel = mechType == MechanismType.arm
+        ? '\n  Col 4: cos(θ)   — gravity term for arm'
+        : mechType == MechanismType.elevator
+            ? '\n  Col 4: 1.0      — constant gravity term'
+            : '';
+
+    final betaLabel = hasGravity ? '[kS, kV, kA, kG]ᵀ' : '[kS, kV, kA]ᵀ';
+
+    return Expander(
+      header: const Row(
+        children: [
+          Icon(FluentIcons.lightbulb, size: 14),
+          SizedBox(width: 8),
+          Text('Explain the Math — How Gains Were Computed'),
+        ],
+      ),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Step 1 — Data collection
+          stepCard(1, 'Collected Data Points', [
+            Text(
+              'We collected $totalSamples voltage-velocity samples from '
+              '$qsCount quasistatic and $dynCount dynamic test runs.',
+              style: captionStyle,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Each data point records the applied voltage (V), velocity (ω), '
+              'acceleration (α = Δω/Δt), and position (θ) of the mechanism.',
+              style: captionStyle,
+            ),
+          ]),
+
+          // Step 2 — Physics model
+          stepCard(2, 'The Physics Model', [
+            Text('The mechanism obeys a linear feedforward model:',
+                style: captionStyle),
+            const SizedBox(height: 8),
+            _buildEquationRow(mechType, theme),
+            const SizedBox(height: 8),
+            Text(
+              '• kS · sign(ω) — static friction (always opposes motion)\n'
+              '• kV · ω — back-EMF (proportional to velocity)\n'
+              '• kA · α — inertia (proportional to acceleration)'
+              '$gravityTermLabel',
+              style: captionStyle,
+            ),
+          ]),
+
+          // Step 3 — Matrix equation
+          stepCard(3, 'Build the Matrix Equation', [
+            Text(
+              'We arrange $totalSamples data points into a matrix equation:',
+              style: captionStyle,
+            ),
+            const SizedBox(height: 8),
+            Text('  V  =  X · β', style: monoStyle.copyWith(fontSize: 14)),
+            const SizedBox(height: 8),
+            Text(
+              'The design matrix X has one row per sample and columns for:\n'
+              '  Col 1: sign(ω)  — sign of velocity\n'
+              '  Col 2: ω        — velocity\n'
+              '  Col 3: α        — acceleration (Δω/Δt)'
+              '$gravityColLabel',
+              style: monoStyle.copyWith(fontSize: 11),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'The coefficient vector β = $betaLabel holds the unknown gains. '
+              'This puts the regression in the standard linear form.',
+              style: captionStyle,
+            ),
+          ]),
+
+          // Step 4 — Least squares solution
+          stepCard(4, 'Solve via Least Squares', [
+            Text(
+              'The ordinary least-squares (OLS) solution minimizes the '
+              'sum of squared residuals  Σ(V_actual − V_predicted)²:',
+              style: captionStyle,
+            ),
+            const SizedBox(height: 8),
+            Text('  β  =  (XᵀX)⁻¹ Xᵀ V',
+                style: monoStyle.copyWith(fontSize: 13)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: theme.accentColor.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('kS = ${ff.kS.toStringAsFixed(5)} V',
+                      style: monoStyle),
+                  Text('kV = ${ff.kV.toStringAsFixed(5)} V·s/unit',
+                      style: monoStyle),
+                  Text('kA = ${ff.kA.toStringAsFixed(5)} V·s²/unit',
+                      style: monoStyle),
+                  if (hasGravity)
+                    Text('kG = ${ff.kG.toStringAsFixed(5)} V',
+                        style: monoStyle),
+                  const SizedBox(height: 4),
+                  Text(
+                    'R² = ${ff.rSquared.toStringAsFixed(4)}',
+                    style: monoStyle.copyWith(
+                      color: ff.rSquared > 0.9
+                          ? Colors.successPrimaryColor
+                          : Colors.warningPrimaryColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'R² = 1 − SS_res / SS_tot measures how much of the variance '
+              'in voltage the model explains. Values above 0.9 are good; '
+              'above 0.95 is excellent.',
+              style: captionStyle,
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  /// Renders the feedforward equation styled like a math expression.
+  Widget _buildEquationRow(MechanismType mechType, FluentThemeData theme) {
+    final suffix = mechType == MechanismType.arm
+        ? '  +  kG·cos(θ)'
+        : mechType == MechanismType.elevator
+            ? '  +  kG'
+            : '';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.accentColor.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        'V  =  kS·sign(ω)  +  kV·ω  +  kA·α$suffix',
+        style: TextStyle(
+          fontFamily: 'Consolas',
+          fontSize: 13,
+          color: theme.accentColor,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
     );
   }
 
