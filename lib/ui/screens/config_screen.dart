@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
+import '../widgets/concept_panel.dart';
 import '../widgets/jog_panel.dart';
 
 class ConfigScreen extends ConsumerWidget {
@@ -433,6 +434,9 @@ class ConfigScreen extends ConsumerWidget {
             isLong: true,
           );
         }),
+
+        const SizedBox(height: 16),
+        const ConceptPanel(),
       ],
     );
   }
