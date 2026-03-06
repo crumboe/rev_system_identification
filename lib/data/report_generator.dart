@@ -13,8 +13,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../mechanisms/mechanism.dart';
+import '../state/app_state.dart';
 import '../sysid/validation_runner.dart';
 import '../ui/widgets/bode_plot.dart';
+import '../ui/widgets/pole_zero_map.dart';
 import 'test_data.dart';
 
 /// Generates a PDF report summarising system identification results.
@@ -29,6 +31,7 @@ class ReportGenerator {
     PidResult? positionPid,
     List<TestRun> testRuns = const [],
     ValidationResult? validationResult,
+    PidTuningParams tuningParams = const PidTuningParams(),
   }) async {
     final path = await _pickSavePath(config);
     if (path == null) return null;
@@ -51,7 +54,7 @@ class ReportGenerator {
             pw.SizedBox(height: 14),
             _buildFeedforwardSection(ff, config),
             pw.SizedBox(height: 14),
-            _buildPidSection(velocityPid, positionPid, config),
+            _buildPidSection(velocityPid, positionPid, config, tuningParams),
             if (testRuns.isNotEmpty) ...[
               pw.SizedBox(height: 14),
               _buildTestSummarySection(testRuns),
@@ -66,6 +69,9 @@ class ReportGenerator {
         ),
       ),
     );
+
+    // Create a font for chart tick labels (base-14 Helvetica).
+    final chartFont = PdfFont.helvetica(pdf.document);
 
     // ── Page 2: Diagnostic Plots ──────────────────────────────────────
     final qsRuns = testRuns.where((r) => r.testType.isQuasistatic).toList();
@@ -97,11 +103,12 @@ class ReportGenerator {
                         [...qsRuns, ...dynRuns],
                         ff,
                         config.type,
+                        chartFont,
                       ),
                     ),
                     pw.SizedBox(width: 12),
                     pw.Expanded(
-                      child: _buildStepResponseChart(dynRuns),
+                      child: _buildStepResponseChart(dynRuns, chartFont),
                     ),
                   ],
                 ),
@@ -121,7 +128,8 @@ class ReportGenerator {
                       style: pw.TextStyle(
                           fontSize: 11, fontWeight: pw.FontWeight.bold)),
                   pw.SizedBox(height: 4),
-                  _buildBodePdfPlot(ff, velocityPid, BodePlotMode.velocity),
+                  _buildBodePdfPlot(
+                      ff, velocityPid, BodePlotMode.velocity, chartFont),
                   pw.SizedBox(height: 10),
                 ],
                 // Position Bode
@@ -130,9 +138,51 @@ class ReportGenerator {
                       style: pw.TextStyle(
                           fontSize: 11, fontWeight: pw.FontWeight.bold)),
                   pw.SizedBox(height: 4),
-                  _buildBodePdfPlot(ff, positionPid, BodePlotMode.position),
+                  _buildBodePdfPlot(
+                      ff, positionPid, BodePlotMode.position, chartFont),
                 ],
               ],
+              pw.Spacer(),
+              _buildFooter(),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // ── Page 3: Pole-Zero Map ─────────────────────────────────────────
+    if (hasBode && (velocityPid != null || positionPid != null)) {
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.letter,
+          margin: const pw.EdgeInsets.all(40),
+          build: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Pole-Zero Map (s-Plane)',
+                style: pw.TextStyle(
+                    fontSize: 18, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Divider(thickness: 1),
+              pw.SizedBox(height: 8),
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  if (velocityPid != null)
+                    pw.Expanded(
+                      child: _buildPoleZeroPdfPlot(
+                          ff, velocityPid, PoleZeroMode.velocity, chartFont),
+                    ),
+                  if (velocityPid != null && positionPid != null)
+                    pw.SizedBox(width: 16),
+                  if (positionPid != null)
+                    pw.Expanded(
+                      child: _buildPoleZeroPdfPlot(
+                          ff, positionPid, PoleZeroMode.position, chartFont),
+                    ),
+                ],
+              ),
               pw.Spacer(),
               _buildFooter(),
             ],
@@ -151,6 +201,9 @@ class ReportGenerator {
   // ---------------------------------------------------------------------------
 
   static pw.Widget _buildHeader(MechanismConfig config) {
+    final title = config.systemName.isNotEmpty
+        ? config.systemName
+        : config.type.displayName;
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -163,7 +216,7 @@ class ReportGenerator {
         ),
         pw.SizedBox(height: 4),
         pw.Text(
-          '${config.type.displayName} - '
+          '$title - '
           '${DateTime.now().toLocal().toString().split('.').first}',
           style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700),
         ),
@@ -181,6 +234,8 @@ class ReportGenerator {
           1: const pw.FlexColumnWidth(),
         },
         children: [
+          if (config.systemName.isNotEmpty)
+            _tableRow('System Name', config.systemName),
           _tableRow('Mechanism Type', config.type.displayName),
           _tableRow('Gear Ratio', '${config.gearRatio}:1'),
           _tableRow('Position Conv. Factor',
@@ -242,7 +297,8 @@ class ReportGenerator {
   }
 
   static pw.Widget _buildPidSection(
-      PidResult? velPid, PidResult? posPid, MechanismConfig config) {
+      PidResult? velPid, PidResult? posPid, MechanismConfig config,
+      PidTuningParams tuningParams) {
     final children = <pw.Widget>[];
 
     if (velPid != null) {
@@ -264,13 +320,11 @@ class ReportGenerator {
           _pidRow('kD', velPid.kD),
         ],
       ));
-      if (velPid.velocityTimeConstantMs != null) {
-        children.add(pw.SizedBox(height: 2));
-        children.add(pw.Text(
-          'Tuning: tau = ${velPid.velocityTimeConstantMs!.toStringAsFixed(0)} ms',
-          style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
-        ));
-      }
+      children.add(pw.SizedBox(height: 2));
+      children.add(pw.Text(
+        'Tuning: tau = ${tuningParams.velocityTimeConstantMs.toStringAsFixed(0)} ms',
+        style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+      ));
     }
 
     if (posPid != null) {
@@ -293,13 +347,13 @@ class ReportGenerator {
           _pidRow('kD', posPid.kD),
         ],
       ));
-      if (posPid.positionBandwidthHz != null) {
-        children.add(pw.SizedBox(height: 2));
-        children.add(pw.Text(
-          'Tuning: w = ${posPid.positionBandwidthHz!.toStringAsFixed(1)} Hz',
-          style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
-        ));
-      }
+      children.add(pw.SizedBox(height: 2));
+      children.add(pw.Text(
+        'Tuning: w = ${tuningParams.positionBandwidthHz.toStringAsFixed(1)} Hz, '
+        'z = ${tuningParams.dampingRatio.toStringAsFixed(3)} '
+        '(${_dampingLabel(tuningParams.dampingRatio)})',
+        style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+      ));
     }
 
     if (children.isEmpty) {
@@ -523,6 +577,7 @@ class ReportGenerator {
     List<TestRun> testRuns,
     FeedforwardGains ff,
     MechanismType mechanismType,
+    PdfFont chartFont,
   ) {
     // Collect predicted vs actual voltage pairs
     final points = <_PdfPoint>[];
@@ -565,16 +620,16 @@ class ReportGenerator {
                 fontSize: 11, fontWeight: pw.FontWeight.bold)),
         pw.SizedBox(height: 4),
         pw.SizedBox(
-          height: 140,
+          height: 160,
           child: pw.CustomPaint(
-            size: const PdfPoint(240, 140),
+            size: const PdfPoint(240, 160),
             painter: (canvas, size) =>
-                _drawScatterPlot(canvas, size, points),
+                _drawScatterPlot(canvas, size, points, chartFont),
           ),
         ),
         pw.SizedBox(height: 2),
         pw.Text(
-          'R\u00b2 = ${ff.rSquared.toStringAsFixed(4)}  '
+          'R2 = ${ff.rSquared.toStringAsFixed(4)}  '
           '(${points.length} data points)',
           style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
         ),
@@ -583,7 +638,8 @@ class ReportGenerator {
   }
 
   /// Draw a simplified step response chart.
-  static pw.Widget _buildStepResponseChart(List<TestRun> dynRuns) {
+  static pw.Widget _buildStepResponseChart(
+      List<TestRun> dynRuns, PdfFont chartFont) {
     if (dynRuns.isEmpty) {
       return pw.Text('No dynamic test data.',
           style: const pw.TextStyle(fontSize: 9));
@@ -610,11 +666,11 @@ class ReportGenerator {
                 fontSize: 11, fontWeight: pw.FontWeight.bold)),
         pw.SizedBox(height: 4),
         pw.SizedBox(
-          height: 140,
+          height: 160,
           child: pw.CustomPaint(
-            size: const PdfPoint(240, 140),
+            size: const PdfPoint(240, 160),
             painter: (canvas, size) =>
-                _drawMultiLineChart(canvas, size, allPoints,
+                _drawMultiLineChart(canvas, size, allPoints, chartFont,
                     xLabel: 'Time (s)', yLabel: 'Velocity'),
           ),
         ),
@@ -632,6 +688,7 @@ class ReportGenerator {
     FeedforwardGains ff,
     PidResult pid,
     BodePlotMode mode,
+    PdfFont chartFont,
   ) {
     final data = computeBodeData(
       ff: ff,
@@ -642,14 +699,14 @@ class ReportGenerator {
 
     final m = data.margins;
     final gm = m.gainMarginDb.isInfinite
-        ? '\u221e'
+        ? 'Inf'
         : '${m.gainMarginDb.toStringAsFixed(1)} dB';
     final pm = m.phaseMarginDeg.isInfinite
-        ? '\u221e'
-        : '${m.phaseMarginDeg.toStringAsFixed(1)}\u00b0';
+        ? 'Inf'
+        : '${m.phaseMarginDeg.toStringAsFixed(1)} deg';
     final bw = m.bandwidthRadPerSec > 0
         ? '${(m.bandwidthRadPerSec / (2 * math.pi)).toStringAsFixed(1)} Hz'
-        : '\u2014';
+        : 'N/A';
 
     // Convert frequency response to plottable points
     final plantMag = data.plant
@@ -701,9 +758,16 @@ class ReportGenerator {
                         size,
                         [plantMag, olMag, clMag],
                         [PdfColors.blue, PdfColors.orange, PdfColors.green],
+                        chartFont,
+                        yAxisLabel: 'dB',
                         zeroLine: 0,
                       ),
                     ),
+                  ),
+                  pw.Center(
+                    child: pw.Text('Frequency (Hz)',
+                        style: const pw.TextStyle(
+                            fontSize: 7, color: PdfColors.grey600)),
                   ),
                 ],
               ),
@@ -713,7 +777,7 @@ class ReportGenerator {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('Phase (\u00b0)',
+                  pw.Text('Phase (deg)',
                       style: const pw.TextStyle(fontSize: 9)),
                   pw.SizedBox(height: 2),
                   pw.SizedBox(
@@ -725,9 +789,16 @@ class ReportGenerator {
                         size,
                         [plantPhase, olPhase],
                         [PdfColors.blue, PdfColors.orange],
+                        chartFont,
+                        yAxisLabel: 'deg',
                         zeroLine: -180,
                       ),
                     ),
+                  ),
+                  pw.Center(
+                    child: pw.Text('Frequency (Hz)',
+                        style: const pw.TextStyle(
+                            fontSize: 7, color: PdfColors.grey600)),
                   ),
                 ],
               ),
@@ -753,7 +824,7 @@ class ReportGenerator {
             color: PdfColors.grey100,
           ),
           child: pw.Text(
-            'Gain Margin: $gm  \u2022  Phase Margin: $pm  \u2022  Bandwidth: $bw',
+            'Gain Margin: $gm  |  Phase Margin: $pm  |  Bandwidth: $bw',
             style: const pw.TextStyle(fontSize: 9),
           ),
         ),
@@ -780,14 +851,80 @@ class ReportGenerator {
   // Low-level PDF chart drawing helpers
   // ---------------------------------------------------------------------------
 
+  /// Human-readable label for a damping ratio value.
+  static String _dampingLabel(double zeta) {
+    if ((zeta - 1.5).abs() < 0.01) return 'Overdamped';
+    if ((zeta - 1.0).abs() < 0.01) return 'Critically Damped';
+    if ((zeta - 0.707).abs() < 0.01) return 'Butterworth';
+    if ((zeta - 0.5).abs() < 0.01) return 'Underdamped';
+    if (zeta > 1.0) return 'Overdamped';
+    if (zeta > 0.707) return 'Slightly Underdamped';
+    return 'Underdamped';
+  }
+
+  /// Format a number for tick labels — short and readable.
+  static String _tickLabel(double v) {
+    if (v.abs() >= 1000) return '${(v / 1000).toStringAsFixed(1)}k';
+    if (v.abs() >= 100) return v.toStringAsFixed(0);
+    if (v.abs() >= 1) return v.toStringAsFixed(1);
+    if (v == 0) return '0';
+    return v.toStringAsFixed(2);
+  }
+
+  /// Draw tick marks + labels at min, mid, max along an axis.
+  static void _drawAxisTicks(
+    PdfGraphics canvas,
+    PdfFont font,
+    double min,
+    double max, {
+    required double plotOriginX,
+    required double plotOriginY,
+    required double plotW,
+    required double plotH,
+    required bool isXAxis,
+    bool isLogX = false,
+  }) {
+    canvas.setColor(PdfColors.grey600);
+    final mid = (min + max) / 2;
+    final values = [min, mid, max];
+    for (final v in values) {
+      final frac = (v - min) / (max - min);
+      if (isXAxis) {
+        final px = plotOriginX + frac * plotW;
+        // Tick mark
+        canvas
+          ..setStrokeColor(PdfColors.grey400)
+          ..setLineWidth(0.3)
+          ..drawLine(px, plotOriginY, px, plotOriginY - 3)
+          ..strokePath();
+        // Label
+        final label =
+            isLogX ? '${math.pow(10, v).toStringAsFixed(0)}' : _tickLabel(v);
+        canvas.drawString(font, 6, label, px - 6, plotOriginY - 12);
+      } else {
+        final py = plotOriginY + frac * plotH;
+        canvas
+          ..setStrokeColor(PdfColors.grey400)
+          ..setLineWidth(0.3)
+          ..drawLine(plotOriginX, py, plotOriginX - 3, py)
+          ..strokePath();
+        canvas.drawString(font, 6, _tickLabel(v), plotOriginX - 28, py - 2);
+      }
+    }
+  }
+
   static void _drawScatterPlot(
     PdfGraphics canvas,
     PdfPoint size,
     List<_PdfPoint> points,
+    PdfFont font,
   ) {
-    const margin = 20.0;
-    final plotW = size.x - margin * 2;
-    final plotH = size.y - margin * 2;
+    const left = 42.0;
+    const bottom = 28.0;
+    const top = 6.0;
+    const right = 6.0;
+    final plotW = size.x - left - right;
+    final plotH = size.y - bottom - top;
 
     // Find data range
     final xVals = points.map((p) => p.x);
@@ -803,10 +940,25 @@ class ReportGenerator {
     canvas
       ..setStrokeColor(PdfColors.grey600)
       ..setLineWidth(0.5)
-      ..drawLine(margin, margin, margin, size.y - margin)
+      ..drawLine(left, bottom, left, size.y - top)
       ..strokePath()
-      ..drawLine(margin, margin, size.x - margin, margin)
+      ..drawLine(left, bottom, size.x - right, bottom)
       ..strokePath();
+
+    // Tick labels
+    _drawAxisTicks(canvas, font, xMin, xMax,
+        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
+        isXAxis: true);
+    _drawAxisTicks(canvas, font, yMin, yMax,
+        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
+        isXAxis: false);
+
+    // Axis name labels
+    canvas
+      ..setColor(PdfColors.grey700);
+    canvas.drawString(
+        font, 7, 'Predicted Voltage (V)', left + plotW / 2 - 35, 2);
+    canvas.drawString(font, 6, 'Actual (V)', 0, bottom + plotH - 6);
 
     // Draw y=x reference line (green)
     canvas
@@ -815,10 +967,10 @@ class ReportGenerator {
     final lo = math.max(xMin, yMin);
     final hi = math.min(xMax, yMax);
     if (hi > lo) {
-      final x1 = margin + (lo - xMin) / (xMax - xMin) * plotW;
-      final y1 = margin + (lo - yMin) / (yMax - yMin) * plotH;
-      final x2 = margin + (hi - xMin) / (xMax - xMin) * plotW;
-      final y2 = margin + (hi - yMin) / (yMax - yMin) * plotH;
+      final x1 = left + (lo - xMin) / (xMax - xMin) * plotW;
+      final y1 = bottom + (lo - yMin) / (yMax - yMin) * plotH;
+      final x2 = left + (hi - xMin) / (xMax - xMin) * plotW;
+      final y2 = bottom + (hi - yMin) / (yMax - yMin) * plotH;
       canvas
         ..drawLine(x1, y1, x2, y2)
         ..strokePath();
@@ -832,8 +984,8 @@ class ReportGenerator {
     final step = points.length > 500 ? (points.length / 500).ceil() : 1;
     for (var i = 0; i < points.length; i += step) {
       final p = points[i];
-      final px = margin + (p.x - xMin) / (xMax - xMin) * plotW;
-      final py = margin + (p.y - yMin) / (yMax - yMin) * plotH;
+      final px = left + (p.x - xMin) / (xMax - xMin) * plotW;
+      final py = bottom + (p.y - yMin) / (yMax - yMin) * plotH;
       canvas
         ..drawRect(px - 0.5, py - 0.5, 1, 1)
         ..strokePath();
@@ -843,13 +995,17 @@ class ReportGenerator {
   static void _drawMultiLineChart(
     PdfGraphics canvas,
     PdfPoint size,
-    List<List<_PdfPoint>> series, {
+    List<List<_PdfPoint>> series,
+    PdfFont font, {
     String xLabel = '',
     String yLabel = '',
   }) {
-    const margin = 20.0;
-    final plotW = size.x - margin * 2;
-    final plotH = size.y - margin * 2;
+    const left = 42.0;
+    const bottom = 28.0;
+    const top = 6.0;
+    const right = 6.0;
+    final plotW = size.x - left - right;
+    final plotH = size.y - bottom - top;
 
     final allX = series.expand((s) => s.map((p) => p.x));
     final allY = series.expand((s) => s.map((p) => p.y));
@@ -864,10 +1020,28 @@ class ReportGenerator {
     canvas
       ..setStrokeColor(PdfColors.grey600)
       ..setLineWidth(0.5)
-      ..drawLine(margin, margin, margin, size.y - margin)
+      ..drawLine(left, bottom, left, size.y - top)
       ..strokePath()
-      ..drawLine(margin, margin, size.x - margin, margin)
+      ..drawLine(left, bottom, size.x - right, bottom)
       ..strokePath();
+
+    // Tick labels
+    _drawAxisTicks(canvas, font, xMin, xMax,
+        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
+        isXAxis: true);
+    _drawAxisTicks(canvas, font, yMin, yMax,
+        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
+        isXAxis: false);
+
+    // Axis name labels
+    canvas.setColor(PdfColors.grey700);
+    if (xLabel.isNotEmpty) {
+      canvas.drawString(
+          font, 7, xLabel, left + plotW / 2 - 15, 2);
+    }
+    if (yLabel.isNotEmpty) {
+      canvas.drawString(font, 6, yLabel, 0, bottom + plotH - 6);
+    }
 
     final colors = [PdfColors.orange, PdfColors.teal, PdfColors.purple];
     for (var si = 0; si < series.length; si++) {
@@ -878,14 +1052,14 @@ class ReportGenerator {
         ..setLineWidth(0.8);
       final first = pts.first;
       canvas.moveTo(
-        margin + (first.x - xMin) / (xMax - xMin) * plotW,
-        margin + (first.y - yMin) / (yMax - yMin) * plotH,
+        left + (first.x - xMin) / (xMax - xMin) * plotW,
+        bottom + (first.y - yMin) / (yMax - yMin) * plotH,
       );
       for (var i = 1; i < pts.length; i++) {
         final p = pts[i];
         canvas.lineTo(
-          margin + (p.x - xMin) / (xMax - xMin) * plotW,
-          margin + (p.y - yMin) / (yMax - yMin) * plotH,
+          left + (p.x - xMin) / (xMax - xMin) * plotW,
+          bottom + (p.y - yMin) / (yMax - yMin) * plotH,
         );
       }
       canvas.strokePath();
@@ -896,12 +1070,17 @@ class ReportGenerator {
     PdfGraphics canvas,
     PdfPoint size,
     List<List<_PdfPoint>> series,
-    List<PdfColor> colors, {
+    List<PdfColor> colors,
+    PdfFont font, {
+    String yAxisLabel = '',
     double? zeroLine,
   }) {
-    const margin = 20.0;
-    final plotW = size.x - margin * 2;
-    final plotH = size.y - margin * 2;
+    const left = 42.0;
+    const bottom = 14.0;
+    const top = 6.0;
+    const right = 6.0;
+    final plotW = size.x - left - right;
+    final plotH = size.y - bottom - top;
 
     final allX = series.expand((s) => s.map((p) => p.x));
     final allY = series.expand((s) => s.map((p) => p.y));
@@ -920,18 +1099,33 @@ class ReportGenerator {
     canvas
       ..setStrokeColor(PdfColors.grey600)
       ..setLineWidth(0.5)
-      ..drawLine(margin, margin, margin, size.y - margin)
+      ..drawLine(left, bottom, left, size.y - top)
       ..strokePath()
-      ..drawLine(margin, margin, size.x - margin, margin)
+      ..drawLine(left, bottom, size.x - right, bottom)
       ..strokePath();
+
+    // Tick labels: X-axis (log frequency → Hz)
+    _drawAxisTicks(canvas, font, xMin, xMax,
+        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
+        isXAxis: true, isLogX: true);
+    // Y-axis ticks
+    _drawAxisTicks(canvas, font, yMin, yMax,
+        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
+        isXAxis: false);
+
+    // Y-axis unit label
+    if (yAxisLabel.isNotEmpty) {
+      canvas.setColor(PdfColors.grey700);
+      canvas.drawString(font, 6, yAxisLabel, 0, bottom + plotH - 6);
+    }
 
     // Zero/reference line
     if (zeroLine != null && zeroLine >= yMin && zeroLine <= yMax) {
-      final zy = margin + (zeroLine - yMin) / (yMax - yMin) * plotH;
+      final zy = bottom + (zeroLine - yMin) / (yMax - yMin) * plotH;
       canvas
         ..setStrokeColor(PdfColors.grey400)
         ..setLineWidth(0.3)
-        ..drawLine(margin, zy, size.x - margin, zy)
+        ..drawLine(left, zy, size.x - right, zy)
         ..strokePath();
     }
 
@@ -939,9 +1133,9 @@ class ReportGenerator {
     canvas.setStrokeColor(PdfColors.grey200);
     canvas.setLineWidth(0.2);
     for (var i = 1; i <= 3; i++) {
-      final fy = margin + plotH * i / 4;
+      final fy = bottom + plotH * i / 4;
       canvas
-        ..drawLine(margin, fy, size.x - margin, fy)
+        ..drawLine(left, fy, size.x - right, fy)
         ..strokePath();
     }
 
@@ -954,18 +1148,281 @@ class ReportGenerator {
         ..setLineWidth(si == 0 ? 0.6 : 1.0);
       final first = pts.first;
       canvas.moveTo(
-        margin + (first.x - xMin) / (xMax - xMin) * plotW,
-        margin + (first.y - yMin) / (yMax - yMin) * plotH,
+        left + (first.x - xMin) / (xMax - xMin) * plotW,
+        bottom + (first.y - yMin) / (yMax - yMin) * plotH,
       );
       for (var i = 1; i < pts.length; i++) {
         final p = pts[i];
         canvas.lineTo(
-          margin + (p.x - xMin) / (xMax - xMin) * plotW,
-          margin + (p.y - yMin) / (yMax - yMin) * plotH,
+          left + (p.x - xMin) / (xMax - xMin) * plotW,
+          bottom + (p.y - yMin) / (yMax - yMin) * plotH,
         );
       }
       canvas.strokePath();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pole-Zero Plot for PDF
+  // ---------------------------------------------------------------------------
+
+  /// Build a pole-zero map section for a single loop mode.
+  static pw.Widget _buildPoleZeroPdfPlot(
+    FeedforwardGains ff,
+    PidResult pid,
+    PoleZeroMode mode,
+    PdfFont chartFont,
+  ) {
+    final poles = computeClosedLoopPoles(ff, pid, mode);
+    final olPoles = computeOpenLoopPoles(ff, pid, mode);
+    final modeLabel =
+        mode == PoleZeroMode.velocity ? 'Velocity Loop' : 'Position Loop';
+
+    // Summarise poles
+    final allStable = poles.every((p) => p.isStable);
+    final complexPoles = poles.where((p) => p.im.abs() > 1e-6).toList();
+    String poleInfo = allStable ? 'Stable' : 'UNSTABLE';
+    if (complexPoles.isNotEmpty) {
+      final p = complexPoles.first;
+      poleInfo +=
+          '  |  wn=${p.wn.toStringAsFixed(1)} rad/s'
+          '  |  zeta=${p.zeta.toStringAsFixed(3)}';
+    }
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(modeLabel,
+            style: pw.TextStyle(
+                fontSize: 12, fontWeight: pw.FontWeight.bold)),
+        pw.SizedBox(height: 4),
+        pw.SizedBox(
+          height: 260,
+          child: pw.CustomPaint(
+            size: const PdfPoint(260, 260),
+            painter: (canvas, size) =>
+                _drawPoleZeroChart(canvas, size, poles, olPoles, chartFont),
+          ),
+        ),
+        pw.SizedBox(height: 4),
+        // Pole list
+        for (final p in poles)
+          pw.Text(
+            '  ${p.isStable ? "X" : "!"} ${p.toString()}'
+            '${p.im.abs() > 1e-6 ? "  (wn=${p.wn.toStringAsFixed(1)}, z=${p.zeta.toStringAsFixed(2)})" : ""}',
+            style: pw.TextStyle(
+              fontSize: 8,
+              color: p.isStable ? PdfColors.green800 : PdfColors.red800,
+              font: pw.Font.courier(),
+            ),
+          ),
+        pw.SizedBox(height: 4),
+        pw.Container(
+          padding: const pw.EdgeInsets.all(4),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(3)),
+            color: PdfColors.grey100,
+          ),
+          child: pw.Text(poleInfo, style: const pw.TextStyle(fontSize: 8)),
+        ),
+      ],
+    );
+  }
+
+  /// Draw the s-plane pole-zero chart with stability regions and damping lines.
+  static void _drawPoleZeroChart(
+    PdfGraphics canvas,
+    PdfPoint size,
+    List<PolePlotData> poles,
+    List<PolePlotData> openLoopPoles,
+    PdfFont font,
+  ) {
+    const left = 36.0;
+    const bottom = 24.0;
+    const top = 6.0;
+    const right = 6.0;
+    final plotW = size.x - left - right;
+    final plotH = size.y - bottom - top;
+
+    // Determine axis range from pole locations
+    double maxAbs = 50.0;
+    for (final p in poles) {
+      final extent = math.max(p.re.abs(), p.im.abs());
+      if (extent > maxAbs) maxAbs = extent * 1.3;
+    }
+    maxAbs = (maxAbs * 1.2).ceilToDouble();
+
+    double toX(double re) => left + (re + maxAbs) / (2 * maxAbs) * plotW;
+    double toY(double im) => bottom + (im + maxAbs) / (2 * maxAbs) * plotH;
+
+    final originX = toX(0);
+    final originY = toY(0);
+
+    // ── Stability regions ─────────────────────────────────────────────
+    // LHP (stable) — very faint green tint
+    canvas
+      ..setColor(const PdfColor(0.27, 0.67, 0.27, 0.04))
+      ..drawRect(left, bottom, originX - left, plotH)
+      ..fillPath();
+    // RHP (unstable) — very faint red tint
+    canvas
+      ..setColor(const PdfColor(0.67, 0.27, 0.27, 0.04))
+      ..drawRect(originX, bottom, left + plotW - originX, plotH)
+      ..fillPath();
+
+    // ── Grid lines ────────────────────────────────────────────────────
+    canvas
+      ..setStrokeColor(PdfColors.grey300)
+      ..setLineWidth(0.2);
+    final step = _pzGridStep(maxAbs);
+    for (double v = -maxAbs; v <= maxAbs + step * 0.1; v += step) {
+      if (v.abs() < step * 0.1) continue;
+      final px = toX(v);
+      final py = toY(v);
+      canvas
+        ..drawLine(px, bottom, px, bottom + plotH)
+        ..strokePath()
+        ..drawLine(left, py, left + plotW, py)
+        ..strokePath();
+    }
+
+    // ── Axes (imaginary axis = stability boundary) ────────────────────
+    canvas
+      ..setStrokeColor(PdfColors.grey600)
+      ..setLineWidth(0.8)
+      ..drawLine(originX, bottom, originX, bottom + plotH)
+      ..strokePath()
+      ..drawLine(left, originY, left + plotW, originY)
+      ..strokePath();
+
+    // Axis tick labels
+    canvas.setColor(PdfColors.grey600);
+    for (double v = -maxAbs; v <= maxAbs + step * 0.1; v += step) {
+      if (v.abs() < step * 0.1) continue;
+      canvas.drawString(
+          font, 6, v.toStringAsFixed(0), toX(v) - 4, bottom - 10);
+      canvas.drawString(
+          font, 6, v.toStringAsFixed(0), left - 26, toY(v) - 2);
+    }
+
+    // Axis name labels
+    canvas
+      ..setColor(PdfColors.grey700);
+    canvas.drawString(font, 7, 'Re (1/s)', left + plotW - 28, originY + 3);
+    canvas.drawString(font, 7, 'Im (rad/s)', originX + 3, bottom + plotH - 3);
+
+    // ── Damping ratio lines ──────────────────────────────────────────
+    canvas
+      ..setStrokeColor(const PdfColor(0.5, 0.5, 0.5, 0.3))
+      ..setLineWidth(0.5);
+    for (final zeta in [0.3, 0.5, 0.707, 0.9]) {
+      final theta = math.acos(zeta);
+      final lineLen = maxAbs * 1.1;
+      final reEnd = -lineLen * math.cos(theta);
+      final imEnd = lineLen * math.sin(theta);
+      // Upper + lower half
+      canvas
+        ..drawLine(originX, originY, toX(reEnd), toY(imEnd))
+        ..strokePath()
+        ..drawLine(originX, originY, toX(reEnd), toY(-imEnd))
+        ..strokePath();
+      // Label (upper only)
+      final labelRe = reEnd * 0.65;
+      final labelIm = imEnd * 0.65;
+      canvas.setColor(const PdfColor(0.5, 0.5, 0.5, 0.5));
+      final zetaStr = zeta == 0.707 ? '.707' : zeta.toString();
+      canvas.drawString(font, 5, 'z=$zetaStr', toX(labelRe), toY(labelIm));
+    }
+
+    // ── Natural frequency arcs (LHP semicircles) ─────────────────────
+    // Approximate semicircle with line segments
+    final wnStep = _pzGridStep(maxAbs);
+    canvas
+      ..setStrokeColor(const PdfColor(0.4, 0.4, 0.4, 0.15))
+      ..setLineWidth(0.4);
+    for (double wn = wnStep; wn < maxAbs; wn += wnStep) {
+      const segments = 40;
+      for (var i = 0; i < segments; i++) {
+        final a1 = math.pi / 2 + math.pi * i / segments;
+        final a2 = math.pi / 2 + math.pi * (i + 1) / segments;
+        canvas
+          ..drawLine(
+            toX(wn * math.cos(a1)),
+            toY(wn * math.sin(a1)),
+            toX(wn * math.cos(a2)),
+            toY(wn * math.sin(a2)),
+          )
+          ..strokePath();
+      }
+    }
+
+    // ── Open-loop poles (O markers) ───────────────────────────────────
+    const olColor = PdfColor(0.4, 0.53, 0.8);
+    // Detect multiplicity so overlapping OL poles get a label.
+    final olDrawn = <int>{};
+    for (int i = 0; i < openLoopPoles.length; i++) {
+      if (olDrawn.contains(i)) continue;
+      final olp = openLoopPoles[i];
+      int mult = 1;
+      for (int j = i + 1; j < openLoopPoles.length; j++) {
+        if (!olDrawn.contains(j) &&
+            (olp.re - openLoopPoles[j].re).abs() < 1e-3 &&
+            (olp.im - openLoopPoles[j].im).abs() < 1e-3) {
+          mult++;
+          olDrawn.add(j);
+        }
+      }
+      olDrawn.add(i);
+      final px = toX(olp.re);
+      final py = toY(olp.im);
+      // Draw circle marker
+      canvas
+        ..setStrokeColor(olColor)
+        ..setLineWidth(1.5);
+      // Approximate circle with 12-segment polygon
+      const r = 5.0;
+      for (var seg = 0; seg < 12; seg++) {
+        final a1 = 2 * math.pi * seg / 12;
+        final a2 = 2 * math.pi * (seg + 1) / 12;
+        canvas
+          ..drawLine(
+            px + r * math.cos(a1), py + r * math.sin(a1),
+            px + r * math.cos(a2), py + r * math.sin(a2),
+          )
+          ..strokePath();
+      }
+      if (mult > 1) {
+        canvas.setColor(olColor);
+        canvas.drawString(font, 6, 'x$mult', px + 7, py - 2);
+      }
+    }
+
+    // ── Closed-loop poles (X markers) ─────────────────────────────────
+    for (final pole in poles) {
+      final px = toX(pole.re);
+      final py = toY(pole.im);
+      final color = pole.isStable
+          ? const PdfColor(0.13, 0.73, 0.13)
+          : const PdfColor(0.87, 0.2, 0.2);
+      // Draw X marker
+      canvas
+        ..setStrokeColor(color)
+        ..setLineWidth(2.0)
+        ..drawLine(px - 5, py - 5, px + 5, py + 5)
+        ..strokePath()
+        ..drawLine(px + 5, py - 5, px - 5, py + 5)
+        ..strokePath();
+    }
+  }
+
+  /// Choose a nice round grid step for the pole-zero chart.
+  static double _pzGridStep(double maxAbs) {
+    if (maxAbs <= 5) return 1;
+    if (maxAbs <= 20) return 5;
+    if (maxAbs <= 100) return 25;
+    if (maxAbs <= 500) return 100;
+    return (maxAbs / 4).roundToDouble();
   }
 
   static Future<String?> _pickSavePath(MechanismConfig config) async {
@@ -974,7 +1431,13 @@ class ReportGenerator {
         .replaceAll(':', '-')
         .split('.')
         .first;
-    final name = 'sysid_report_${config.type.name}_$timestamp.pdf';
+    final slug = config.systemName.isNotEmpty
+        ? config.systemName
+            .toLowerCase()
+            .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+            .replaceAll(RegExp(r'^_+|_+$'), '')
+        : config.type.name;
+    final name = 'sysid_report_${slug}_$timestamp.pdf';
 
     return FilePicker.platform.saveFile(
       dialogTitle: 'Save PDF Report',

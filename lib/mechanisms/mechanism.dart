@@ -16,6 +16,10 @@ enum MechanismType {
 
   /// Spinning flywheel (no gravity component).
   flywheel,
+
+  /// General mechanism with no gravity (turret, horizontal slide, etc.).
+  /// Supports both velocity and position control.
+  simple,
 }
 
 /// Extension methods on [MechanismType] for display and behavior.
@@ -25,19 +29,21 @@ extension MechanismTypeX on MechanismType {
         MechanismType.arm => 'Arm',
         MechanismType.elevator => 'Elevator',
         MechanismType.flywheel => 'Flywheel',
+        MechanismType.simple => 'Simple',
       };
 
   /// Whether this mechanism has a gravity component (kG).
-  bool get hasGravity => this != MechanismType.flywheel;
+  bool get hasGravity => this != MechanismType.flywheel && this != MechanismType.simple;
 
   /// Whether soft limits are required for safety.
-  bool get requiresSoftLimits => this != MechanismType.flywheel;
+  bool get requiresSoftLimits => this == MechanismType.arm || this == MechanismType.elevator;
 
   /// The form of gravity compensation.
   String get gravityDescription => switch (this) {
         MechanismType.arm => 'kG · cos(θ)',
         MechanismType.elevator => 'kG (constant)',
         MechanismType.flywheel => 'None',
+        MechanismType.simple => 'None',
       };
 
   /// Default position unit label (metric).
@@ -45,6 +51,7 @@ extension MechanismTypeX on MechanismType {
         MechanismType.arm => 'degrees',
         MechanismType.elevator => 'meters',
         MechanismType.flywheel => 'rotations',
+        MechanismType.simple => 'rotations',
       };
 
   /// Default velocity unit label (metric).
@@ -52,6 +59,7 @@ extension MechanismTypeX on MechanismType {
         MechanismType.arm => 'deg/s',
         MechanismType.elevator => 'm/s',
         MechanismType.flywheel => 'RPM',
+        MechanismType.simple => 'RPM',
       };
 
   /// Imperial position unit label.
@@ -59,6 +67,7 @@ extension MechanismTypeX on MechanismType {
         MechanismType.arm => 'degrees',
         MechanismType.elevator => 'inches',
         MechanismType.flywheel => 'rotations',
+        MechanismType.simple => 'rotations',
       };
 
   /// Imperial velocity unit label.
@@ -66,11 +75,15 @@ extension MechanismTypeX on MechanismType {
         MechanismType.arm => 'deg/s',
         MechanismType.elevator => 'in/s',
         MechanismType.flywheel => 'RPM',
+        MechanismType.simple => 'RPM',
       };
 }
 
 /// Configuration for a specific mechanism under test.
 class MechanismConfig {
+  /// User-defined name for the system being tested (e.g. "Shooter Flywheel").
+  final String systemName;
+
   /// The type of mechanism.
   final MechanismType type;
 
@@ -121,6 +134,7 @@ class MechanismConfig {
 
   const MechanismConfig({
     required this.type,
+    this.systemName = '',
     this.gearRatio = 1.0,
     this.positionConversionFactor = 1.0,
     this.velocityConversionFactor = 1.0,
@@ -167,6 +181,7 @@ class MechanismConfig {
   /// Create a copy with modified fields.
   MechanismConfig copyWith({
     MechanismType? type,
+    String? systemName,
     double? gearRatio,
     double? positionConversionFactor,
     double? velocityConversionFactor,
@@ -179,6 +194,7 @@ class MechanismConfig {
   }) {
     return MechanismConfig(
       type: type ?? this.type,
+      systemName: systemName ?? this.systemName,
       gearRatio: gearRatio ?? this.gearRatio,
       positionConversionFactor:
           positionConversionFactor ?? this.positionConversionFactor,
@@ -251,6 +267,12 @@ class SysIdTestParams {
           quasistaticRampRate: 0.25,
           dynamicStepVoltage: 7.0,
           dynamicStepDuration: 3.0,
+          maxTestVoltage: 12.0,
+        ),
+      MechanismType.simple => const SysIdTestParams(
+          quasistaticRampRate: 0.25,
+          dynamicStepVoltage: 6.0,
+          dynamicStepDuration: 2.0,
           maxTestVoltage: 12.0,
         ),
     };

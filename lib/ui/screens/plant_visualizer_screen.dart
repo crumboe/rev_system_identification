@@ -53,11 +53,13 @@ class _Defaults {
   static const arm = _Defaults(kS: 0.20, kV: 0.018, kA: 0.002, kG: 0.80);
   static const elevator =
       _Defaults(kS: 0.18, kV: 0.12, kA: 0.015, kG: 0.55);
+  static const simple = _Defaults(kS: 0.14, kV: 0.0185, kA: 0.003, kG: 0.0);
 
   static _Defaults forMechanism(MechanismType type) => switch (type) {
         MechanismType.flywheel => flywheel,
         MechanismType.arm => arm,
         MechanismType.elevator => elevator,
+        MechanismType.simple => simple,
       };
 }
 
@@ -99,6 +101,8 @@ List<SimSample> runStepResponse({
       physics = ArmPhysics(kS: kS, kV: kV, kA: kA, kG: kG, noiseLevel: 0);
     case MechanismType.elevator:
       physics = ElevatorPhysics(kS: kS, kV: kV, kA: kA, kG: kG, noiseLevel: 0);
+    case MechanismType.simple:
+      physics = FlywheelPhysics(kS: kS, kV: kV, kA: kA, noiseLevel: 0);
   }
 
   physics.reset();
@@ -133,12 +137,14 @@ String _velocityUnit(MechanismType m) => switch (m) {
       MechanismType.flywheel => 'RPM',
       MechanismType.arm => 'RPM',
       MechanismType.elevator => 'RPM',
+      MechanismType.simple => 'RPM',
     };
 
 String _positionUnit(MechanismType m) => switch (m) {
       MechanismType.flywheel => 'rot',
       MechanismType.arm => 'rot',
       MechanismType.elevator => 'rot',
+      MechanismType.simple => 'rot',
     };
 
 // ---------------------------------------------------------------------------
@@ -242,11 +248,13 @@ class _PlantVisualizerScreenState
         MechanismType.flywheel => const _SliderRange(0.001, 0.10),
         MechanismType.arm => const _SliderRange(0.001, 0.10),
         MechanismType.elevator => const _SliderRange(0.01, 0.50),
+        MechanismType.simple => const _SliderRange(0.001, 0.10),
       };
   _SliderRange get _kARange => switch (_mechanism) {
         MechanismType.flywheel => const _SliderRange(0.0005, 0.02),
         MechanismType.arm => const _SliderRange(0.0005, 0.02),
         MechanismType.elevator => const _SliderRange(0.001, 0.10),
+        MechanismType.simple => const _SliderRange(0.0005, 0.02),
       };
   _SliderRange get _kGRange => const _SliderRange(0.0, 2.0);
 
@@ -394,6 +402,8 @@ class _PlantVisualizerScreenState
         'V = kS·sign(ω) + kG·cos(θ) + kV·ω + kA·α',
       MechanismType.elevator =>
         'V = kS·sign(v) + kG + kV·v + kA·a',
+      MechanismType.simple =>
+        'V = kS·sign(ω) + kV·ω + kA·α',
     };
 
     return Card(

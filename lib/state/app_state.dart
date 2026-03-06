@@ -49,6 +49,10 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
     state = state.copyWith(type: type);
   }
 
+  void setSystemName(String name) {
+    state = state.copyWith(systemName: name);
+  }
+
   void setGearRatio(double ratio) {
     state = state.copyWith(gearRatio: ratio);
   }
@@ -232,20 +236,33 @@ class PidTuningParams {
   /// Range: 1–20 Hz. Default: 5 Hz.
   final double positionBandwidthHz;
 
+  /// Desired damping ratio (ζ) for position pole placement.
+  ///
+  /// Controls how the closed-loop system approaches its target:
+  ///   ζ > 1.0: Overdamped – slow, no overshoot.
+  ///   ζ = 1.0: Critically damped – fastest without overshoot.
+  ///   ζ = 0.707: Butterworth – ~4 % overshoot, fast settling.
+  ///   ζ < 0.707: Underdamped – oscillatory, faster rise time.
+  /// Range: 0.3–2.0. Default: 1.0 (critically damped).
+  final double dampingRatio;
+
   const PidTuningParams({
     this.velocityTimeConstantMs = 100.0,
     this.positionBandwidthHz = 5.0,
+    this.dampingRatio = 1.0,
   });
 
   PidTuningParams copyWith({
     double? velocityTimeConstantMs,
     double? positionBandwidthHz,
+    double? dampingRatio,
   }) {
     return PidTuningParams(
       velocityTimeConstantMs:
           velocityTimeConstantMs ?? this.velocityTimeConstantMs,
       positionBandwidthHz:
           positionBandwidthHz ?? this.positionBandwidthHz,
+      dampingRatio: dampingRatio ?? this.dampingRatio,
     );
   }
 
@@ -254,6 +271,9 @@ class PidTuningParams {
 
   /// Position bandwidth clamped to valid range.
   static double clampPositionBw(double hz) => hz.clamp(1.0, 20.0);
+
+  /// Damping ratio clamped to valid range.
+  static double clampDamping(double z) => z.clamp(0.3, 2.0);
 }
 
 /// Current PID tuning parameters.
@@ -274,6 +294,12 @@ class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
   void setPositionBandwidth(double hz) {
     state = state.copyWith(
       positionBandwidthHz: PidTuningParams.clampPositionBw(hz),
+    );
+  }
+
+  void setDampingRatio(double z) {
+    state = state.copyWith(
+      dampingRatio: PidTuningParams.clampDamping(z),
     );
   }
 

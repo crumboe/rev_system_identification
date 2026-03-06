@@ -1,6 +1,6 @@
 /// "What If" PID Gain Playground — simulate a step response with adjustable
-/// kP, kI, kD and see rise time, overshoot, and steady-state error in
-/// real-time.
+/// feedforward (kS, kV, kA, kG) and PID (kP, kI, kD) gains. See rise time,
+/// overshoot, and steady-state error in real-time.
 library;
 
 import 'dart:math' as math;
@@ -14,21 +14,44 @@ class PidPlayground extends StatefulWidget {
   final FeedforwardGains ff;
   final PidResult? initialPid;
 
-  const PidPlayground({super.key, required this.ff, this.initialPid});
+  /// Called whenever the user adjusts PID gains in the playground.
+  final ValueChanged<PidResult>? onPidChanged;
+
+  const PidPlayground({
+    super.key,
+    required this.ff,
+    this.initialPid,
+    this.onPidChanged,
+  });
 
   @override
   State<PidPlayground> createState() => _PidPlaygroundState();
 }
 
-class _PidPlaygroundState extends State<PidPlayground> {
+class _PidPlaygroundState extends State<PidPlayground>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  // PID gains (controller)
   late double _kP;
   late double _kI;
   late double _kD;
 
-  // Slider upper bounds — 5× the auto-tuned value or a sensible minimum.
+  // Feedforward gains (controller) — applied to the setpoint, like SPARK MAX.
+  late double _kS;
+  late double _kV;
+  late double _kA;
+  late double _kG;
+
+  // Slider upper bounds — 5× the identified value or a sensible minimum.
   late double _kPMax;
   late double _kIMax;
   late double _kDMax;
+  late double _kSMax;
+  late double _kVMax;
+  late double _kAMax;
+  late double _kGMax;
 
   List<FlSpot> _actualSpots = const [];
   List<FlSpot> _setpointSpots = const [];
@@ -44,16 +67,25 @@ class _PidPlaygroundState extends State<PidPlayground> {
     _kI = widget.initialPid?.kI ?? 0.0;
     _kD = widget.initialPid?.kD ?? 0.0;
 
+    _kS = widget.ff.kS;
+    _kV = widget.ff.kV;
+    _kA = widget.ff.kA;
+    _kG = widget.ff.kG;
+
     _kPMax = _kP > 0 ? math.max(_kP * 5, 0.01) : 5.0;
     _kIMax = _kI > 0 ? math.max(_kI * 5, 0.01) : 1.0;
     _kDMax = _kD > 0 ? math.max(_kD * 5, 0.01) : 1.0;
+    _kSMax = _kS > 0 ? math.max(_kS * 3, 0.5) : 2.0;
+    _kVMax = _kV > 0 ? math.max(_kV * 3, 0.5) : 5.0;
+    _kAMax = _kA > 0 ? math.max(_kA * 3, 0.5) : 2.0;
+    _kGMax = _kG.abs() > 0 ? math.max(_kG.abs() * 3, 0.5) : 2.0;
 
     _runSimulation();
   }
 
   void _runSimulation() {
-    final ff = widget.ff;
-    if (ff.kA <= 0) {
+    final plant = widget.ff; // plant model uses identified gains
+    if (plant.kA <= 0) {
       setState(() {
         _actualSpots = const [];
         _setpointSpots = const [];
@@ -87,14 +119,24 @@ class _PidPlaygroundState extends State<PidPlayground> {
       final derivative = (error - prevError) / dt;
       final pidOutput = _kP * error + _kI * integral + _kD * derivative;
 
-      final velSign = velocity >= 0 ? 1.0 : -1.0;
-      final ffOutput = ff.kS * velSign + ff.kV * velocity;
+      // Controller feedforward: applied to the setpoint (like SPARK MAX),
+      // not the measured velocity.
+      // Note: kA is only used with MAXMotion (motion profiling) which provides
+      // a smooth acceleration setpoint. For a raw velocity step, the desired
+      // steady-state acceleration is 0, so kA doesn't contribute here.
+      final setpointSign = setpoint >= 0 ? 1.0 : -1.0;
+      final ffOutput = _kS * setpointSign +
+          _kV * setpoint +
+          _kG;
       final voltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
 
+      // Plant model: uses identified kS/kV/kA/kG to compute actual dynamics.
+      final velSign = velocity >= 0 ? 1.0 : -1.0;
       final acceleration =
-          (voltage - ff.kS * velSign - ff.kV * velocity) / ff.kA;
-      velocity = (velocity + acceleration * dt).clamp(-10.0, 10.0);
+          (voltage - plant.kS * velSign - plant.kV * velocity - plant.kG) /
+              plant.kA;
+      velocity += acceleration * dt;
       prevError = error;
 
       // Downsample to every 10 ms to keep the chart efficient.
@@ -120,6 +162,8 @@ class _PidPlaygroundState extends State<PidPlayground> {
           maxVel > setpoint ? (maxVel - setpoint) / setpoint * 100.0 : 0.0;
       _steadyStateError = (setpoint - velocity).abs();
     });
+
+    widget.onPidChanged?.call(PidResult(kP: _kP, kI: _kI, kD: _kD));
   }
 
   void _resetToAutoTuned() {
@@ -127,12 +171,17 @@ class _PidPlaygroundState extends State<PidPlayground> {
       _kP = widget.initialPid?.kP ?? 1.0;
       _kI = widget.initialPid?.kI ?? 0.0;
       _kD = widget.initialPid?.kD ?? 0.0;
+      _kS = widget.ff.kS;
+      _kV = widget.ff.kV;
+      _kA = widget.ff.kA;
+      _kG = widget.ff.kG;
     });
     _runSimulation();
   }
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final theme = FluentTheme.of(context);
     final subtleColor =
         theme.typography.body?.color?.withValues(alpha: 0.6);
@@ -141,7 +190,71 @@ class _PidPlaygroundState extends State<PidPlayground> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Sliders ────────────────────────────────────────────────────
+          // ── Feedforward sliders ────────────────────────────────────────
+          Text(
+            'Feedforward (applied to setpoint, like SPARK MAX)',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: subtleColor,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _SliderRow(
+            label: 'kS',
+            value: _kS,
+            min: 0,
+            max: _kSMax,
+            onChanged: (v) {
+              setState(() => _kS = v);
+              _runSimulation();
+            },
+          ),
+          const SizedBox(height: 8),
+          _SliderRow(
+            label: 'kV',
+            value: _kV,
+            min: 0,
+            max: _kVMax,
+            onChanged: (v) {
+              setState(() => _kV = v);
+              _runSimulation();
+            },
+          ),
+          const SizedBox(height: 8),
+          _SliderRow(
+            label: 'kA',
+            value: _kA,
+            min: 0,
+            max: _kAMax,
+            onChanged: (v) {
+              setState(() => _kA = v);
+              _runSimulation();
+            },
+          ),
+          const SizedBox(height: 8),
+          _SliderRow(
+            label: 'kG',
+            value: _kG,
+            min: 0,
+            max: _kGMax,
+            onChanged: (v) {
+              setState(() => _kG = v);
+              _runSimulation();
+            },
+          ),
+          const SizedBox(height: 14),
+
+          // ── PID sliders ────────────────────────────────────────────────
+          Text(
+            'PID (error correction)',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: subtleColor,
+            ),
+          ),
+          const SizedBox(height: 6),
           _SliderRow(
             label: 'kP',
             value: _kP,
@@ -177,8 +290,8 @@ class _PidPlaygroundState extends State<PidPlayground> {
           const SizedBox(height: 12),
 
           Button(
-            onPressed: widget.initialPid != null ? _resetToAutoTuned : null,
-            child: const Text('Reset to Auto-Tuned'),
+            onPressed: _resetToAutoTuned,
+            child: const Text('Reset to Identified Values'),
           ),
           const SizedBox(height: 16),
 

@@ -81,6 +81,12 @@ class ValidationParams {
           holdDuration: 3.0,
           settleDuration: 1.0,
         ),
+      MechanismType.simple => const ValidationParams(
+          velocitySetpoint: 500.0,  // RPM
+          positionSetpoint: 5.0,    // rotations
+          holdDuration: 3.0,
+          settleDuration: 1.0,
+        ),
     };
   }
 

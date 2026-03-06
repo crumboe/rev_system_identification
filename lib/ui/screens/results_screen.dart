@@ -20,6 +20,7 @@ import '../widgets/bode_plot.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
 import '../widgets/concept_panel.dart';
+import '../widgets/control_block_diagram.dart';
 import '../widgets/pid_playground.dart';
 import '../widgets/pole_zero_map.dart';
 
@@ -83,6 +84,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         ),
       ),
       children: [
+        // Tuning parameters (damping, velocity τ, position ω)
+        _TuningParametersPanel(),
+        const SizedBox(height: 12),
+
         // Analysis button
         Row(
           children: [
@@ -140,19 +145,44 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
 
           const SizedBox(height: 24),
 
+          // Block diagram of the control system
+          Expander(
+            header: const Text(
+              'Control System Architecture',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+            content: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_velPid != null)
+                  Expanded(
+                    child: ControlBlockDiagram(
+                      ff: _ff!,
+                      pid: _velPid!,
+                      mode: LoopMode.velocity,
+                      mechanismType: config.type,
+                    ),
+                  ),
+                const SizedBox(width: 16),
+                if (_posPid != null)
+                  Expanded(
+                    child: ControlBlockDiagram(
+                      ff: _ff!,
+                      pid: _posPid!,
+                      mode: LoopMode.position,
+                      mechanismType: config.type,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
           // PID gains
           const Text(
             'PID Gains (Auto-Tuned)',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-
-          // Advanced PID tuning parameters
-          _PidTuningPanel(
-            onRetune: _ff != null
-                ? () => _runAnalysis(qsRuns, dynRuns, config,
-                    tuningParams: ref.read(pidTuningParamsProvider))
-                : null,
           ),
           const SizedBox(height: 12),
 
@@ -202,17 +232,20 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 24),
 
           // PID Playground
-          const Text(
-            '"What If" PID Gain Playground',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Expander(
+            initiallyExpanded: false,
+            header: const Text(
+              '"What If" PID Gain Playground',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+            content: PidPlayground(
+              ff: _ff!,
+              initialPid: _velPid,
+              onPidChanged: (pid) {
+                setState(() => _velPid = pid);
+              },
+            ),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'Simulation only — adjust gains to see predicted step response.',
-            style: TextStyle(fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          PidPlayground(ff: _ff!, initialPid: _velPid),
 
           const SizedBox(height: 24),
 
@@ -305,20 +338,6 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   ),
                 ),
               )),
-        ],
-
-        // Power visualization
-        if (testRuns.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          const Text(
-            'Energy & Power',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 220,
-            child: _PowerChart(testRuns: testRuns),
-          ),
         ],
 
         const SizedBox(height: 16),
@@ -583,6 +602,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         ff: ff,
         mechanismType: config.type,
         desiredBandwidthHz: tuningParams.positionBandwidthHz,
+        dampingRatio: tuningParams.dampingRatio,
       );
 
       setState(() {
@@ -747,6 +767,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         velocityPid: _velPid,
         positionPid: _posPid,
         testRuns: runs,
+        tuningParams: ref.read(pidTuningParamsProvider),
       );
       if (path != null && mounted) {
         await displayInfoBar(context, builder: (ctx, close) {
@@ -984,29 +1005,130 @@ class _GainRow extends StatelessWidget {
 enum _PidMode { velocity, position }
 enum _WriteMode { velocity, position }
 
-/// Collapsible panel for advanced PID tuning parameters.
-class _PidTuningPanel extends ConsumerStatefulWidget {
-  final VoidCallback? onRetune;
-
-  const _PidTuningPanel({this.onRetune});
-
-  @override
-  ConsumerState<_PidTuningPanel> createState() => _PidTuningPanelState();
+/// Preset damping options with label, value, and explanation.
+class _DampingPreset {
+  final String label;
+  final double zeta;
+  final String description;
+  const _DampingPreset(this.label, this.zeta, this.description);
 }
 
-class _PidTuningPanelState extends ConsumerState<_PidTuningPanel> {
+const _dampingPresets = [
+  _DampingPreset(
+    'Overdamped (ζ = 1.5)',
+    1.5,
+    'Very conservative — slow approach with no overshoot. '
+    'Use when overshoot is absolutely unacceptable (e.g. elevator near hard stop).',
+  ),
+  _DampingPreset(
+    'Critically Damped (ζ = 1.0)',
+    1.0,
+    'Fastest response with zero overshoot. '
+    'Recommended for most FRC mechanisms. The "textbook" default.',
+  ),
+  _DampingPreset(
+    'Butterworth (ζ ≈ 0.707)',
+    0.707,
+    '~4 % overshoot, maximally flat frequency response. '
+    'Good for mechanisms that can tolerate a small overshoot in exchange for a faster rise time.',
+  ),
+  _DampingPreset(
+    'Underdamped (ζ = 0.5)',
+    0.5,
+    '~16 % overshoot, faster rise time but oscillatory settling. '
+    'Use with caution — the mechanism will ring past the setpoint.',
+  ),
+];
+
+/// Dropdown + explanation shown before the Compute button.
+class _DampingSelector extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final params = ref.watch(pidTuningParamsProvider);
+    final theme = FluentTheme.of(context);
+    // Find best-matching preset (or default to critically damped).
+    final selected = _dampingPresets.firstWhere(
+      (p) => (p.zeta - params.dampingRatio).abs() < 0.01,
+      orElse: () => _dampingPresets[1],
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 200,
+              child: Text(
+                'Position damping (ζ)',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: theme.typography.body?.color,
+                ),
+              ),
+            ),
+            ComboBox<double>(
+              value: selected.zeta,
+              items: _dampingPresets
+                  .map((p) => ComboBoxItem<double>(
+                        value: p.zeta,
+                        child: Text(p.label),
+                      ))
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  ref
+                      .read(pidTuningParamsProvider.notifier)
+                      .setDampingRatio(val);
+                }
+              },
+            ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 200, top: 4),
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.cardColor,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              selected.description,
+              style: TextStyle(
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                color: theme.typography.body?.color?.withValues(alpha: 0.6),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Unified panel with all three tuning knobs before the Compute button.
+class _TuningParametersPanel extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_TuningParametersPanel> createState() =>
+      _TuningParametersPanelState();
+}
+
+class _TuningParametersPanelState
+    extends ConsumerState<_TuningParametersPanel> {
   late TextEditingController _tauController;
   late TextEditingController _bwController;
-  bool _expanded = false;
 
   @override
   void initState() {
     super.initState();
     final params = ref.read(pidTuningParamsProvider);
-    _tauController =
-        TextEditingController(text: params.velocityTimeConstantMs.toStringAsFixed(0));
-    _bwController =
-        TextEditingController(text: params.positionBandwidthHz.toStringAsFixed(1));
+    _tauController = TextEditingController(
+        text: params.velocityTimeConstantMs.toStringAsFixed(0));
+    _bwController = TextEditingController(
+        text: params.positionBandwidthHz.toStringAsFixed(1));
   }
 
   @override
@@ -1045,27 +1167,28 @@ class _PidTuningPanelState extends ConsumerState<_PidTuningPanel> {
     final params = ref.watch(pidTuningParamsProvider);
     final theme = FluentTheme.of(context);
     final isDefault = params.velocityTimeConstantMs == 100.0 &&
-        params.positionBandwidthHz == 5.0;
+        params.positionBandwidthHz == 5.0 &&
+        params.dampingRatio == 1.0;
 
     return Expander(
-      initiallyExpanded: _expanded,
-      onStateChanged: (open) => setState(() => _expanded = open),
       header: Row(
         children: [
           const Icon(FluentIcons.settings, size: 14),
           const SizedBox(width: 8),
-          const Text('Advanced PID Tuning Parameters'),
+          const Text('PID Tuning Parameters'),
           if (!isDefault) ...[
             const SizedBox(width: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 color: theme.accentColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 'Modified',
-                style: TextStyle(fontSize: 10, color: theme.accentColor),
+                style:
+                    TextStyle(fontSize: 10, color: theme.accentColor),
               ),
             ),
           ],
@@ -1075,17 +1198,21 @@ class _PidTuningPanelState extends ConsumerState<_PidTuningPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Adjust these parameters to control how aggressively the '
-            'auto-tuned PID gains respond. Changing these values requires '
-            're-computing the PID gains.',
+            'These parameters control the auto-tuned PID gains. '
+            'Adjust them before computing, or change and re-compute.',
             style: TextStyle(
               fontSize: 12,
-              color: theme.typography.body?.color?.withValues(alpha: 0.7),
+              color:
+                  theme.typography.body?.color?.withValues(alpha: 0.7),
             ),
           ),
           const SizedBox(height: 16),
 
-          // Velocity time constant
+          // ── Position damping ratio ─────────────────────────────
+          _DampingSelector(),
+          const SizedBox(height: 12),
+
+          // ── Velocity time constant ─────────────────────────────
           Row(
             children: [
               SizedBox(
@@ -1129,13 +1256,14 @@ class _PidTuningPanelState extends ConsumerState<_PidTuningPanel> {
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
-                color: theme.typography.body?.color?.withValues(alpha: 0.5),
+                color: theme.typography.body?.color
+                    ?.withValues(alpha: 0.5),
               ),
             ),
           ),
           const SizedBox(height: 12),
 
-          // Position bandwidth
+          // ── Position bandwidth ─────────────────────────────────
           Row(
             children: [
               SizedBox(
@@ -1179,33 +1307,25 @@ class _PidTuningPanelState extends ConsumerState<_PidTuningPanel> {
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
-                color: theme.typography.body?.color?.withValues(alpha: 0.5),
+                color: theme.typography.body?.color
+                    ?.withValues(alpha: 0.5),
               ),
             ),
           ),
           const SizedBox(height: 16),
 
-          Row(
-            children: [
-              FilledButton(
-                onPressed: widget.onRetune,
-                child: const Text('Re-compute PID Gains'),
-              ),
-              const SizedBox(width: 12),
-              if (!isDefault)
-                Button(
-                  onPressed: () {
-                    ref.read(pidTuningParamsProvider.notifier).reset();
-                    final defaults = const PidTuningParams();
-                    _tauController.text =
-                        defaults.velocityTimeConstantMs.toStringAsFixed(0);
-                    _bwController.text =
-                        defaults.positionBandwidthHz.toStringAsFixed(1);
-                  },
-                  child: const Text('Reset to Defaults'),
-                ),
-            ],
-          ),
+          if (!isDefault)
+            Button(
+              onPressed: () {
+                ref.read(pidTuningParamsProvider.notifier).reset();
+                final defaults = const PidTuningParams();
+                _tauController.text =
+                    defaults.velocityTimeConstantMs.toStringAsFixed(0);
+                _bwController.text =
+                    defaults.positionBandwidthHz.toStringAsFixed(1);
+              },
+              child: const Text('Reset to Defaults'),
+            ),
         ],
       ),
     );
@@ -1845,139 +1965,4 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
   }
 }
 
-class _PowerChart extends StatelessWidget {
-  final List<TestRun> testRuns;
 
-  static const _colors = [
-    Color(0xFF2196F3), // blue
-    Color(0xFFFF9800), // orange
-    Color(0xFF009688), // teal
-    Color(0xFFE91E63), // magenta
-  ];
-
-  const _PowerChart({required this.testRuns});
-
-  @override
-  Widget build(BuildContext context) {
-    double peakPower = 0;
-    double totalPower = 0;
-    int totalPoints = 0;
-
-    final lineBars = <LineChartBarData>[];
-    for (var i = 0; i < testRuns.length; i++) {
-      final run = testRuns[i];
-      final spots = <FlSpot>[];
-      for (final dp in run.data) {
-        final p = (dp.voltage * dp.current).abs();
-        spots.add(FlSpot(dp.timestamp, p));
-        if (p > peakPower) peakPower = p;
-        totalPower += p;
-        totalPoints++;
-      }
-      if (spots.isEmpty) continue;
-      lineBars.add(LineChartBarData(
-        spots: spots,
-        isCurved: false,
-        color: _colors[i % _colors.length],
-        barWidth: 1.5,
-        dotData: const FlDotData(show: false),
-      ));
-    }
-
-    final avgPower = totalPoints > 0 ? totalPower / totalPoints : 0.0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            _PowerStat(label: 'Peak Power', value: '${peakPower.toStringAsFixed(1)} W'),
-            const SizedBox(width: 16),
-            _PowerStat(label: 'Avg Power', value: '${avgPower.toStringAsFixed(1)} W'),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: lineBars.isEmpty
-              ? const Card(child: Center(child: Text('No data')))
-              : Card(
-                  child: LineChart(
-                    LineChartData(
-                      lineBarsData: lineBars,
-                      titlesData: FlTitlesData(
-                        topTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false)),
-                        rightTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false)),
-                        bottomTitles: AxisTitles(
-                          axisNameWidget: const Text('Time (s)',
-                              style: TextStyle(fontSize: 10)),
-                          sideTitles: SideTitles(
-                            showTitles: true,
-                            reservedSize: 22,
-                            getTitlesWidget: (v, _) => Text(
-                              v.toStringAsFixed(1),
-                              style: const TextStyle(fontSize: 9),
-                            ),
-                          ),
-                        ),
-                        leftTitles: AxisTitles(
-                          axisNameWidget: const Text('Power (W)',
-                              style: TextStyle(fontSize: 10)),
-                          sideTitles: SideTitles(
-                            showTitles: true,
-                            reservedSize: 44,
-                            getTitlesWidget: (v, _) => Text(
-                              v.toStringAsFixed(0),
-                              style: const TextStyle(fontSize: 9),
-                            ),
-                          ),
-                        ),
-                      ),
-                      gridData:
-                          const FlGridData(show: true, drawVerticalLine: false),
-                      borderData: FlBorderData(show: false),
-                      lineTouchData: LineTouchData(
-                        touchTooltipData: LineTouchTooltipData(
-                          getTooltipItems: (spots) => spots
-                              .map((s) => LineTooltipItem(
-                                    't: ${s.x.toStringAsFixed(2)}s\n'
-                                    '${s.y.toStringAsFixed(1)} W',
-                                    const TextStyle(fontSize: 10),
-                                  ))
-                              .toList(),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PowerStat extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _PowerStat({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label, style: const TextStyle(fontSize: 11)),
-            Text(value,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 14)),
-          ],
-        ),
-      ),
-    );
-  }
-}

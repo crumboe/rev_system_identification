@@ -77,18 +77,21 @@ class PidAutoTuner {
     required FeedforwardGains ff,
     required MechanismType mechanismType,
     double desiredBandwidthHz = 5.0,
+    double dampingRatio = 1.0,
     double controlPeriodMs = 1.0,
     double? maxVelocity,
   }) {
     const nominalVoltage = 12.0;
     final omega = 2.0 * 3.14159265 * desiredBandwidthHz; // rad/s
+    final zeta = dampingRatio;
 
-    // For critically-damped second-order response with natural frequency ω_n:
+    // For a second-order response with natural frequency ω_n and
+    // damping ratio ζ (zeta):
     //   kP_volts = kA · ω_n²
-    //   kD_volts = 2 · kA · ω_n - kV  (minus the plant's inherent damping)
+    //   kD_volts = 2·ζ · kA · ω_n - kV  (minus the plant's inherent damping)
 
     final kPVolts = ff.kA * omega * omega;
-    final kDVolts = (2.0 * ff.kA * omega - ff.kV);
+    final kDVolts = (2.0 * zeta * ff.kA * omega - ff.kV);
 
     // Convert to SPARK PID units (duty cycle per rotation for P, per RPM for D).
     final kP = kPVolts / nominalVoltage;

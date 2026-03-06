@@ -390,7 +390,10 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
             // Live charts + mechanism visual
             Expanded(
-              child: Row(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Row(
                 children: [
                   // Charts
                   Expanded(
@@ -561,15 +564,18 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   ],
                 ],
               ),
-            ),
+                  ),
 
-            // Metrics strip
-            if (_result != null) ...[
-              const SizedBox(height: 8),
-              _MetricsStrip(result: _result!),
-              const SizedBox(height: 16),
-              _ComparisonPanel(result: _result!),
-            ],
+                  // Metrics strip (inside Expanded so it doesn't shrink charts)
+                  if (_result != null) ...[
+                    const SizedBox(height: 8),
+                    _MetricsStrip(result: _result!),
+                    const SizedBox(height: 8),
+
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -812,194 +818,6 @@ class _MetricsStrip extends StatelessWidget {
               color: warn ? Colors.warningPrimaryColor : null,
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Before / After comparison panel
-// ---------------------------------------------------------------------------
-
-class _ComparisonPanel extends StatelessWidget {
-  final ValidationResult result;
-
-  const _ComparisonPanel({required this.result});
-
-  @override
-  Widget build(BuildContext context) {
-    final rt = result.riseTime;
-    final os = result.overshootPercent;
-    final sse = result.steadyStateError;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Before / After: Feedforward Only vs FF + PID',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: _ComparisonCard(
-                title: 'Feedforward Only (estimated)',
-                icon: FluentIcons.settings,
-                color: const Color(0xFF607D8B),
-                metrics: [
-                  _ComparisonMetric(
-                    label: 'Steady-State Error',
-                    value: 'May be non-zero',
-                    note: 'FF alone cannot reject disturbances',
-                    isWarning: true,
-                  ),
-                  const _ComparisonMetric(
-                    label: 'Overshoot',
-                    value: '≈ 0%',
-                    note: 'No integral or derivative action',
-                  ),
-                  const _ComparisonMetric(
-                    label: 'Rise Time',
-                    value: 'Slower',
-                    note: 'Limited by kV and available voltage',
-                  ),
-                  const _ComparisonMetric(
-                    label: 'Disturbance Rejection',
-                    value: 'None',
-                    isWarning: true,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _ComparisonCard(
-                title: 'FF + PID (measured)',
-                icon: FluentIcons.check_mark,
-                color: Colors.successPrimaryColor,
-                metrics: [
-                  _ComparisonMetric(
-                    label: 'Steady-State Error',
-                    value: sse != null ? sse.toStringAsFixed(4) : 'N/A',
-                    isWarning: sse != null && sse.abs() > 0.1,
-                  ),
-                  _ComparisonMetric(
-                    label: 'Overshoot',
-                    value: os != null ? '${os.toStringAsFixed(1)}%' : 'N/A',
-                    isWarning: os != null && os > 20,
-                    note: os != null && os > 20 ? 'Consider reducing kP' : null,
-                  ),
-                  _ComparisonMetric(
-                    label: 'Rise Time',
-                    value: rt != null
-                        ? '${(rt * 1000).toStringAsFixed(0)} ms'
-                        : 'N/A',
-                  ),
-                  const _ComparisonMetric(
-                    label: 'Disturbance Rejection',
-                    value: 'Active via kP/kI/kD',
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _ComparisonMetric {
-  final String label;
-  final String value;
-  final String? note;
-  final bool isWarning;
-
-  const _ComparisonMetric({
-    required this.label,
-    required this.value,
-    this.note,
-    this.isWarning = false,
-  });
-}
-
-class _ComparisonCard extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  final Color color;
-  final List<_ComparisonMetric> metrics;
-
-  const _ComparisonCard({
-    required this.title,
-    required this.icon,
-    required this.color,
-    required this.metrics,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                    color: color,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ...metrics.map((m) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 130,
-                      child: Text(
-                        m.label,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            m.value,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: 'Consolas',
-                              color: m.isWarning
-                                  ? Colors.warningPrimaryColor
-                                  : null,
-                            ),
-                          ),
-                          if (m.note != null)
-                            Text(
-                              m.note!,
-                              style: const TextStyle(fontSize: 10),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              )),
         ],
       ),
     );

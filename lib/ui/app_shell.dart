@@ -11,7 +11,7 @@ import 'screens/config_screen.dart';
 import 'screens/test_screen.dart';
 import 'screens/results_screen.dart';
 import 'screens/validation_screen.dart';
-import 'screens/plant_visualizer_screen.dart';
+
 
 /// Main application shell with side navigation.
 class AppShell extends ConsumerWidget {
@@ -63,11 +63,7 @@ class AppShell extends ConsumerWidget {
             title: const Text('Validation'),
             body: const ValidationScreen(),
           ),
-          PaneItem(
-            icon: const Icon(FluentIcons.variable_group),
-            title: const Text('Plant Model'),
-            body: const PlantVisualizerScreen(),
-          ),
+
         ],
         footerItems: [
           PaneItemAction(

@@ -341,6 +341,8 @@ class SimulatedControlApi implements IControlApi {
   double _profiledSetpoint = 0.0;
   /// Current profiled velocity (rotations / s) used to advance the profile.
   double _profiledVelocity = 0.0;
+  /// Current profiled acceleration (rotations / s²) — used by S-curve mode.
+  double _profiledAccel = 0.0;
   /// Whether the profile has been initialised for the current move.
   bool _profileInitialised = false;
 
@@ -358,8 +360,15 @@ class SimulatedControlApi implements IControlApi {
       _physics.commandedVoltage =
           _pidFf!.computeVelocity(_activeSetpoint, dtSeconds);
     } else if (_activeControlType == kControlTypeMAXMotionPosition) {
-      // Run trapezoidal motion profile to produce an intermediate setpoint.
-      _advanceProfile(dtSeconds);
+      // Run motion profile (trapezoidal or S-curve) to produce a setpoint.
+      final posMode = _paramApi
+          .getParamSync(kParamMAXMotionPositionMode0)
+          .round();
+      if (posMode == kMAXMotionPositionModeSCurve) {
+        _advanceSCurveProfile(dtSeconds);
+      } else {
+        _advanceTrapezoidalProfile(dtSeconds);
+      }
       _physics.commandedVoltage =
           _pidFf!.computePosition(_profiledSetpoint, dtSeconds);
     } else if (_activeControlType == kControlTypePosition) {
@@ -369,67 +378,68 @@ class SimulatedControlApi implements IControlApi {
   }
 
   // -------------------------------------------------------------------------
-  // MAXMotion trapezoidal profile generator
+  // Shared profile initialisation & parameter reading
   // -------------------------------------------------------------------------
 
-  /// Advance the trapezoidal motion profile by [dt] seconds.
-  ///
-  /// Reads cruise velocity (RPM) and max acceleration (RPM/s) from the stored
-  /// MAXMotion parameters and clamps the profiled velocity accordingly.
-  /// The profiled setpoint is then advanced by the (clamped) velocity.
-  void _advanceProfile(double dt) {
+  void _initProfileIfNeeded() {
     if (!_profileInitialised) {
-      // Start the profile from the current measured position.
       _profiledSetpoint = _physics.noisyPositionRotations;
       _profiledVelocity = 0.0;
+      _profiledAccel = 0.0;
       _profileInitialised = true;
     }
+  }
 
-    // Read profile parameters (stored in native RPM / RPM-per-second units).
+  ({double cruise, double maxAccel, double maxJerk, double allowedError})
+      _readProfileParams() {
     final cruiseRpm =
         _paramApi.getParamSync(kParamMAXMotionCruiseVelocity0).abs();
     final maxAccelRpmPerS =
         _paramApi.getParamSync(kParamMAXMotionMaxAccel0).abs();
+    final maxJerkRpmPerS2 =
+        _paramApi.getParamSync(kParamMAXMotionMaxJerk0).abs();
     final allowedErrorRot =
         _paramApi.getParamSync(kParamMAXMotionAllowedError0).abs();
+    return (
+      cruise: cruiseRpm / 60.0,           // rot/s
+      maxAccel: maxAccelRpmPerS / 60.0,   // rot/s²
+      maxJerk: maxJerkRpmPerS2 / 60.0,    // rot/s³
+      allowedError: allowedErrorRot,       // rot
+    );
+  }
 
-    // Convert RPM → rotations/s for the profile math.
-    final cruiseRotPerS = cruiseRpm / 60.0;
-    final maxAccelRotPerS2 = maxAccelRpmPerS / 60.0;
+  // -------------------------------------------------------------------------
+  // Trapezoidal (acceleration-limited) profile
+  // -------------------------------------------------------------------------
+
+  void _advanceTrapezoidalProfile(double dt) {
+    _initProfileIfNeeded();
+    final p = _readProfileParams();
 
     final errorRot = _activeSetpoint - _profiledSetpoint;
 
-    // If within allowed error, snap to target and zero velocity.
-    if (errorRot.abs() <= allowedErrorRot && allowedErrorRot > 0) {
+    if (errorRot.abs() <= p.allowedError && p.allowedError > 0) {
       _profiledSetpoint = _activeSetpoint;
       _profiledVelocity = 0.0;
       return;
     }
 
     final direction = errorRot >= 0 ? 1.0 : -1.0;
-    final absError = errorRot.abs();
-
-    // Compute the distance needed to decelerate from current speed to zero
-    // at maxAccel:  d_decel = v² / (2 * a).
     final absVel = _profiledVelocity.abs();
-    final decelDist = maxAccelRotPerS2 > 0
-        ? (absVel * absVel) / (2.0 * maxAccelRotPerS2)
+    final decelDist = p.maxAccel > 0
+        ? (absVel * absVel) / (2.0 * p.maxAccel)
         : 0.0;
 
-    // Decide whether to accelerate, cruise, or decelerate.
     double desiredVel;
-    if (absError <= decelDist && absVel > 0) {
-      // Decelerate towards target.
+    if (errorRot.abs() <= decelDist && absVel > 0) {
       desiredVel = direction *
-          (absVel - maxAccelRotPerS2 * dt).clamp(0.0, double.infinity);
+          (absVel - p.maxAccel * dt).clamp(0.0, double.infinity);
     } else {
-      // Accelerate or cruise.
-      desiredVel = direction * cruiseRotPerS;
+      desiredVel = direction * p.cruise;
     }
 
-    // Apply acceleration limit.
-    if (maxAccelRotPerS2 > 0) {
-      final maxDeltaV = maxAccelRotPerS2 * dt;
+    if (p.maxAccel > 0) {
+      final maxDeltaV = p.maxAccel * dt;
       final deltaV = desiredVel - _profiledVelocity;
       if (deltaV.abs() > maxDeltaV) {
         _profiledVelocity += maxDeltaV * (deltaV >= 0 ? 1.0 : -1.0);
@@ -440,21 +450,110 @@ class SimulatedControlApi implements IControlApi {
       _profiledVelocity = desiredVel;
     }
 
-    // Clamp velocity to cruise.
-    if (_profiledVelocity.abs() > cruiseRotPerS && cruiseRotPerS > 0) {
-      _profiledVelocity = cruiseRotPerS * (_profiledVelocity >= 0 ? 1.0 : -1.0);
+    if (_profiledVelocity.abs() > p.cruise && p.cruise > 0) {
+      _profiledVelocity = p.cruise * (_profiledVelocity >= 0 ? 1.0 : -1.0);
     }
 
-    // Advance setpoint.
     _profiledSetpoint += _profiledVelocity * dt;
 
-    // Don't overshoot the target.
     if (direction > 0 && _profiledSetpoint > _activeSetpoint) {
       _profiledSetpoint = _activeSetpoint;
       _profiledVelocity = 0.0;
     } else if (direction < 0 && _profiledSetpoint < _activeSetpoint) {
       _profiledSetpoint = _activeSetpoint;
       _profiledVelocity = 0.0;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // S-curve (jerk-limited) profile
+  // -------------------------------------------------------------------------
+
+  /// Advance the jerk-limited S-curve profile by [dt] seconds.
+  ///
+  /// The key difference from trapezoidal: instead of applying acceleration
+  /// instantaneously, acceleration is ramped at [maxJerk] rot/s³. This
+  /// produces smooth velocity curves (the "S" shape).
+  void _advanceSCurveProfile(double dt) {
+    _initProfileIfNeeded();
+    final p = _readProfileParams();
+
+    final errorRot = _activeSetpoint - _profiledSetpoint;
+
+    if (errorRot.abs() <= p.allowedError && p.allowedError > 0) {
+      _profiledSetpoint = _activeSetpoint;
+      _profiledVelocity = 0.0;
+      _profiledAccel = 0.0;
+      return;
+    }
+
+    final direction = errorRot >= 0 ? 1.0 : -1.0;
+    final absVel = _profiledVelocity.abs();
+    final jerk = p.maxJerk > 0 ? p.maxJerk : p.maxAccel / 0.05;
+
+    // Distance to stop from current velocity considering we must also
+    // ramp acceleration down to zero via jerk.
+    // For an S-curve decel: we need to ramp accel from 0 to -maxAccel
+    // (jerk phase), cruise at -maxAccel, then ramp accel back to 0.
+    // Approximate stopping distance:
+    //   d_stop ≈ v²/(2*a) + v*a/(2*j)
+    // The extra term accounts for the jerk ramp.
+    final decelDist = p.maxAccel > 0
+        ? (absVel * absVel) / (2.0 * p.maxAccel) +
+            absVel * p.maxAccel / (2.0 * jerk)
+        : 0.0;
+
+    // Determine desired acceleration.
+    double desiredAccel;
+    if (errorRot.abs() <= decelDist && absVel > 0) {
+      // Decelerating — target negative accel (opposite to direction).
+      desiredAccel = -direction * p.maxAccel;
+    } else if (absVel < p.cruise) {
+      // Accelerating — target positive accel (same as direction).
+      desiredAccel = direction * p.maxAccel;
+    } else {
+      // At cruise — zero acceleration.
+      desiredAccel = 0.0;
+    }
+
+    // Apply jerk limit to acceleration.
+    final maxDeltaA = jerk * dt;
+    final deltaA = desiredAccel - _profiledAccel;
+    if (deltaA.abs() > maxDeltaA) {
+      _profiledAccel += maxDeltaA * (deltaA >= 0 ? 1.0 : -1.0);
+    } else {
+      _profiledAccel = desiredAccel;
+    }
+
+    // Clamp acceleration magnitude.
+    if (_profiledAccel.abs() > p.maxAccel) {
+      _profiledAccel = p.maxAccel * (_profiledAccel >= 0 ? 1.0 : -1.0);
+    }
+
+    // Update velocity from acceleration.
+    _profiledVelocity += _profiledAccel * dt;
+
+    // Clamp velocity to cruise.
+    if (_profiledVelocity.abs() > p.cruise && p.cruise > 0) {
+      _profiledVelocity = p.cruise * (_profiledVelocity >= 0 ? 1.0 : -1.0);
+      // If we hit cruise, zero out the acceleration to stop pushing.
+      if (_profiledAccel * _profiledVelocity > 0) {
+        _profiledAccel = 0.0;
+      }
+    }
+
+    // Advance position setpoint.
+    _profiledSetpoint += _profiledVelocity * dt;
+
+    // Don't overshoot the target.
+    if (direction > 0 && _profiledSetpoint > _activeSetpoint) {
+      _profiledSetpoint = _activeSetpoint;
+      _profiledVelocity = 0.0;
+      _profiledAccel = 0.0;
+    } else if (direction < 0 && _profiledSetpoint < _activeSetpoint) {
+      _profiledSetpoint = _activeSetpoint;
+      _profiledVelocity = 0.0;
+      _profiledAccel = 0.0;
     }
   }
 
@@ -476,6 +575,7 @@ class SimulatedControlApi implements IControlApi {
       if (previousControlType != controlType) {
         _pidFf?.reset();
         _profileInitialised = false;
+        _profiledAccel = 0.0;
       }
     } else {
       // Closed-loop modes — only reset PID when switching from a different

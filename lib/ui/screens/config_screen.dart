@@ -47,6 +47,33 @@ class ConfigScreen extends ConsumerWidget {
             ),
           ),
 
+        // System name
+        const Text(
+          'System Name',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        const InfoBar(
+          title: Text('Identify your system'),
+          content: Text(
+            'Give this setup a name (e.g. "2026 Shooter Flywheel" or '
+            '"Elevator Prototype v2"). This name appears in the PDF report '
+            'header and filename.',
+          ),
+          severity: InfoBarSeverity.info,
+          isLong: true,
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: 400,
+          child: _SystemNameField(
+            initial: config.systemName,
+            onChanged: (v) => configNotifier.setSystemName(v),
+          ),
+        ),
+
+        const SizedBox(height: 24),
+
         // Mechanism type
         const Text(
           'Mechanism Type',
@@ -159,7 +186,17 @@ class ConfigScreen extends ConsumerWidget {
           title: Text('Conversion factors'),
           content: Text(
             'These convert raw encoder rotations/RPM to your preferred units. '
-            'For example, for an arm: 360 / gear_ratio converts rotations to degrees.',
+            'The correct values depend on your encoder placement:\n\n'
+            'Motor built-in (relative) encoder:\n'
+            '  Position factor = (mechanism travel per motor rev) / gear_ratio\n'
+            '  Velocity factor = position_factor / 60\n'
+            '  Example arm with 100:1 total reduction:\n'
+            '    Position = 360 / 100 = 3.6 deg/rot\n'
+            '    Velocity = 3.6 / 60 = 0.06 deg/s per RPM\n\n'
+            'Remote absolute encoder (e.g. through-bore on output shaft):\n'
+            '  Position factor = full-scale travel (360 for arm, spool circumference for elevator)\n'
+            '  Velocity factor = position_factor / 60\n'
+            '  Gear ratio should be set to 1 since the encoder already reads output.',
           ),
           severity: InfoBarSeverity.info,
           isLong: true,
@@ -407,7 +444,7 @@ class ConfigScreen extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(left: 280, top: 2),
             child: Text(
-              'Consider enabling for gravity-loaded mechanisms.',
+              'Consider enabling for mechanisms with mechanical travel limits.',
               style: TextStyle(
                 fontSize: 11,
                 color: Colors.warningPrimaryColor,
@@ -482,4 +519,39 @@ Widget _guideStep(int number, String text) {
       ],
     ),
   );
+}
+
+class _SystemNameField extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String> onChanged;
+
+  const _SystemNameField({required this.initial, required this.onChanged});
+
+  @override
+  State<_SystemNameField> createState() => _SystemNameFieldState();
+}
+
+class _SystemNameFieldState extends State<_SystemNameField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextBox(
+      placeholder: 'e.g. 2026 Shooter Flywheel',
+      controller: _controller,
+      onChanged: widget.onChanged,
+    );
+  }
 }
