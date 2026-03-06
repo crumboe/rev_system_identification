@@ -74,7 +74,7 @@ class ConceptPanel extends StatelessWidget {
           'A very slow voltage ramp test where acceleration ≈ 0. Used to '
           'identify kS and kV from the steady-state relationship: '
           'V ≈ kS·sign(ω) + kV·ω.',
-      icon: FluentIcons.slow_mode_off,
+      icon: FluentIcons.timer,
     ),
     ConceptEntry(
       title: 'Dynamic Test',
@@ -118,7 +118,7 @@ class ConceptPanel extends StatelessWidget {
           'How many dB the gain can increase before the system becomes '
           'unstable. Positive gain margin means stable. '
           'Values above 6 dB are safe.',
-      icon: FluentIcons.signal,
+      icon: FluentIcons.network_tower,
     ),
   ];
 
