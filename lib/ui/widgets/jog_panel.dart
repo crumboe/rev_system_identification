@@ -169,13 +169,17 @@ class _JogPanelState extends State<JogPanel> {
           const SizedBox(height: 6),
 
           // Forward / Reverse jog buttons (hold-to-jog).
+          //
+          // We wrap with Listener (raw pointer events) rather than
+          // GestureDetector so that onPointerDown fires reliably even when
+          // the inner Button has its own gesture recognizer in the arena.
           Row(
             children: [
               Expanded(
-                child: GestureDetector(
-                  onTapDown: canJog ? (_) => _onJogDown(-1.0) : null,
-                  onTapUp: canJog ? (_) => _onJogUp() : null,
-                  onTapCancel: canJog ? () => _onJogUp() : null,
+                child: Listener(
+                  onPointerDown: canJog ? (_) => _onJogDown(-1.0) : null,
+                  onPointerUp: canJog ? (_) => _onJogUp() : null,
+                  onPointerCancel: canJog ? (_) => _onJogUp() : null,
                   child: Button(
                     onPressed: canJog ? () {} : null,
                     child: const Row(
@@ -191,10 +195,10 @@ class _JogPanelState extends State<JogPanel> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: GestureDetector(
-                  onTapDown: canJog ? (_) => _onJogDown(1.0) : null,
-                  onTapUp: canJog ? (_) => _onJogUp() : null,
-                  onTapCancel: canJog ? () => _onJogUp() : null,
+                child: Listener(
+                  onPointerDown: canJog ? (_) => _onJogDown(1.0) : null,
+                  onPointerUp: canJog ? (_) => _onJogUp() : null,
+                  onPointerCancel: canJog ? (_) => _onJogUp() : null,
                   child: Button(
                     onPressed: canJog ? () {} : null,
                     child: const Row(

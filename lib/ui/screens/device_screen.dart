@@ -239,6 +239,10 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   setState(() {});
                 },
                 onIdentify: () => device.identify(),
+                onReReadCanId: () async {
+                  await dm.reReadCanId(device);
+                  setState(() {});
+                },
               )),
 
         const SizedBox(height: 24),
@@ -276,118 +280,179 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   }
 }
 
-class _DeviceCard extends StatelessWidget {
+class _DeviceCard extends StatefulWidget {
   final SparkDevice device;
   final VoidCallback onDisconnect;
   final VoidCallback onIdentify;
+  final Future<void> Function() onReReadCanId;
 
   const _DeviceCard({
     required this.device,
     required this.onDisconnect,
     required this.onIdentify,
+    required this.onReReadCanId,
   });
+
+  @override
+  State<_DeviceCard> createState() => _DeviceCardState();
+}
+
+class _DeviceCardState extends State<_DeviceCard> {
+  bool _reReading = false;
+
+  Future<void> _handleReReadCanId() async {
+    setState(() => _reReading = true);
+    try {
+      await widget.onReReadCanId();
+    } finally {
+      if (mounted) setState(() => _reReading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
+    final canIdUnknown =
+        !widget.device.canIdReadSucceeded && !widget.device.isSimulated;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Card(
-        child: Row(
-          children: [
-            // CAN ID badge
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: theme.accentColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '${device.canId}',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: theme.accentColor,
-                    ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            child: Row(
+              children: [
+                // CAN ID badge — amber background when the read failed.
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: canIdUnknown
+                        ? Colors.warningPrimaryColor.withValues(alpha: 0.20)
+                        : theme.accentColor.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  Text(
-                    'CAN ID',
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: theme.accentColor,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Icon(
-              device.isConnected
-                  ? FluentIcons.plug_connected
-                  : FluentIcons.plug_disconnected,
-              color: device.isConnected ? Colors.green : Colors.red,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        device.label,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                        canIdUnknown ? '?' : '${widget.device.canId}',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: canIdUnknown
+                              ? Colors.warningPrimaryColor
+                              : theme.accentColor,
                         ),
                       ),
-                      if (device.isSimulated) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.warningPrimaryColor
-                                .withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Text(
-                            'SIMULATED',
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.warningPrimaryColor,
-                            ),
-                          ),
+                      Text(
+                        'CAN ID',
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: canIdUnknown
+                              ? Colors.warningPrimaryColor
+                              : theme.accentColor,
                         ),
-                      ],
+                      ),
                     ],
                   ),
-                  Text(
-                    '${device.connection.portName} \u2022 '
-                    '${device.isLeader ? "Leader" : "Follower"}',
-                    style: const TextStyle(fontSize: 12),
+                ),
+                const SizedBox(width: 12),
+                Icon(
+                  widget.device.isConnected
+                      ? FluentIcons.plug_connected
+                      : FluentIcons.plug_disconnected,
+                  color: widget.device.isConnected ? Colors.green : Colors.red,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            widget.device.label,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (widget.device.isSimulated) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.warningPrimaryColor
+                                    .withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text(
+                                'SIMULATED',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.warningPrimaryColor,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      Text(
+                        '${widget.device.connection.portName} \u2022 '
+                        '${widget.device.isLeader ? "Leader" : "Follower"}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ],
                   ),
+                ),
+                if (canIdUnknown) ...[
+                  Button(
+                    onPressed: _reReading ? null : _handleReReadCanId,
+                    child: _reReading
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: ProgressRing(strokeWidth: 2),
+                          )
+                        : const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(FluentIcons.refresh, size: 12),
+                              SizedBox(width: 4),
+                              Text('Re-read CAN ID'),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(width: 8),
                 ],
-              ),
+                Button(
+                  onPressed: widget.onIdentify,
+                  child: const Text('Identify'),
+                ),
+                const SizedBox(width: 8),
+                Button(
+                  onPressed: widget.onDisconnect,
+                  child: const Text('Disconnect'),
+                ),
+              ],
             ),
-            Button(
-              onPressed: onIdentify,
-              child: const Text('Identify'),
-            ),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: onDisconnect,
-              child: const Text('Disconnect'),
+          ),
+          // Show actionable diagnostic note if the CAN ID could not be read.
+          if (widget.device.connectionNote != null) ...[
+            const SizedBox(height: 4),
+            InfoBar(
+              title: const Text('Connection diagnostic'),
+              content: Text(widget.device.connectionNote!),
+              severity: InfoBarSeverity.warning,
+              isLong: true,
             ),
           ],
-        ),
+        ],
       ),
     );
   }

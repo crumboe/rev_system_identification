@@ -416,4 +416,94 @@ void main() {
       expect(kParamSlot0FfKcosRatio, equals(208));
     });
   });
+
+  // =========================================================================
+  // sendAndReceive arb-ID matching mask
+  //
+  // The mask 0x1FFFFFC0 clears the device-ID field (bits 5:0) so that the
+  // controller's response — which echoes its real CAN ID instead of 0 —
+  // is still matched to the outbound command that was sent with deviceId=0.
+  // =========================================================================
+
+  group('arb-ID match mask (sendAndReceive)', () {
+    // The mask used in SparkConnection.sendAndReceive.
+    const matchMask = 0x1FFFFFC0;
+
+    test('same class/index, different device IDs → match after masking', () {
+      // Command sent with deviceId = 0.
+      final sent = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      // Response echoes real CAN ID = 5.
+      final received = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 5,
+      );
+      expect(
+        (received & matchMask) == (sent & matchMask),
+        isTrue,
+        reason: 'Response with real CAN ID should match command sent with ID 0',
+      );
+    });
+
+    test('different API class → no match after masking', () {
+      final sent = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      final statusFrame = buildArbId(
+        apiClass: kApiClassStatus,
+        apiIndex: kStatusIndex1,
+        deviceId: 0,
+      );
+      expect(
+        (statusFrame & matchMask) == (sent & matchMask),
+        isFalse,
+        reason: 'Status frame should not match a parameter command',
+      );
+    });
+
+    test('different API index → no match after masking', () {
+      final sentGet = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      final sentSet = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexSet,
+        deviceId: 0,
+      );
+      expect(
+        (sentSet & matchMask) == (sentGet & matchMask),
+        isFalse,
+        reason: 'Set and Get commands have different indices — must not match',
+      );
+    });
+
+    test('device IDs 0–63 all match command sent with id 0 (same class/index)',
+        () {
+      final sent = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      for (var id = 0; id < 64; id++) {
+        final response = buildArbId(
+          apiClass: kApiClassParameter,
+          apiIndex: kParamIndexGet,
+          deviceId: id,
+        );
+        expect(
+          (response & matchMask) == (sent & matchMask),
+          isTrue,
+          reason: 'deviceId=$id should match after masking',
+        );
+      }
+    });
+  });
 }
