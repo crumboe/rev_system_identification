@@ -7,12 +7,20 @@ library;
 import 'package:fluent_ui/fluent_ui.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../can/comms_log.dart';
 import '../devices/device_manager.dart';
 import '../mechanisms/mechanism.dart';
 import '../data/test_data.dart';
 import '../sysid/test_runner.dart' show TestProgress;
 import '../sysid/validation_runner.dart'
     show ValidationParams, ValidationResult, ValidationProgress;
+
+// ---------------------------------------------------------------------------
+// Communication log
+// ---------------------------------------------------------------------------
+
+/// Global communication log (singleton shared across all connections).
+final commsLogProvider = Provider<CommsLog>((ref) => CommsLog.instance);
 
 // ---------------------------------------------------------------------------
 // Device management
