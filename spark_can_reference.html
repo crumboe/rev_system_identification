@@ -290,44 +290,62 @@
   <div class="table-wrap"><table>
     <thead><tr><th>Param ID</th><th>Name</th><th>Type</th><th>R/W</th><th>Range / Values</th><th>Notes</th></tr></thead>
     <tbody>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">General Configuration</td></tr>
       <tr><td class="mono">0</td><td>CAN ID</td><td>uint8</td><td class="rw">R/W</td><td>0–62</td><td>Device CAN identifier.</td></tr>
       <tr><td class="mono">1</td><td>Input Mode</td><td>uint8</td><td class="ro">RO</td><td>0=PWM, 1=CAN, 2=USB</td><td>Auto-detected, read-only.</td></tr>
       <tr><td class="mono">2</td><td>Motor Type</td><td>uint8</td><td class="rw">R/W</td><td>0=Brushed, 1=Brushless</td><td>⚠ Wrong type can damage motor.</td></tr>
-      <tr><td class="mono">3</td><td>Sensor Type</td><td>uint8</td><td class="rw">R/W</td><td>0=None, 1=Hall, 2=Encoder</td><td>Feedback sensor selection.</td></tr>
-      <tr><td class="mono">4</td><td>Control Type</td><td>uint8</td><td class="ro">RO</td><td>0–5</td><td>Currently active control mode.</td></tr>
-      <tr><td class="mono">5</td><td>Idle Mode</td><td>uint8</td><td class="rw">R/W</td><td>0=Coast, 1=Brake</td><td>Behavior when no setpoint active.</td></tr>
-      <tr><td class="mono">6</td><td>Input Deadband</td><td>float</td><td class="rw">R/W</td><td>0.0–0.3</td><td>PWM neutral deadband fraction.</td></tr>
-      <tr><td class="mono">8</td><td>Ramp Rate (Open-Loop)</td><td>float</td><td class="rw">R/W</td><td>0.0 = disabled</td><td>Seconds from 0→full output.</td></tr>
-      <tr><td class="mono">9</td><td>Ramp Rate (Closed-Loop)</td><td>float</td><td class="rw">R/W</td><td>0.0 = disabled</td><td>Seconds from 0→full output.</td></tr>
-      <tr><td class="mono">10</td><td>Encoder CPR</td><td>uint32</td><td class="rw">R/W</td><td>≥ 1</td><td>Counts per revolution (4× quadrature CPR).</td></tr>
-      <tr><td class="mono">11</td><td>Enc. Avg Depth</td><td>uint8</td><td class="rw">R/W</td><td>1–64</td><td>Velocity averaging window size.</td></tr>
-      <tr><td class="mono">12</td><td>Enc. Sample Delta</td><td>uint8</td><td class="rw">R/W</td><td>1–255</td><td>Velocity delta time in 500µs increments.</td></tr>
-      <tr><td class="mono">13</td><td>Encoder Inverted</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td>Invert encoder direction.</td></tr>
-      <tr><td class="mono">14</td><td>Motor Inverted</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td>Invert motor output direction.</td></tr>
-      <tr><td class="mono">17</td><td>Position Conv. Factor</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Multiplied by raw rotations for position output.</td></tr>
-      <tr><td class="mono">18</td><td>Velocity Conv. Factor</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Multiplied by raw RPM for velocity output.</td></tr>
-      <tr><td class="mono">22</td><td>P Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td><td rowspan="8">PIDF slot 0. Add 8 per slot: slot1=+8, slot2=+16, slot3=+24.</td></tr>
-      <tr><td class="mono">23</td><td>I Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
-      <tr><td class="mono">24</td><td>D Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
-      <tr><td class="mono">25</td><td>F (Feed-Forward) — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
-      <tr><td class="mono">26</td><td>I-Zone — Slot 0</td><td>float</td><td class="rw">R/W</td><td>0 = disabled</td></tr>
-      <tr><td class="mono">27</td><td>D Filter — Slot 0</td><td>float</td><td class="rw">R/W</td><td>0.0–1.0</td></tr>
-      <tr><td class="mono">28</td><td>Max Output — Slot 0</td><td>float</td><td class="rw">R/W</td><td>−1.0 … +1.0</td></tr>
-      <tr><td class="mono">29</td><td>Min Output — Slot 0</td><td>float</td><td class="rw">R/W</td><td>−1.0 … +1.0</td></tr>
-      <tr><td class="mono">35</td><td>Smart Current Limit</td><td>uint32</td><td class="rw">R/W</td><td>0–80 A</td><td>Current limit at/below threshold RPM.</td></tr>
-      <tr><td class="mono">36</td><td>Smart Current Config</td><td>uint32</td><td class="rw">R/W</td><td>RPM</td><td>RPM above which full current limit applies.</td></tr>
-      <tr><td class="mono">38</td><td>Secondary Current Limit</td><td>uint32</td><td class="rw">R/W</td><td>0–80 A</td><td>Absolute peak current limit.</td></tr>
-      <tr><td class="mono">39</td><td>Voltage Comp Nominal</td><td>float</td><td class="rw">R/W</td><td>0=off, e.g. 12.0</td><td>Bus voltage for compensation mode.</td></tr>
-      <tr><td class="mono">40</td><td>Fwd Limit Switch Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
-      <tr><td class="mono">41</td><td>Fwd Limit Switch Polarity</td><td>uint8</td><td class="rw">R/W</td><td>0=N.O., 1=N.C.</td><td></td></tr>
-      <tr><td class="mono">42</td><td>Rev Limit Switch Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
-      <tr><td class="mono">43</td><td>Rev Limit Switch Polarity</td><td>uint8</td><td class="rw">R/W</td><td>0=N.O., 1=N.C.</td><td></td></tr>
-      <tr><td class="mono">44</td><td>Forward Soft Limit</td><td>float</td><td class="rw">R/W</td><td>rotations</td><td>Forward software stop position.</td></tr>
-      <tr><td class="mono">45</td><td>Fwd Soft Limit Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
-      <tr><td class="mono">46</td><td>Reverse Soft Limit</td><td>float</td><td class="rw">R/W</td><td>rotations</td><td>Reverse software stop position.</td></tr>
-      <tr><td class="mono">47</td><td>Rev Soft Limit Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
-      <tr><td class="mono">48</td><td>Follower ID</td><td>uint32</td><td class="rw">R/W</td><td>Arb ID</td><td>Arb ID of the leader device to follow.</td></tr>
-      <tr><td class="mono">49</td><td>Follower Config</td><td>uint32</td><td class="rw">R/W</td><td>flags</td><td>0x1A = REV follower · 0x1B = Talon/Victor style.</td></tr>
+      <tr><td class="mono">5</td><td>Control Type</td><td>uint8</td><td class="ro">RO</td><td>0–6</td><td>Currently active control mode.</td></tr>
+      <tr><td class="mono">6</td><td>Idle Mode</td><td>uint8</td><td class="rw">R/W</td><td>0=Coast, 1=Brake</td><td>Behavior when no setpoint active.</td></tr>
+      <tr><td class="mono">7</td><td>Input Deadband</td><td>float</td><td class="rw">R/W</td><td>0.0–0.3</td><td>PWM neutral deadband fraction.</td></tr>
+      <tr><td class="mono">45</td><td>Motor Inverted</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td>Invert motor output direction.</td></tr>
+      <tr><td class="mono">56</td><td>Ramp Rate (Open-Loop)</td><td>float</td><td class="rw">R/W</td><td>0.0 = disabled</td><td>Seconds from 0→full output.</td></tr>
+      <tr><td class="mono">75</td><td>Voltage Comp Nominal</td><td>float</td><td class="rw">R/W</td><td>0=off, e.g. 12.0</td><td>Bus voltage for compensation mode.</td></tr>
+      <tr><td class="mono">112</td><td>Position Conv. Factor</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Multiplied by raw rotations for position output.</td></tr>
+      <tr><td class="mono">113</td><td>Velocity Conv. Factor</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Multiplied by raw RPM for velocity output.</td></tr>
+      <tr><td class="mono">114</td><td>Ramp Rate (Closed-Loop)</td><td>float</td><td class="rw">R/W</td><td>0.0 = disabled</td><td>Seconds from 0→full output.</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">PID Slot 0 (IDs 13–20) · Slot 1 = +8 · Slot 2 = +16 · Slot 3 = +24</td></tr>
+      <tr><td class="mono">13</td><td>P Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td><td rowspan="8">PIDF slot 0. Add 8 per slot: slot 1 IDs 21–28, slot 2 IDs 29–36, slot 3 IDs 37–44.</td></tr>
+      <tr><td class="mono">14</td><td>I Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">15</td><td>D Gain — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">16</td><td>V (Velocity FF) — Slot 0</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">17</td><td>I-Zone — Slot 0</td><td>float</td><td class="rw">R/W</td><td>0 = disabled</td></tr>
+      <tr><td class="mono">18</td><td>D Filter — Slot 0</td><td>float</td><td class="rw">R/W</td><td>0.0–1.0</td></tr>
+      <tr><td class="mono">19</td><td>Min Output — Slot 0</td><td>float</td><td class="rw">R/W</td><td>−1.0 … +1.0</td></tr>
+      <tr><td class="mono">20</td><td>Max Output — Slot 0</td><td>float</td><td class="rw">R/W</td><td>−1.0 … +1.0</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">Feedforward Slot 0 (firmware ≥ 25.0) · Slot 1 = +5</td></tr>
+      <tr><td class="mono">16</td><td>kV — Velocity Gain</td><td>float</td><td class="rw">R/W</td><td>any</td><td>Shared with PID Slot 0 "V" param.</td></tr>
+      <tr><td class="mono">204</td><td>kS — Static Gain</td><td>float</td><td class="rw">R/W</td><td>Volts</td><td rowspan="5">Requires firmware ≥ 25.0.</td></tr>
+      <tr><td class="mono">205</td><td>kA — Acceleration Gain</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td class="mono">206</td><td>kG — Static Gravity Gain</td><td>float</td><td class="rw">R/W</td><td>Volts</td></tr>
+      <tr><td class="mono">207</td><td>kCos — Cosine Gravity Gain</td><td>float</td><td class="rw">R/W</td><td>Volts</td></tr>
+      <tr><td class="mono">208</td><td>kCosRatio</td><td>float</td><td class="rw">R/W</td><td>any</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">Limit Switches &amp; Soft Limits</td></tr>
+      <tr><td class="mono">50</td><td>Fwd Limit Switch Polarity</td><td>uint8</td><td class="rw">R/W</td><td>0=N.O., 1=N.C.</td><td></td></tr>
+      <tr><td class="mono">51</td><td>Rev Limit Switch Polarity</td><td>uint8</td><td class="rw">R/W</td><td>0=N.O., 1=N.C.</td><td></td></tr>
+      <tr><td class="mono">52</td><td>Fwd Hard Limit Enable</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">53</td><td>Rev Hard Limit Enable</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">54</td><td>Fwd Soft Limit Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">55</td><td>Rev Soft Limit Enabled</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td></td></tr>
+      <tr><td class="mono">115</td><td>Forward Soft Limit</td><td>float</td><td class="rw">R/W</td><td>rotations</td><td>Forward software stop position.</td></tr>
+      <tr><td class="mono">116</td><td>Reverse Soft Limit</td><td>float</td><td class="rw">R/W</td><td>rotations</td><td>Reverse software stop position.</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">Current Limits</td></tr>
+      <tr><td class="mono">59</td><td>Smart Current Stall Limit</td><td>uint32</td><td class="rw">R/W</td><td>0–80 A</td><td>Current limit at/below threshold RPM.</td></tr>
+      <tr><td class="mono">60</td><td>Smart Current Free Limit</td><td>uint32</td><td class="rw">R/W</td><td>0–80 A</td><td>Current limit above threshold RPM.</td></tr>
+      <tr><td class="mono">61</td><td>Smart Current Config</td><td>uint32</td><td class="rw">R/W</td><td>RPM</td><td>RPM above which free limit applies.</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">Encoder Configuration</td></tr>
+      <tr><td class="mono">69</td><td>Encoder CPR</td><td>uint32</td><td class="rw">R/W</td><td>≥ 1</td><td>Counts per revolution (4× quadrature CPR).</td></tr>
+      <tr><td class="mono">70</td><td>Enc. Avg Depth</td><td>uint8</td><td class="rw">R/W</td><td>1–64</td><td>Velocity averaging window size.</td></tr>
+      <tr><td class="mono">71</td><td>Enc. Sample Delta</td><td>uint8</td><td class="rw">R/W</td><td>1–255</td><td>Velocity delta time in 500µs increments.</td></tr>
+      <tr><td class="mono">72</td><td>Encoder Inverted</td><td>bool</td><td class="rw">R/W</td><td>0/1</td><td>Invert encoder direction.</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">Follower Mode</td></tr>
+      <tr><td class="mono">194</td><td>Follower Leader ID</td><td>uint32</td><td class="rw">R/W</td><td>Arb ID</td><td>Arb ID of the leader device to follow.</td></tr>
+      <tr><td class="mono">195</td><td>Follower Config</td><td>uint32</td><td class="rw">R/W</td><td>flags</td><td>0x1A = REV follower · 0x1B = Talon/Victor style.</td></tr>
+      <tr><td colspan="6" style="font-weight:bold;background:var(--bg2)">MAXMotion Slot 0 (firmware ≥ 25.0) · +5 per slot</td></tr>
+      <tr><td class="mono">166</td><td>Cruise Velocity</td><td>float</td><td class="rw">R/W</td><td>RPM</td><td rowspan="5">Slot 1 starts at 171, slot 2 at 176, slot 3 at 181.</td></tr>
+      <tr><td class="mono">167</td><td>Max Acceleration</td><td>float</td><td class="rw">R/W</td><td>RPM/s</td></tr>
+      <tr><td class="mono">168</td><td>Max Jerk</td><td>float</td><td class="rw">R/W</td><td>RPM/s²</td></tr>
+      <tr><td class="mono">169</td><td>Allowed Profile Error</td><td>float</td><td class="rw">R/W</td><td>rotations</td></tr>
+      <tr><td class="mono">170</td><td>Position Mode</td><td>uint8</td><td class="rw">R/W</td><td>0=Trapezoidal, 1=S-Curve</td></tr>
     </tbody>
   </table></div>
 </div>
@@ -424,8 +442,8 @@ resp_data = response[<span style="color:var(--yellow)">4</span>:]            <sp
     <tbody>
       <tr><td>Packet size</td><td>4B ID + 0–8B data (variable)</td><td>Fixed 12 bytes (4B ID + 8B data)</td></tr>
       <tr><td>Responses</td><td>Only some commands respond</td><td>Every command gets a 12-byte response</td></tr>
-      <tr><td>Device ID field</td><td>Used for bus addressing</td><td>DNC — one device per USB connection</td></tr>
-      <tr><td>Heartbeat required?</td><td>Yes — every 20ms</td><td>Yes — same requirement</td></tr>
+      <tr><td>Device ID field</td><td>Used for bus addressing</td><td>DNC — but some firmware may still filter on it; sweep IDs 0–62 if needed</td></tr>
+      <tr><td>Heartbeat required?</td><td>Yes — every 20ms</td><td>N/A for param access; Yes for motor output</td></tr>
       <tr><td>CAN bus needed?</td><td>Yes + termination resistors</td><td>No — USB-C cable only</td></tr>
       <tr><td>Multiple devices?</td><td>Yes (up to 62)</td><td>One at a time</td></tr>
       <tr><td>Hardware needed</td><td>USB-to-CAN adapter (CANable etc.)</td><td>USB-C cable only</td></tr>
@@ -433,7 +451,7 @@ resp_data = response[<span style="color:var(--yellow)">4</span>:]            <sp
   </table></div>
 </div>
 
-<footer>REV SPARK MAX / SPARK Flex CAN Reference · Firmware 24.0.x · Source: docs.revrobotics.com</footer>
+<footer>REV SPARK MAX / SPARK Flex CAN Reference · REVLib 2026.0.4 / Firmware ≥ 25.0 · Source: docs.revrobotics.com</footer>
 
 <script>
   function show(tab, btn) {

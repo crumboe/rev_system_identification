@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 
 import '../can/interfaces.dart';
 import '../can/spark_connection.dart';
+import '../can/spark_protocol.dart';
 import '../can/heartbeat.dart';
 import '../can/parameter_api.dart';
 import '../can/control_api.dart';
@@ -140,11 +141,13 @@ class DeviceManager {
 
   /// Connect to a SPARK controller on the given COM port.
   ///
-  /// Reads the device's CAN ID automatically after connecting (retried up to
-  /// three times).  If the read still fails, [SparkDevice.connectionNote] is
-  /// set to an actionable explanation and [SparkDevice.canIdReadSucceeded] is
-  /// left `false`.  The device is still usable for motor control — USB
-  /// commands are device-ID-agnostic.
+  /// Reads the device's CAN ID automatically after connecting.  First tries
+  /// device ID 0 (up to three times), then sweeps IDs 0–62 in case the
+  /// controller only responds to its own CAN ID even over USB.
+  /// If the read still fails, [SparkDevice.connectionNote] is set to an
+  /// actionable explanation and [SparkDevice.canIdReadSucceeded] is left
+  /// `false`.  The device is still usable for motor control — USB commands
+  /// are device-ID-agnostic.
   ///
   /// Returns the connected [SparkDevice].
   /// Throws if the port cannot be opened.
@@ -164,33 +167,61 @@ class DeviceManager {
       label: label,
     );
 
+    // Start a *disabled* heartbeat (watchdog only, motor not enabled) as a
+    // precaution before querying.  Per REV docs, the heartbeat is only
+    // strictly required for motor output, but sending it ensures the
+    // controller is fully responsive in case firmware behaviour varies.
+    heartbeat.start(enabled: false);
+    await Future.delayed(const Duration(milliseconds: 200));
+
     // Read the device's CAN ID from parameter 0.
-    // Retry up to three times to handle slow controller start-up.
+    // First try with device ID 0 (the default) up to three times.
+    // If that fails, sweep all 63 possible device IDs (0–62) in case the
+    // controller only responds to its own CAN ID even over USB.
     const maxAttempts = 3;
-    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+    bool found = false;
+    for (var attempt = 0; attempt < maxAttempts && !found; attempt++) {
       try {
         device.canId = await parameters.getCanId();
         device.canIdReadSucceeded = true;
-        break;
-      } catch (e) {
+        found = true;
+      } catch (_) {
         if (attempt < maxAttempts - 1) {
-          // Brief pause before the next attempt.
           await Future.delayed(_retryDelay);
-        } else {
-          // Surface a helpful diagnostic after all retries are exhausted.
-          final reason = _shortError(e);
-          device.connectionNote =
-              'CAN ID unreadable ($reason). '
-              'Motor control may still work — USB commands do not require '
-              'a known CAN ID. If this persists, power-cycle the controller '
-              'and reconnect (a previous CAN-bus connection can lock out USB).';
-          debugPrint(
-            '[DeviceManager] getCanId failed after $maxAttempts attempts '
-            'on $portName: $e',
-          );
         }
       }
     }
+
+    // Fallback: sweep device IDs 0–62.  Some firmware versions require the
+    // outbound arb-ID to carry the controller's actual CAN ID, even over
+    // USB (despite the spec saying it is "don't care").
+    if (!found) {
+      debugPrint(
+        '[DeviceManager] device ID 0 did not respond on $portName — '
+        'sweeping IDs 0–62…',
+      );
+      final sweepResult = await _sweepForCanId(connection);
+      if (sweepResult != null) {
+        device.canId = sweepResult;
+        device.canIdReadSucceeded = true;
+        found = true;
+      }
+    }
+
+    if (!found) {
+      device.connectionNote =
+          'CAN ID unreadable (no response after sweep of IDs 0–$kMaxCanDeviceId). '
+          'Motor control may still work — USB commands do not require '
+          'a known CAN ID. If this persists, power-cycle the controller '
+          'and reconnect (a previous CAN-bus connection can lock out USB).';
+      debugPrint(
+        '[DeviceManager] getCanId failed after sweep on $portName',
+      );
+    }
+
+    // Stop the initialization heartbeat — it will be restarted with motor
+    // enabled when the user initiates jogging or a test.
+    heartbeat.stop();
 
     _devices.add(device);
     _notifyChanged();
@@ -301,16 +332,80 @@ class DeviceManager {
   /// Re-read the CAN ID for [device] (e.g. after a user power-cycles
   /// the controller and clicks "Re-read CAN ID" in the UI).
   Future<void> reReadCanId(SparkDevice device) async {
+    // Ensure the heartbeat is running so the controller responds to queries.
+    final wasRunning = device.heartbeat.isRunning;
+    if (!wasRunning) {
+      device.heartbeat.start(enabled: false);
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    bool found = false;
+
+    // First try with the current (or default) device ID.
     try {
       device.canId = await device.parameters.getCanId();
       device.canIdReadSucceeded = true;
-      device.connectionNote = null; // clear any prior warning
-    } catch (e) {
+      device.connectionNote = null;
+      found = true;
+    } catch (_) {
+      // Fall through to sweep.
+    }
+
+    // Fallback: sweep all device IDs 0–62.
+    if (!found) {
+      final sweepResult = await _sweepForCanId(device.connection);
+      if (sweepResult != null) {
+        device.canId = sweepResult;
+        device.canIdReadSucceeded = true;
+        device.connectionNote = null;
+        found = true;
+      }
+    }
+
+    if (!found) {
       device.connectionNote =
-          'CAN ID re-read failed (${_shortError(e)}). '
+          'CAN ID re-read failed (no response after sweep of IDs 0–$kMaxCanDeviceId). '
           'Check that the controller is powered and the USB cable is secure.';
     }
+
+    // Stop heartbeat if we started it — it will be restarted when needed.
+    if (!wasRunning) {
+      device.heartbeat.stop();
+    }
+
     _notifyChanged();
+  }
+
+  /// Sweep device IDs 0–[kMaxCanDeviceId], sending a parameter-get for
+  /// CAN ID (param 0) on each one.  Returns the discovered CAN ID, or
+  /// `null` if no device responded.
+  ///
+  /// Uses a shorter timeout per attempt to keep the total sweep under ~7 s.
+  Future<int?> _sweepForCanId(ISparkConnection conn) async {
+    for (var id = 0; id <= kMaxCanDeviceId; id++) {
+      final arbId = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: id,
+      );
+      final payload = buildParamGetPayload(kParamCanId);
+      try {
+        final response = await conn.sendAndReceive(
+          arbId,
+          payload,
+          timeout: const Duration(milliseconds: 100),
+        );
+        // All SPARK parameter values are transmitted as float32 in the
+        // CAN payload, even integer-typed ones like CAN ID.
+        final canId = readFloat32(response.payload, 0).toInt();
+        debugPrint('[DeviceManager] sweep found device at ID $id '
+            '(reports CAN ID $canId)');
+        return canId;
+      } catch (_) {
+        // No response for this device ID — continue sweep.
+      }
+    }
+    return null;
   }
 
   /// Produce a short, human-friendly error string from an exception.
