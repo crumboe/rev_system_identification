@@ -286,6 +286,93 @@ SparkResponse decodePacket(Uint8List packet) {
 }
 
 // ---------------------------------------------------------------------------
+// SLCAN (Serial Line CAN) text-protocol encoding / decoding
+// ---------------------------------------------------------------------------
+
+/// Encode a CAN frame as an SLCAN extended-frame string.
+///
+/// Format: `T<8-hex arb-ID><DLC><2*DLC hex data bytes>\r`
+///
+/// SLCAN is the ASCII text protocol used by many USB-CAN adapters and by
+/// some SPARK controller firmware revisions.  Each frame is a single text
+/// line terminated by `\r` (some devices also send `\n` after the `\r`).
+String encodeSlcanFrame(int arbId, Uint8List payload) {
+  final idHex = (arbId & 0x1FFFFFFF).toRadixString(16).padLeft(8, '0');
+  final dlc = payload.length.clamp(0, 8);
+  final buf = StringBuffer('T$idHex$dlc');
+  for (var i = 0; i < dlc; i++) {
+    buf.write(payload[i].toRadixString(16).padLeft(2, '0'));
+  }
+  buf.write('\r');
+  return buf.toString();
+}
+
+/// Decode an SLCAN extended-frame string into a [SparkResponse].
+///
+/// Expects format: `T<8-hex arb-ID><1-hex DLC><hex data>`
+/// (leading/trailing whitespace and `\r`/`\n` should be stripped first).
+///
+/// Returns `null` if [frame] is not a valid SLCAN extended frame.
+SparkResponse? decodeSlcanFrame(String frame) {
+  // Minimum length: T + 8 (arb ID) + 1 (DLC) = 10
+  if (frame.length < 10 || frame[0] != 'T') return null;
+
+  final arbId = int.tryParse(frame.substring(1, 9), radix: 16);
+  if (arbId == null) return null;
+
+  final dlc = int.tryParse(frame.substring(9, 10), radix: 16);
+  if (dlc == null || dlc > 8) return null;
+
+  final expectedLen = 10 + dlc * 2;
+  if (frame.length < expectedLen) return null;
+
+  final payload = Uint8List(8); // zero-padded to 8 bytes
+  for (var i = 0; i < dlc; i++) {
+    final byteHex = frame.substring(10 + i * 2, 12 + i * 2);
+    final byte = int.tryParse(byteHex, radix: 16);
+    if (byte == null) return null;
+    payload[i] = byte;
+  }
+
+  // SLCAN carries raw CAN frames — there is no separate ACK/DATA
+  // distinction.  Default to DATA so that `sendAndReceive` callers
+  // can read the payload as usual.
+  return SparkResponse(
+    responseType: kUsbResponseData,
+    arbId: arbId & 0x1FFFFFFF,
+    payload: payload,
+  );
+}
+
+/// Returns `true` when [data] appears to be part of an SLCAN text stream
+/// rather than binary 12-byte USB packets.
+///
+/// The heuristic checks whether the first 12 bytes form a valid binary
+/// SPARK packet (devType = 0x02, manufacturer = 0x05, responseType ≤ 1).
+/// If not, the data is presumed SLCAN.
+bool isSlcanData(Uint8List data) {
+  if (data.length < 4) {
+    // Not enough data — fall back to text-mode check.
+    return data.any((b) => b == 0x0D); // \r is a strong SLCAN indicator
+  }
+
+  // Check if the first 4 bytes decode to a valid binary SPARK response.
+  final bd = ByteData.sublistView(data);
+  final cmdWord = bd.getUint32(0, Endian.little);
+  final responseType = (cmdWord >> 29) & 0x07;
+  final arbId = cmdWord & 0x1FFFFFFF;
+  final devType = (arbId >> 24) & 0x1F;
+  final mfr = (arbId >> 16) & 0xFF;
+
+  // A valid binary SPARK response has devType=0x02, mfr=0x05, and
+  // responseType 0 (ACK) or 1 (DATA).
+  final validBinary = devType == kDevTypeMotorController &&
+      mfr == kManufacturerREV &&
+      responseType <= 1;
+  return !validBinary;
+}
+
+// ---------------------------------------------------------------------------
 // Payload helpers
 // ---------------------------------------------------------------------------
 
