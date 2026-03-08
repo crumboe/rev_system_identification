@@ -191,13 +191,13 @@ class DeviceManager {
       }
     }
 
-    // Fallback: sweep device IDs 1–62.  Some firmware versions require the
+    // Fallback: sweep device IDs 0–62.  Some firmware versions require the
     // outbound arb-ID to carry the controller's actual CAN ID, even over
     // USB (despite the spec saying it is "don't care").
     if (!found) {
       debugPrint(
         '[DeviceManager] device ID 0 did not respond on $portName — '
-        'sweeping IDs 1–62…',
+        'sweeping IDs 0–62…',
       );
       final sweepResult = await _sweepForCanId(connection);
       if (sweepResult != null) {
@@ -209,7 +209,7 @@ class DeviceManager {
 
     if (!found) {
       device.connectionNote =
-          'CAN ID unreadable (no response after sweep of IDs 0–62). '
+          'CAN ID unreadable (no response after sweep of IDs 0–$kMaxCanDeviceId). '
           'Motor control may still work — USB commands do not require '
           'a known CAN ID. If this persists, power-cycle the controller '
           'and reconnect (a previous CAN-bus connection can lock out USB).';
@@ -363,7 +363,7 @@ class DeviceManager {
 
     if (!found) {
       device.connectionNote =
-          'CAN ID re-read failed (no response after sweep of IDs 0–62). '
+          'CAN ID re-read failed (no response after sweep of IDs 0–$kMaxCanDeviceId). '
           'Check that the controller is powered and the USB cable is secure.';
     }
 
@@ -375,13 +375,13 @@ class DeviceManager {
     _notifyChanged();
   }
 
-  /// Sweep device IDs 0–62, sending a parameter-get for CAN ID (param 0)
-  /// on each one.  Returns the discovered CAN ID, or `null` if no device
-  /// responded.
+  /// Sweep device IDs 0–[kMaxCanDeviceId], sending a parameter-get for
+  /// CAN ID (param 0) on each one.  Returns the discovered CAN ID, or
+  /// `null` if no device responded.
   ///
   /// Uses a shorter timeout per attempt to keep the total sweep under ~7 s.
   Future<int?> _sweepForCanId(ISparkConnection conn) async {
-    for (var id = 0; id <= 62; id++) {
+    for (var id = 0; id <= kMaxCanDeviceId; id++) {
       final arbId = buildArbId(
         apiClass: kApiClassParameter,
         apiIndex: kParamIndexGet,
@@ -394,6 +394,8 @@ class DeviceManager {
           payload,
           timeout: const Duration(milliseconds: 100),
         );
+        // All SPARK parameter values are transmitted as float32 in the
+        // CAN payload, even integer-typed ones like CAN ID.
         final canId = readFloat32(response.payload, 0).toInt();
         debugPrint('[DeviceManager] sweep found device at ID $id '
             '(reports CAN ID $canId)');

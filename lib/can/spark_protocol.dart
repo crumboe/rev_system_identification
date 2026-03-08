@@ -18,6 +18,9 @@ const int kDevTypeMotorController = 0x02;
 /// Manufacturer code for REV Robotics.
 const int kManufacturerREV = 0x05;
 
+/// Maximum valid CAN device ID (6-bit field, 0–62; 63 is reserved).
+const int kMaxCanDeviceId = 62;
+
 // API Classes
 const int kApiClassControl = 0x00;
 const int kApiClassParameter = 0x01;
