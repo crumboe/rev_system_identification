@@ -97,10 +97,20 @@ class SparkConnection implements ISparkConnection {
   // -------------------------------------------------------------------------
 
   /// Send a raw 12-byte packet.
+  ///
+  /// Throws [StateError] if the port is not open or if fewer bytes than
+  /// expected were written (which would silently corrupt the command stream).
   void sendRaw(Uint8List packet) {
     assert(packet.length == 12);
     if (!_isOpen) throw StateError('Port is not open');
-    _port.write(packet);
+    final written = _port.write(packet);
+    if (written != packet.length) {
+      final err = SerialPort.lastError;
+      final detail = err != null ? ' ($err)' : '';
+      throw StateError(
+        'Serial write failed: $written/${packet.length} bytes written$detail',
+      );
+    }
   }
 
   /// Send a command to the connected controller.

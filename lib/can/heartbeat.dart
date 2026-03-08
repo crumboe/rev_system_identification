@@ -36,13 +36,17 @@ class HeartbeatManager implements IHeartbeatManager {
 
   /// Start sending heartbeats in a timer-based loop.
   ///
+  /// If the timer is already running, [enabled] is updated in-place so that
+  /// callers can re-use `start(enabled: true)` to enable the motor on an
+  /// already-running heartbeat (e.g. after [connect] pre-started it disabled).
+  ///
   /// Since flutter_libserialport is not isolate-safe (it uses FFI pointers
   /// bound to the main isolate), we use a Timer on the main isolate instead.
   /// For production-critical timing, a native plugin could be used.
   void start({bool enabled = true}) {
+    _enabled = enabled;
     if (_running) return;
     _running = true;
-    _enabled = enabled;
     _startTimer();
   }
 

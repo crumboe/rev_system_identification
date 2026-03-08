@@ -164,6 +164,15 @@ class DeviceManager {
       label: label,
     );
 
+    // Start sending heartbeats immediately (motor disabled) so the controller
+    // can transition out of CAN-bus mode and begin responding to USB commands.
+    // Without a heartbeat the SPARK may ignore all USB parameter requests.
+    heartbeat.start(enabled: false);
+
+    // Allow the USB serial stack and controller firmware a moment to
+    // initialise before we fire the first parameter-read command.
+    await Future.delayed(_startupDelay);
+
     // Read the device's CAN ID from parameter 0.
     // Retry up to three times to handle slow controller start-up.
     const maxAttempts = 3;
@@ -295,6 +304,14 @@ class DeviceManager {
   // Diagnostics helpers
   // -----------------------------------------------------------------------
 
+  /// Delay after opening the port before the first CAN ID read.
+  ///
+  /// Gives the USB-serial stack and controller firmware time to initialise,
+  /// and lets several heartbeat packets arrive (heartbeat fires every
+  /// [HeartbeatManager.periodMs] = 20 ms, so 200 ms ≈ 10 packets) so the
+  /// SPARK can transition out of CAN-bus mode before we query parameters.
+  static const _startupDelay = Duration(milliseconds: 200);
+
   /// Retry interval between CAN ID read attempts.
   static const _retryDelay = Duration(milliseconds: 150);
 
@@ -316,7 +333,7 @@ class DeviceManager {
   /// Produce a short, human-friendly error string from an exception.
   static String _shortError(Object e) {
     if (e is TimeoutException) return 'no response (timeout)';
-    if (e is StateError) return 'port closed unexpectedly';
+    if (e is StateError) return e.message;
     final s = e.toString();
     const prefix = 'Exception: ';
     return s.startsWith(prefix) ? s.substring(prefix.length) : s;
