@@ -523,7 +523,7 @@ void main() {
 
       expect(frame, startsWith('T'));
       expect(frame, endsWith('\r'));
-      // T + 8 hex ID + '8' DLC + 16 hex data + \r = 26
+      // T(1) + 8-char hex ID + DLC(1) + 16 hex chars (8 bytes) + \r = 26
       expect(frame.length, equals(26));
       // The arb ID hex should match the value padded to 8 chars.
       expect(frame.substring(1, 9), equals(arb.toRadixString(16).padLeft(8, '0')));
@@ -538,7 +538,7 @@ void main() {
 
       expect(frame[9], equals('2')); // DLC = 2
       expect(frame.substring(10, 14), equals('aabb'));
-      expect(frame.length, equals(14 + 1)); // T8 + DLC1 + data4 + \r
+      expect(frame.length, equals(14 + 1)); // T(1) + 8-char ID + DLC(1) + 4 hex chars + \r
     });
 
     test('empty payload yields DLC 0', () {

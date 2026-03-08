@@ -118,6 +118,11 @@ class SparkConnection implements ISparkConnection {
   // Sending
   // -------------------------------------------------------------------------
 
+  /// Write an SLCAN text frame to the serial port.
+  void _writeSlcanFrame(String frame) {
+    _port.write(Uint8List.fromList(frame.codeUnits));
+  }
+
   /// Send a raw 12-byte packet.
   ///
   /// In SLCAN mode the binary packet is transparently re-encoded as an
@@ -129,8 +134,7 @@ class SparkConnection implements ISparkConnection {
       // Decode the binary packet to extract arb ID + payload, then
       // re-encode as SLCAN text.
       final decoded = decodePacket(packet);
-      final frame = encodeSlcanFrame(decoded.arbId, decoded.payload);
-      _port.write(Uint8List.fromList(frame.codeUnits));
+      _writeSlcanFrame(encodeSlcanFrame(decoded.arbId, decoded.payload));
     } else {
       _port.write(packet);
     }
@@ -144,8 +148,7 @@ class SparkConnection implements ISparkConnection {
     CommsLog.instance.logTx(portName, arbId, payload);
     if (_slcanMode) {
       if (!_isOpen) throw StateError('Port is not open');
-      final frame = encodeSlcanFrame(arbId, payload);
-      _port.write(Uint8List.fromList(frame.codeUnits));
+      _writeSlcanFrame(encodeSlcanFrame(arbId, payload));
     } else {
       sendRaw(encodePacket(arbId, payload));
     }

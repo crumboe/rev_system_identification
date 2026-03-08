@@ -355,8 +355,11 @@
   <div class="section-title">USB-Serial Direct Connection</div>
   <div class="callout">
     <strong>The SPARK MAX/Flex exposes a CDC USB-Serial port.</strong> Settings: 115200 baud, 8N1.
-    The protocol mirrors CAN exactly but uses a fixed <strong>12-byte packet</strong> per transaction.
-    Every command sent over USB receives a 12-byte response — even commands that don't respond over CAN will receive an Ack.
+    Two wire formats are used depending on firmware version:
+    <ol style="margin:6px 0 0 0;padding-left:20px">
+      <li><strong>Binary 12-byte packets</strong> — 4-byte command ID (uint32 LE) + 8-byte payload. Used by older firmware.</li>
+      <li><strong>SLCAN text frames</strong> — <code>T&lt;8-hex arb-ID&gt;&lt;DLC&gt;&lt;hex data&gt;\r[\n]</code>. Used by some firmware revisions. The app auto-detects the format on connect.</li>
+    </ol>
   </div>
 
   <div class="section-title" style="font-size:0.88rem">Communication Path</div>

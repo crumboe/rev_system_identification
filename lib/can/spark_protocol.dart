@@ -21,6 +21,9 @@ const int kManufacturerREV = 0x05;
 /// Maximum valid CAN device ID (6-bit field, 0–62; 63 is reserved).
 const int kMaxCanDeviceId = 62;
 
+/// 29-bit mask for CAN arbitration IDs (bits 28:0).
+const int kArbIdMask = 0x1FFFFFFF;
+
 // API Classes
 const int kApiClassControl = 0x00;
 const int kApiClassParameter = 0x01;
@@ -254,7 +257,7 @@ Uint8List encodePacket(
   final bd = ByteData.sublistView(packet);
 
   // Command ID: bits 31:29 = usbCmdType, bits 28:0 = arbId
-  final cmdId = ((usbCmdType & 0x07) << 29) | (arbId & 0x1FFFFFFF);
+  final cmdId = ((usbCmdType & 0x07) << 29) | (arbId & kArbIdMask);
   bd.setUint32(0, cmdId, Endian.little);
 
   // Copy payload (zero-padded)
@@ -275,7 +278,7 @@ SparkResponse decodePacket(Uint8List packet) {
   final cmdWord = bd.getUint32(0, Endian.little);
 
   final responseType = (cmdWord >> 29) & 0x07;
-  final arbId = cmdWord & 0x1FFFFFFF;
+  final arbId = cmdWord & kArbIdMask;
   final payload = Uint8List.sublistView(packet, 4, 12);
 
   return SparkResponse(
@@ -297,7 +300,7 @@ SparkResponse decodePacket(Uint8List packet) {
 /// some SPARK controller firmware revisions.  Each frame is a single text
 /// line terminated by `\r` (some devices also send `\n` after the `\r`).
 String encodeSlcanFrame(int arbId, Uint8List payload) {
-  final idHex = (arbId & 0x1FFFFFFF).toRadixString(16).padLeft(8, '0');
+  final idHex = (arbId & kArbIdMask).toRadixString(16).padLeft(8, '0');
   final dlc = payload.length.clamp(0, 8);
   final buf = StringBuffer('T$idHex$dlc');
   for (var i = 0; i < dlc; i++) {
@@ -339,7 +342,7 @@ SparkResponse? decodeSlcanFrame(String frame) {
   // can read the payload as usual.
   return SparkResponse(
     responseType: kUsbResponseData,
-    arbId: arbId & 0x1FFFFFFF,
+    arbId: arbId & kArbIdMask,
     payload: payload,
   );
 }
@@ -360,7 +363,7 @@ bool isSlcanData(Uint8List data) {
   final bd = ByteData.sublistView(data);
   final cmdWord = bd.getUint32(0, Endian.little);
   final responseType = (cmdWord >> 29) & 0x07;
-  final arbId = cmdWord & 0x1FFFFFFF;
+  final arbId = cmdWord & kArbIdMask;
   final devType = (arbId >> 24) & 0x1F;
   final mfr = (arbId >> 16) & 0xFF;
 
