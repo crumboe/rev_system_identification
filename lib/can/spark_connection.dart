@@ -10,6 +10,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
+import 'comms_log.dart';
 import 'interfaces.dart';
 import 'spark_protocol.dart';
 import 'status_parser.dart';
@@ -63,6 +64,7 @@ class SparkConnection implements ISparkConnection {
     }
     _port.config = config;
     _isOpen = true;
+    CommsLog.instance.logInfo(portName, 'Port opened at 115200 8N1');
 
     // Start reading in the background.
     _reader = SerialPortReader(_port, timeout: 100);
@@ -70,6 +72,7 @@ class SparkConnection implements ISparkConnection {
       _onDataReceived,
       onError: (Object e) {
         // Port may have been disconnected.
+        CommsLog.instance.logError(portName, 'Serial port error: $e');
         close();
       },
     );
@@ -79,6 +82,7 @@ class SparkConnection implements ISparkConnection {
   void close() {
     if (!_isOpen) return;
     _isOpen = false;
+    CommsLog.instance.logInfo(portName, 'Port closed');
     _reader?.close();
     _reader = null;
     _port.close();
@@ -107,6 +111,7 @@ class SparkConnection implements ISparkConnection {
   ///
   /// [arbId] is the 29-bit CAN arb ID, [payload] is ≤ 8 bytes.
   void sendCommand(int arbId, Uint8List payload) {
+    CommsLog.instance.logTx(portName, arbId, payload);
     sendRaw(encodePacket(arbId, payload));
   }
 
@@ -131,11 +136,22 @@ class SparkConnection implements ISparkConnection {
     // 0x1FFFFFC0 = 0x1FFFFFFF & ~0x3F
     const matchMask = 0x1FFFFFC0;
 
-    return _responseController.stream
-        .where((r) =>
-            (r.arbId & matchMask) == (arbId & matchMask))
-        .first
-        .timeout(timeout);
+    try {
+      return await _responseController.stream
+          .where((r) => (r.arbId & matchMask) == (arbId & matchMask))
+          .first
+          .timeout(timeout);
+    } on TimeoutException {
+      final apiClass = extractApiClass(arbId);
+      final apiIndex = extractApiIndex(arbId);
+      CommsLog.instance.logError(
+        portName,
+        'Timeout waiting for response '
+        '(apiClass=0x${apiClass.toRadixString(16)}, '
+        'apiIndex=0x${apiIndex.toRadixString(16)})',
+      );
+      rethrow;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -170,6 +186,9 @@ class SparkConnection implements ISparkConnection {
           : null;
 
       final response = decodePacket(packet);
+
+      // Log the received packet (status frames included but labeled as such).
+      CommsLog.instance.logRx(portName, response);
 
       // Update cached status frames — support BOTH legacy and new protocol.
       //
