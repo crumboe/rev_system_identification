@@ -7,6 +7,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'spark_protocol.dart';
@@ -76,6 +77,20 @@ class CommsLogEntry {
   String get payloadHex => payload != null
       ? payload!.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')
       : '—';
+
+  /// Single CSV row for this entry (no trailing newline).
+  ///
+  /// Columns: timestamp, direction, port, arb_id, payload_hex, description
+  String toCsvRow() {
+    // Escape description so commas/quotes inside it don't break the CSV.
+    final escaped = description.replaceAll('"', '""');
+    return '${timestamp.toIso8601String()},'
+        '${direction.name.toUpperCase()},'
+        '$port,'
+        '$arbIdHex,'
+        '$payloadHex,'
+        '"$escaped"';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +110,50 @@ class CommsLog {
 
   final List<CommsLogEntry> _entries = [];
   final _controller = StreamController<List<CommsLogEntry>>.broadcast();
+
+  // -----------------------------------------------------------------------
+  // File-logging state
+  // -----------------------------------------------------------------------
+
+  String? _logFilePath;
+  IOSink? _logSink;
+
+  /// Path of the currently active log file, or null if not logging to file.
+  String? get logFilePath => _logFilePath;
+
+  /// Whether log entries are currently being written to a file.
+  bool get isLoggingToFile => _logSink != null;
+
+  /// CSV header row written at the top of every log file.
+  static const String _csvHeader =
+      'timestamp,direction,port,arb_id,payload_hex,description';
+
+  /// Open [path] for continuous log output and write a CSV header.
+  ///
+  /// Any existing file at [path] will be truncated/overwritten.
+  /// Throws if the file cannot be opened.
+  Future<void> startLoggingToFile(String path) async {
+    await stopLoggingToFile();
+    final file = File(path);
+    _logSink = file.openWrite();
+    _logFilePath = path;
+    _logSink!.writeln(_csvHeader);
+    // Write entries already in memory.
+    for (final e in _entries) {
+      _logSink!.writeln(e.toCsvRow());
+    }
+  }
+
+  /// Close the active log file (no-op if not logging).
+  Future<void> stopLoggingToFile() async {
+    final sink = _logSink;
+    _logSink = null;
+    _logFilePath = null;
+    if (sink != null) {
+      await sink.flush();
+      await sink.close();
+    }
+  }
 
   /// Snapshot of all current log entries (newest last).
   List<CommsLogEntry> get entries => List.unmodifiable(_entries);
@@ -170,6 +229,7 @@ class CommsLog {
     if (!_controller.isClosed) {
       _controller.add(List.unmodifiable(_entries));
     }
+    _logSink?.writeln(entry.toCsvRow());
   }
 
   // -----------------------------------------------------------------------

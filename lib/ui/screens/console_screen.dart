@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -29,6 +30,9 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
   /// Whether to auto-scroll to the latest entry.
   bool _autoScroll = true;
 
+  /// Path of the active log file (mirrors [CommsLog.logFilePath]).
+  String? _logFilePath;
+
   List<CommsLogEntry> _entries = [];
   StreamSubscription<List<CommsLogEntry>>? _sub;
 
@@ -37,6 +41,7 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
     super.initState();
     final log = ref.read(commsLogProvider);
     _entries = log.entries.toList();
+    _logFilePath = log.logFilePath;
     _sub = log.stream.listen((entries) {
       if (!mounted) return;
       setState(() => _entries = entries.toList());
@@ -61,6 +66,25 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
         curve: Curves.easeOut,
       );
     }
+  }
+
+  Future<void> _pickLogFile() async {
+    final log = ref.read(commsLogProvider);
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Set CAN Log Save Destination',
+      fileName: 'can_log.csv',
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+    if (path == null) return;
+    await log.startLoggingToFile(path);
+    if (mounted) setState(() => _logFilePath = log.logFilePath);
+  }
+
+  Future<void> _stopLogFile() async {
+    final log = ref.read(commsLogProvider);
+    await log.stopLoggingToFile();
+    if (mounted) setState(() => _logFilePath = null);
   }
 
   List<CommsLogEntry> get _filtered {
@@ -141,6 +165,15 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
                 if (_autoScroll) _scrollToBottom();
               },
             ),
+            // Log file button
+            CommandBarButton(
+              label: Text(_logFilePath != null ? 'Stop Logging' : 'Set Log File'),
+              icon: Icon(
+                _logFilePath != null ? FluentIcons.cancel : FluentIcons.save,
+                color: _logFilePath != null ? theme.accentColor : null,
+              ),
+              onPressed: _logFilePath != null ? _stopLogFile : _pickLogFile,
+            ),
             // Clear button
             CommandBarButton(
               label: const Text('Clear'),
@@ -161,7 +194,8 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
             child: Text(
               '${filtered.length} entries'
               '${_filter != null ? ' (filtered: ${_filter!.name.toUpperCase()})' : ''}'
-              ' — max ${CommsLog.maxEntries} kept in memory',
+              ' — max ${CommsLog.maxEntries} kept in memory'
+              '${_logFilePath != null ? ' — logging to: $_logFilePath' : ''}',
               style: TextStyle(
                 fontSize: 11,
                 color: theme.resources.textFillColorSecondary,
