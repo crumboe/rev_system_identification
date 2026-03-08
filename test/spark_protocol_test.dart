@@ -506,4 +506,240 @@ void main() {
       }
     });
   });
+
+  // =========================================================================
+  // SLCAN encode / decode
+  // =========================================================================
+
+  group('encodeSlcanFrame', () {
+    test('produces T + 8-hex ID + DLC + hex data + CR', () {
+      final arb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      final payload = buildParamGetPayload(kParamCanId); // paramId=0
+      final frame = encodeSlcanFrame(arb, payload);
+
+      expect(frame, startsWith('T'));
+      expect(frame, endsWith('\r'));
+      // T(1) + 8-char hex ID + DLC(1) + 16 hex chars (8 bytes) + \r = 26
+      expect(frame.length, equals(26));
+      // The arb ID hex should match the value padded to 8 chars.
+      expect(frame.substring(1, 9), equals(arb.toRadixString(16).padLeft(8, '0')));
+      // DLC = 8
+      expect(frame[9], equals('8'));
+    });
+
+    test('short payload yields correct DLC', () {
+      const arb = 0x02050000;
+      final payload = Uint8List.fromList([0xAA, 0xBB]);
+      final frame = encodeSlcanFrame(arb, payload);
+
+      expect(frame[9], equals('2')); // DLC = 2
+      expect(frame.substring(10, 14), equals('aabb'));
+      expect(frame.length, equals(14 + 1)); // T(1) + 8-char ID + DLC(1) + 4 hex chars + \r
+    });
+
+    test('empty payload yields DLC 0', () {
+      const arb = 0x02050000;
+      final frame = encodeSlcanFrame(arb, Uint8List(0));
+      expect(frame[9], equals('0'));
+      expect(frame.length, equals(11)); // T + 8 + 1 + 0 + \r
+    });
+  });
+
+  group('decodeSlcanFrame', () {
+    test('round-trips with encodeSlcanFrame', () {
+      final arb = buildArbId(
+        apiClass: kApiClassNewStatus,
+        apiIndex: kNewStatusIndex0,
+        deviceId: 10,
+      );
+      final payload = Uint8List.fromList([0x00, 0x00, 0xB2, 0x06, 0x00, 0x00, 0x80, 0x00]);
+      final frame = encodeSlcanFrame(arb, payload);
+      // Strip trailing \r for decode
+      final stripped = frame.substring(0, frame.length - 1);
+      final resp = decodeSlcanFrame(stripped);
+
+      expect(resp, isNotNull);
+      expect(resp!.arbId, equals(arb));
+      for (var i = 0; i < 8; i++) {
+        expect(resp.payload[i], equals(payload[i]),
+            reason: 'payload byte $i mismatch');
+      }
+      expect(resp.isData, isTrue);
+    });
+
+    test('decodes a new-status-0 frame from a real SPARK', () {
+      // This is a real SLCAN message captured from a SPARK controller:
+      // arb ID 0x0205b80a (new status 0, device 10)
+      const frame = 'T0205b80a80000b20600008000';
+      final resp = decodeSlcanFrame(frame);
+
+      expect(resp, isNotNull);
+      expect(resp!.arbId, equals(0x0205b80a));
+      expect(extractApiClass(resp.arbId), equals(kApiClassNewStatus));
+      expect(extractApiIndex(resp.arbId), equals(kNewStatusIndex0));
+      expect(extractDeviceId(resp.arbId), equals(10));
+      expect(resp.payload[0], equals(0x00));
+      expect(resp.payload[1], equals(0x00));
+      expect(resp.payload[2], equals(0xB2));
+      expect(resp.payload[3], equals(0x06));
+    });
+
+    test('returns null for non-T prefix', () {
+      expect(decodeSlcanFrame('t0205b80a80000b20600008000'), isNull);
+      expect(decodeSlcanFrame('X0205b80a80000b20600008000'), isNull);
+    });
+
+    test('returns null for too-short string', () {
+      expect(decodeSlcanFrame('T0205b80'), isNull);
+      expect(decodeSlcanFrame('T'), isNull);
+      expect(decodeSlcanFrame(''), isNull);
+    });
+
+    test('returns null for invalid hex in arb ID', () {
+      expect(decodeSlcanFrame('T0205ZZZZ80000000000000000'), isNull);
+    });
+
+    test('returns null for truncated data', () {
+      // DLC says 8 but only 6 bytes of data provided (12 hex chars)
+      expect(decodeSlcanFrame('T0205b80a80000b206000'), isNull);
+    });
+
+    test('DLC 0 is valid', () {
+      final resp = decodeSlcanFrame('T020500000');
+      expect(resp, isNotNull);
+      expect(resp!.arbId, equals(0x02050000));
+      // Payload is all zeros
+      expect(resp.payload.every((b) => b == 0), isTrue);
+    });
+
+    test('extracts arb ID fields correctly', () {
+      // Build a parameter-get response arb ID and encode as SLCAN
+      final arb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 5,
+      );
+      final payload = Uint8List(8);
+      final bd = ByteData.sublistView(payload);
+      bd.setFloat32(0, 42.0, Endian.little);
+
+      final frame = encodeSlcanFrame(arb, payload);
+      final resp = decodeSlcanFrame(frame.substring(0, frame.length - 1));
+      expect(resp, isNotNull);
+      expect(resp!.apiClass, equals(kApiClassParameter));
+      expect(resp.apiIndex, equals(kParamIndexGet));
+      expect(resp.deviceId, equals(5));
+      expect(readFloat32(resp.payload, 0), closeTo(42.0, 1e-5));
+    });
+  });
+
+  group('isSlcanData', () {
+    test('detects valid binary SPARK response as not SLCAN', () {
+      // Build a valid binary response for new status 0
+      final arb = buildArbId(
+        apiClass: kApiClassNewStatus,
+        apiIndex: kNewStatusIndex0,
+        deviceId: 10,
+      );
+      final packet = encodePacket(arb, Uint8List(8));
+      expect(isSlcanData(packet), isFalse);
+    });
+
+    test('detects valid binary ACK response as not SLCAN', () {
+      final arb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      final packet = encodePacket(arb, Uint8List(8),
+          usbCmdType: kUsbResponseAck);
+      expect(isSlcanData(packet), isFalse);
+    });
+
+    test('detects valid binary DATA response as not SLCAN', () {
+      final arb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 5,
+      );
+      final packet = encodePacket(arb, Uint8List(8),
+          usbCmdType: kUsbResponseData);
+      expect(isSlcanData(packet), isFalse);
+    });
+
+    test('detects SLCAN text as not binary', () {
+      // An SLCAN frame starts with 'T' followed by hex digits
+      final slcanBytes =
+          Uint8List.fromList('T0205b80a80000b20600008000\r\n'.codeUnits);
+      expect(isSlcanData(slcanBytes), isTrue);
+    });
+
+    test('detects garbled arb ID bytes as SLCAN', () {
+      // Bytes that look like ASCII text mistakenly interpreted as binary
+      // (this is what the bug screenshot showed)
+      final garbled = Uint8List.fromList(
+          [0x30, 0x30, 0x0D, 0x0A, 0x54, 0x30, 0x32, 0x30, 0x35, 0x62, 0x38, 0x30]);
+      expect(isSlcanData(garbled), isTrue);
+    });
+  });
+
+  // =========================================================================
+  // SLCAN ↔ binary arb-ID match mask interop
+  //
+  // Verify that arb IDs decoded from SLCAN frames still match the mask
+  // used in sendAndReceive, so that command-response pairing works across
+  // both protocols.
+  // =========================================================================
+
+  group('SLCAN arb-ID match mask interop', () {
+    const matchMask = 0x1FFFFFC0;
+
+    test('SLCAN response matches binary command after masking', () {
+      // Command sent with deviceId=0
+      final cmdArb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      // Simulate SLCAN response from device with CAN ID 10
+      final respArb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 10,
+      );
+      final frame = encodeSlcanFrame(respArb, Uint8List(8));
+      final resp = decodeSlcanFrame(frame.substring(0, frame.length - 1));
+
+      expect(
+        (resp!.arbId & matchMask) == (cmdArb & matchMask),
+        isTrue,
+        reason: 'SLCAN response should match command after masking device ID',
+      );
+    });
+
+    test('SLCAN status frame does NOT match parameter command', () {
+      final cmdArb = buildArbId(
+        apiClass: kApiClassParameter,
+        apiIndex: kParamIndexGet,
+        deviceId: 0,
+      );
+      final statusArb = buildArbId(
+        apiClass: kApiClassNewStatus,
+        apiIndex: kNewStatusIndex0,
+        deviceId: 10,
+      );
+      final frame = encodeSlcanFrame(statusArb, Uint8List(8));
+      final resp = decodeSlcanFrame(frame.substring(0, frame.length - 1));
+
+      expect(
+        (resp!.arbId & matchMask) == (cmdArb & matchMask),
+        isFalse,
+        reason: 'Status frame should NOT match a parameter get command',
+      );
+    });
+  });
 }

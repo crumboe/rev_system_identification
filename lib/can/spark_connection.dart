@@ -1,8 +1,17 @@
 /// USB-serial connection to a SPARK MAX/Flex controller.
 ///
-/// Opens a COM port at 115200 8N1, sends 12-byte command packets, receives
-/// 12-byte response packets, and demuxes status frames from ack/data
-/// responses.
+/// Opens a COM port at 115200 8N1, sends command packets, receives response
+/// packets, and demuxes status frames from ack/data responses.
+///
+/// Two wire formats are supported and auto-detected on the first received
+/// data:
+///
+/// * **Binary 12-byte packets** — the legacy SPARK USB-serial protocol.
+///   Each packet is a 4-byte command word (uint32 LE) + 8-byte payload.
+///
+/// * **SLCAN text frames** — the Serial Line CAN protocol used by some
+///   firmware revisions.  Each frame is a CR-terminated ASCII string:
+///   `T<8-hex arb-ID><DLC><hex data>\r[\n]`.
 library;
 
 import 'dart:async';
@@ -29,8 +38,17 @@ class SparkConnection implements ISparkConnection {
   StatusFrame1? lastStatus1;
   StatusFrame2? lastStatus2;
 
-  /// Raw byte buffer for reassembling 12-byte packets.
+  /// Raw byte buffer for reassembling packets.
   final _rxBuffer = BytesBuilder(copy: false);
+
+  /// Whether the controller uses SLCAN text protocol instead of binary.
+  bool _slcanMode = false;
+
+  /// Whether the protocol has been auto-detected.
+  bool _protocolDetected = false;
+
+  /// Text accumulator for SLCAN line assembly.
+  String _slcanText = '';
 
   bool _isOpen = false;
   bool get isOpen => _isOpen;
@@ -100,19 +118,40 @@ class SparkConnection implements ISparkConnection {
   // Sending
   // -------------------------------------------------------------------------
 
+  /// Write an SLCAN text frame to the serial port.
+  void _writeSlcanFrame(String frame) {
+    _port.write(Uint8List.fromList(frame.codeUnits));
+  }
+
   /// Send a raw 12-byte packet.
+  ///
+  /// In SLCAN mode the binary packet is transparently re-encoded as an
+  /// SLCAN text frame before being written to the port.
   void sendRaw(Uint8List packet) {
     assert(packet.length == 12);
     if (!_isOpen) throw StateError('Port is not open');
-    _port.write(packet);
+    if (_slcanMode) {
+      // Decode the binary packet to extract arb ID + payload, then
+      // re-encode as SLCAN text.
+      final decoded = decodePacket(packet);
+      _writeSlcanFrame(encodeSlcanFrame(decoded.arbId, decoded.payload));
+    } else {
+      _port.write(packet);
+    }
   }
 
   /// Send a command to the connected controller.
   ///
   /// [arbId] is the 29-bit CAN arb ID, [payload] is ≤ 8 bytes.
+  /// In SLCAN mode the command is sent as an SLCAN text frame.
   void sendCommand(int arbId, Uint8List payload) {
     CommsLog.instance.logTx(portName, arbId, payload);
-    sendRaw(encodePacket(arbId, payload));
+    if (_slcanMode) {
+      if (!_isOpen) throw StateError('Port is not open');
+      _writeSlcanFrame(encodeSlcanFrame(arbId, payload));
+    } else {
+      sendRaw(encodePacket(arbId, payload));
+    }
   }
 
   /// Send a command and wait for the ack/data response.
@@ -175,9 +214,66 @@ class SparkConnection implements ISparkConnection {
   bool _usingNewProtocol = false;
 
   void _onDataReceived(Uint8List data) {
+    // ----- SLCAN mode: accumulate text and extract CR-delimited lines ------
+    if (_slcanMode) {
+      _slcanText += String.fromCharCodes(data);
+      _processSlcanLines();
+      return;
+    }
+
+    // ----- Auto-detect protocol from the first data received ---------------
     _rxBuffer.add(data);
 
-    // Process all complete 12-byte packets in the buffer.
+    if (!_protocolDetected && _rxBuffer.length >= 4) {
+      final peek = _rxBuffer.takeBytes();
+      if (isSlcanData(Uint8List.fromList(peek))) {
+        _slcanMode = true;
+        _protocolDetected = true;
+        CommsLog.instance.logInfo(
+          portName,
+          'Auto-detected SLCAN text protocol',
+        );
+        _slcanText = String.fromCharCodes(peek);
+        _processSlcanLines();
+        return;
+      }
+      // Valid binary — put the bytes back and continue as binary.
+      _protocolDetected = true;
+      _rxBuffer.add(peek);
+    }
+
+    if (!_protocolDetected) return; // need more data
+
+    // ----- Binary mode: extract 12-byte packets ----------------------------
+    _processBinaryPackets();
+  }
+
+  /// Process complete SLCAN text lines from [_slcanText].
+  void _processSlcanLines() {
+    while (true) {
+      final crIdx = _slcanText.indexOf('\r');
+      if (crIdx == -1) break;
+
+      final line = _slcanText.substring(0, crIdx);
+
+      // Consume \r and optional \n.
+      var next = crIdx + 1;
+      if (next < _slcanText.length && _slcanText.codeUnitAt(next) == 0x0A) {
+        next++;
+      }
+      _slcanText = _slcanText.substring(next);
+
+      if (line.isEmpty) continue;
+
+      final response = decodeSlcanFrame(line);
+      if (response != null) {
+        _processResponse(response);
+      }
+    }
+  }
+
+  /// Process complete binary 12-byte packets from [_rxBuffer].
+  void _processBinaryPackets() {
     while (_rxBuffer.length >= 12) {
       final bytes = _rxBuffer.takeBytes();
       final packet = Uint8List.sublistView(bytes, 0, 12);
@@ -186,67 +282,72 @@ class SparkConnection implements ISparkConnection {
           : null;
 
       final response = decodePacket(packet);
-
-      // Log the received packet (status frames included but labeled as such).
-      CommsLog.instance.logRx(portName, response);
-
-      // Update cached status frames — support BOTH legacy and new protocol.
-      //
-      // Legacy protocol (apiClass 0x06, firmware <25.0):
-      //   Status 0 → applied output, faults
-      //   Status 1 → velocity, temp, voltage, current
-      //   Status 2 → position
-      //
-      // New protocol (apiClass 0x2E, firmware ≥25.0):
-      //   New Status 0 → applied output, voltage, current, temp
-      //   New Status 2 → velocity + position
-      //
-      // Once we see a new-protocol frame, we stop updating from legacy
-      // frames (which send dummy data on ≥25.0 firmware).
-      if (response.apiClass == kApiClassNewStatus) {
-        _usingNewProtocol = true;
-        final parsed = parseStatusFrame(response);
-        if (parsed is ({StatusFrame0 status0, StatusFrame1 partialStatus1})) {
-          // New Status 0 provides applied output AND voltage/current/temp.
-          lastStatus0 = parsed.status0;
-          // Merge voltage/current/temp from new Status 0 with velocity from
-          // new Status 2 (which may have arrived separately).
-          final prev = lastStatus1;
-          lastStatus1 = StatusFrame1(
-            velocityRpm: prev?.velocityRpm ?? 0.0,
-            temperatureC: parsed.partialStatus1.temperatureC,
-            busVoltage: parsed.partialStatus1.busVoltage,
-            outputCurrentAmps: parsed.partialStatus1.outputCurrentAmps,
-          );
-        } else if (parsed
-            is ({StatusFrame1? velocityUpdate, StatusFrame2 status2})) {
-          // New Status 2 provides velocity + position.
-          lastStatus2 = parsed.status2;
-          if (parsed.velocityUpdate != null) {
-            final prev = lastStatus1;
-            lastStatus1 = StatusFrame1(
-              velocityRpm: parsed.velocityUpdate!.velocityRpm,
-              temperatureC: prev?.temperatureC ?? 0,
-              busVoltage: prev?.busVoltage ?? 0.0,
-              outputCurrentAmps: prev?.outputCurrentAmps ?? 0.0,
-            );
-          }
-        }
-      } else if (response.apiClass == kApiClassStatus && !_usingNewProtocol) {
-        // Only use legacy frames if we haven't seen new-protocol frames.
-        final parsed = parseStatusFrame(response);
-        if (parsed is StatusFrame0) lastStatus0 = parsed;
-        if (parsed is StatusFrame1) lastStatus1 = parsed;
-        if (parsed is StatusFrame2) lastStatus2 = parsed;
-      }
-
-      if (!_responseController.isClosed) {
-        _responseController.add(response);
-      }
+      _processResponse(response);
 
       if (remainder != null && remainder.isNotEmpty) {
         _rxBuffer.add(remainder);
       }
+    }
+  }
+
+  /// Process a single decoded response — shared by both binary and SLCAN
+  /// code paths.
+  void _processResponse(SparkResponse response) {
+    // Log the received packet (status frames included but labeled as such).
+    CommsLog.instance.logRx(portName, response);
+
+    // Update cached status frames — support BOTH legacy and new protocol.
+    //
+    // Legacy protocol (apiClass 0x06, firmware <25.0):
+    //   Status 0 → applied output, faults
+    //   Status 1 → velocity, temp, voltage, current
+    //   Status 2 → position
+    //
+    // New protocol (apiClass 0x2E, firmware ≥25.0):
+    //   New Status 0 → applied output, voltage, current, temp
+    //   New Status 2 → velocity + position
+    //
+    // Once we see a new-protocol frame, we stop updating from legacy
+    // frames (which send dummy data on ≥25.0 firmware).
+    if (response.apiClass == kApiClassNewStatus) {
+      _usingNewProtocol = true;
+      final parsed = parseStatusFrame(response);
+      if (parsed is ({StatusFrame0 status0, StatusFrame1 partialStatus1})) {
+        // New Status 0 provides applied output AND voltage/current/temp.
+        lastStatus0 = parsed.status0;
+        // Merge voltage/current/temp from new Status 0 with velocity from
+        // new Status 2 (which may have arrived separately).
+        final prev = lastStatus1;
+        lastStatus1 = StatusFrame1(
+          velocityRpm: prev?.velocityRpm ?? 0.0,
+          temperatureC: parsed.partialStatus1.temperatureC,
+          busVoltage: parsed.partialStatus1.busVoltage,
+          outputCurrentAmps: parsed.partialStatus1.outputCurrentAmps,
+        );
+      } else if (parsed
+          is ({StatusFrame1? velocityUpdate, StatusFrame2 status2})) {
+        // New Status 2 provides velocity + position.
+        lastStatus2 = parsed.status2;
+        if (parsed.velocityUpdate != null) {
+          final prev = lastStatus1;
+          lastStatus1 = StatusFrame1(
+            velocityRpm: parsed.velocityUpdate!.velocityRpm,
+            temperatureC: prev?.temperatureC ?? 0,
+            busVoltage: prev?.busVoltage ?? 0.0,
+            outputCurrentAmps: prev?.outputCurrentAmps ?? 0.0,
+          );
+        }
+      }
+    } else if (response.apiClass == kApiClassStatus && !_usingNewProtocol) {
+      // Only use legacy frames if we haven't seen new-protocol frames.
+      final parsed = parseStatusFrame(response);
+      if (parsed is StatusFrame0) lastStatus0 = parsed;
+      if (parsed is StatusFrame1) lastStatus1 = parsed;
+      if (parsed is StatusFrame2) lastStatus2 = parsed;
+    }
+
+    if (!_responseController.isClosed) {
+      _responseController.add(response);
     }
   }
 
