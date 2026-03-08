@@ -2,6 +2,7 @@
 /// SPARK MAX/Flex controllers.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'interfaces.dart';
@@ -67,36 +68,105 @@ class ControlApi implements IControlApi {
   // -----------------------------------------------------------------------
 
   /// Blink the controller's LED for identification.
-  Future<SparkResponse> identify() {
-    final arbId = buildArbId(
+  Future<SparkResponse> identify() async {
+    final targetId = await _resolveTargetDeviceId();
+
+    // Firmware >=25 uses identify on apiClass 0x07, apiIndex 0x07
+    // (frame ID base 0x02051DC0). This command does not reliably emit a
+    // dedicated ack frame, so send without waiting for a response.
+    final modernArbId = buildArbId(
+      apiClass: kApiClassFrameRate,
+      apiIndex: 0x07,
+      deviceId: targetId,
+    );
+    _conn.sendCommand(modernArbId, Uint8List(0));
+
+    // Also send legacy identify for older firmware compatibility.
+    final legacyArbId = buildArbId(
       apiClass: kApiClassSystem,
       apiIndex: kSystemIndexIdentify,
-      deviceId: _deviceId,
+      deviceId: targetId,
     );
-    return _conn.sendAndReceive(arbId, Uint8List(8));
+    if (legacyArbId != modernArbId) {
+      _conn.sendCommand(legacyArbId, Uint8List(0));
+    }
+
+    return SparkResponse(
+      responseType: kUsbResponseAck,
+      arbId: modernArbId,
+      payload: Uint8List(8),
+    );
+  }
+
+  Future<int> _resolveTargetDeviceId() async {
+    if (_deviceId != 0) return _deviceId;
+    try {
+      return await _conn.responses
+          .where((r) =>
+              r.apiClass == kApiClassNewStatus || r.apiClass == kApiClassStatus)
+          .map((r) => r.deviceId)
+          .first
+          .timeout(const Duration(milliseconds: 150));
+    } on TimeoutException {
+      return _deviceId;
+    }
   }
 
   /// Clear all active faults.
-  Future<SparkResponse> clearFaults() {
-    final arbId = buildArbId(
+  Future<SparkResponse> clearFaults() async {
+    final targetId = await _resolveTargetDeviceId();
+
+    // Modern clear-faults frame (SPARK_CLEAR_FAULTS_FRAME_ID base 0x02051B80)
+    final modernArbId = buildArbId(
+      apiClass: kApiClassStatus,
+      apiIndex: 0x0E,
+      deviceId: targetId,
+    );
+    _conn.sendCommand(modernArbId, Uint8List(0));
+
+    // Legacy fallback
+    final legacyArbId = buildArbId(
       apiClass: kApiClassSystem,
       apiIndex: kSystemIndexClearFaults,
-      deviceId: _deviceId,
+      deviceId: targetId,
     );
-    return _conn.sendAndReceive(arbId, Uint8List(8));
+    if (legacyArbId != modernArbId) {
+      _conn.sendCommand(legacyArbId, Uint8List(0));
+    }
+
+    return SparkResponse(
+      responseType: kUsbResponseAck,
+      arbId: modernArbId,
+      payload: Uint8List(8),
+    );
   }
 
   /// Factory reset the controller to default settings.
-  Future<SparkResponse> factoryReset() {
-    final arbId = buildArbId(
+  Future<SparkResponse> factoryReset() async {
+    final targetId = await _resolveTargetDeviceId();
+
+    // Modern complete-factory-reset frame (base 0x020505C0)
+    final modernArbId = buildArbId(
+      apiClass: kApiClassParameter,
+      apiIndex: 0x07,
+      deviceId: targetId,
+    );
+    _conn.sendCommand(modernArbId, Uint8List(2));
+
+    // Legacy fallback
+    final legacyArbId = buildArbId(
       apiClass: kApiClassSystem,
       apiIndex: kSystemIndexFactoryReset,
-      deviceId: _deviceId,
+      deviceId: targetId,
     );
-    return _conn.sendAndReceive(
-      arbId,
-      Uint8List(8),
-      timeout: const Duration(seconds: 5),
+    if (legacyArbId != modernArbId) {
+      _conn.sendCommand(legacyArbId, Uint8List(2));
+    }
+
+    return SparkResponse(
+      responseType: kUsbResponseAck,
+      arbId: modernArbId,
+      payload: Uint8List(8),
     );
   }
 

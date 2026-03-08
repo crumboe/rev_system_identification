@@ -44,6 +44,9 @@ class SimulatedSparkConnection implements ISparkConnection {
   @override
   StatusFrame2? lastStatus2;
 
+  @override
+  Stream<SparkResponse> get responses => const Stream<SparkResponse>.empty();
+
   SimulatedSparkConnection(this.physics, {String? portName})
       : _portName = portName ?? '🧪 ${physics.label}';
 

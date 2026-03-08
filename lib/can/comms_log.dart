@@ -73,6 +73,27 @@ class CommsLogEntry {
   String get arbIdHex =>
       arbId != null ? '0x${arbId!.toRadixString(16).padLeft(8, '0')}' : '—';
 
+    /// Device type field [28:24] decoded from arb ID.
+    String get arbDevTypeHex =>
+      arbId != null ? '0x${((arbId! >> 24) & 0x1F).toRadixString(16)}' : '—';
+
+    /// Manufacturer field [23:16] decoded from arb ID.
+    String get arbManufacturerHex => arbId != null
+      ? '0x${((arbId! >> 16) & 0xFF).toRadixString(16).padLeft(2, '0')}'
+      : '—';
+
+    /// API class field [15:10] decoded from arb ID.
+    String get arbApiClassHex =>
+      arbId != null ? '0x${extractApiClass(arbId!).toRadixString(16)}' : '—';
+
+    /// API index field [9:6] decoded from arb ID.
+    String get arbApiIndexHex =>
+      arbId != null ? '0x${extractApiIndex(arbId!).toRadixString(16)}' : '—';
+
+    /// Device ID field [5:0] decoded from arb ID.
+    String get arbDeviceId =>
+      arbId != null ? extractDeviceId(arbId!).toString() : '—';
+
   /// Payload formatted as space-separated hex bytes (or '—' if absent).
   String get payloadHex => payload != null
       ? payload!.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')
@@ -80,7 +101,8 @@ class CommsLogEntry {
 
   /// Single CSV row for this entry (no trailing newline).
   ///
-  /// Columns: timestamp, direction, port, arb_id, payload_hex, description
+    /// Columns: timestamp, direction, port, arb_id, arb_dev_type, arb_mfr,
+    /// api_class, api_index, device_id, payload_hex, description
   String toCsvRow() {
     // Escape description so commas/quotes inside it don't break the CSV.
     final escaped = description.replaceAll('"', '""');
@@ -88,6 +110,11 @@ class CommsLogEntry {
         '${direction.name.toUpperCase()},'
         '$port,'
         '$arbIdHex,'
+      '$arbDevTypeHex,'
+      '$arbManufacturerHex,'
+      '$arbApiClassHex,'
+      '$arbApiIndexHex,'
+      '$arbDeviceId,'
         '$payloadHex,'
         '"$escaped"';
   }
@@ -126,7 +153,7 @@ class CommsLog {
 
   /// CSV header row written at the top of every log file.
   static const String _csvHeader =
-      'timestamp,direction,port,arb_id,payload_hex,description';
+      'timestamp,direction,port,arb_id,arb_dev_type,arb_mfr,api_class,api_index,device_id,payload_hex,description';
 
   /// Open [path] for continuous log output and write a CSV header.
   ///

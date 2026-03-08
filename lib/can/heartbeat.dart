@@ -40,7 +40,10 @@ class HeartbeatManager implements IHeartbeatManager {
   /// bound to the main isolate), we use a Timer on the main isolate instead.
   /// For production-critical timing, a native plugin could be used.
   void start({bool enabled = true}) {
-    if (_running) return;
+    if (_running) {
+      _enabled = enabled;
+      return;
+    }
     _running = true;
     _enabled = enabled;
     _startTimer();

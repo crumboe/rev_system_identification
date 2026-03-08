@@ -4,6 +4,7 @@
 /// without requiring real hardware or serial port FFI dependencies.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'parameter_api.dart' show PidGains, ControllerFeedForward;
@@ -33,6 +34,9 @@ abstract class ISparkConnection {
 
   /// The latest parsed Status Frame 2 (position).
   StatusFrame2? get lastStatus2;
+
+  /// Stream of all decoded inbound frames.
+  Stream<SparkResponse> get responses;
 
   /// Open the connection.
   void open();

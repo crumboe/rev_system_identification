@@ -2,6 +2,7 @@
 library;
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter/foundation.dart';
@@ -52,8 +53,8 @@ class PortInfo {
 class SparkDevice {
   final ISparkConnection connection;
   final IHeartbeatManager heartbeat;
-  final IParameterApi parameters;
-  final IControlApi control;
+  IParameterApi parameters;
+  IControlApi control;
 
   /// User-assigned label for this device (e.g., "Leader", "Follower 1").
   String label;
@@ -217,6 +218,10 @@ class DeviceManager {
       debugPrint(
         '[DeviceManager] getCanId failed after sweep on $portName',
       );
+    } else {
+      // Rebind APIs to the discovered CAN ID so addressed commands
+      // (identify, clear faults, parameter writes, etc.) hit the real node.
+      _retargetApisToCanId(device);
     }
 
     // Stop the initialization heartbeat — it will be restarted with motor
@@ -366,6 +371,8 @@ class DeviceManager {
       device.connectionNote =
           'CAN ID re-read failed (no response after sweep of IDs 0–$kMaxCanDeviceId). '
           'Check that the controller is powered and the USB cable is secure.';
+    } else {
+      _retargetApisToCanId(device);
     }
 
     // Stop heartbeat if we started it — it will be restarted when needed.
@@ -382,22 +389,31 @@ class DeviceManager {
   ///
   /// Uses a shorter timeout per attempt to keep the total sweep under ~7 s.
   Future<int?> _sweepForCanId(ISparkConnection conn) async {
+    const matchMask = 0x1FFFFFFF;
     for (var id = 0; id <= kMaxCanDeviceId; id++) {
-      final arbId = buildArbId(
-        apiClass: kApiClassParameter,
-        apiIndex: kParamIndexGet,
-        deviceId: id,
-      );
-      final payload = buildParamGetPayload(kParamCanId);
       try {
-        final response = await conn.sendAndReceive(
-          arbId,
-          payload,
-          timeout: const Duration(milliseconds: 100),
+        final requestArb = buildArbId(
+          apiClass: kApiClassParameterRead,
+          apiIndex: (kParamCanId ~/ 2) & 0x0F,
+          deviceId: id,
         );
-        // All SPARK parameter values are transmitted as float32 in the
-        // CAN payload, even integer-typed ones like CAN ID.
-        final canId = readFloat32(response.payload, 0).toInt();
+        final expectedArb = buildArbId(
+          apiClass: kApiClassParameterRead | 0x20,
+          apiIndex: (kParamCanId ~/ 2) & 0x0F,
+          deviceId: id,
+        );
+
+        conn.sendCommand(requestArb, Uint8List(8));
+
+        final response = await conn.responses
+            .where((r) => (r.arbId & matchMask) == expectedArb)
+            .first
+            .timeout(const Duration(milliseconds: 100));
+
+        final canId = readUint32(response.payload, 0);
+        if (canId < 0 || canId > kMaxCanDeviceId) {
+          continue;
+        }
         debugPrint('[DeviceManager] sweep found device at ID $id '
             '(reports CAN ID $canId)');
         return canId;
@@ -406,6 +422,11 @@ class DeviceManager {
       }
     }
     return null;
+  }
+
+  void _retargetApisToCanId(SparkDevice device) {
+    device.parameters = ParameterApi(device.connection, deviceId: device.canId);
+    device.control = ControlApi(device.connection, deviceId: device.canId);
   }
 
   /// Produce a short, human-friendly error string from an exception.

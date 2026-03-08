@@ -39,6 +39,19 @@ const int kParamIndexSet = 0x00;
 const int kParamIndexGet = 0x01;
 const int kParamIndexBurnFlash = 0x02;
 
+// New parameter protocol (REV firmware >= 25.0)
+//
+// Parameter writes use API class 0x0E:
+//   index 0: write request
+//   index 1: write response
+//
+// Parameter reads use API class 0x0F, where each apiIndex corresponds to
+// a pair of parameter IDs: index N reads params (2N) and (2N+1).
+const int kApiClassParameterWrite = 0x0E;
+const int kApiClassParameterRead = 0x0F;
+const int kParamWriteIndexRequest = 0x00;
+const int kParamWriteIndexResponse = 0x01;
+
 // System API indices
 const int kSystemIndexIdentify = 0x00;
 const int kSystemIndexClearFaults = 0x01;
@@ -446,6 +459,12 @@ double readFloat32(Uint8List data, int offset) {
 int readUint16(Uint8List data, int offset) {
   final bd = ByteData.sublistView(data);
   return bd.getUint16(offset, Endian.little);
+}
+
+/// Extract uint32 LE from bytes starting at [offset].
+int readUint32(Uint8List data, int offset) {
+  final bd = ByteData.sublistView(data);
+  return bd.getUint32(offset, Endian.little);
 }
 
 /// Extract int16 LE from bytes starting at [offset].
