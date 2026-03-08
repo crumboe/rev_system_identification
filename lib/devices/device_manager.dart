@@ -141,11 +141,13 @@ class DeviceManager {
 
   /// Connect to a SPARK controller on the given COM port.
   ///
-  /// Reads the device's CAN ID automatically after connecting (retried up to
-  /// three times).  If the read still fails, [SparkDevice.connectionNote] is
-  /// set to an actionable explanation and [SparkDevice.canIdReadSucceeded] is
-  /// left `false`.  The device is still usable for motor control — USB
-  /// commands are device-ID-agnostic.
+  /// Reads the device's CAN ID automatically after connecting.  First tries
+  /// device ID 0 (up to three times), then sweeps IDs 0–62 in case the
+  /// controller only responds to its own CAN ID even over USB.
+  /// If the read still fails, [SparkDevice.connectionNote] is set to an
+  /// actionable explanation and [SparkDevice.canIdReadSucceeded] is left
+  /// `false`.  The device is still usable for motor control — USB commands
+  /// are device-ID-agnostic.
   ///
   /// Returns the connected [SparkDevice].
   /// Throws if the port cannot be opened.
@@ -165,11 +167,10 @@ class DeviceManager {
       label: label,
     );
 
-    // The SPARK controller requires an active heartbeat before it will
-    // respond to USB commands (including parameter queries).  Start a
-    // *disabled* heartbeat (watchdog only, motor not enabled) so the
-    // controller is responsive, then give it time to process the first
-    // few heartbeat frames.
+    // Start a *disabled* heartbeat (watchdog only, motor not enabled) as a
+    // precaution before querying.  Per REV docs, the heartbeat is only
+    // strictly required for motor output, but sending it ensures the
+    // controller is fully responsive in case firmware behaviour varies.
     heartbeat.start(enabled: false);
     await Future.delayed(const Duration(milliseconds: 200));
 

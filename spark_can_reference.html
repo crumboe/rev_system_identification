@@ -442,8 +442,8 @@ resp_data = response[<span style="color:var(--yellow)">4</span>:]            <sp
     <tbody>
       <tr><td>Packet size</td><td>4B ID + 0–8B data (variable)</td><td>Fixed 12 bytes (4B ID + 8B data)</td></tr>
       <tr><td>Responses</td><td>Only some commands respond</td><td>Every command gets a 12-byte response</td></tr>
-      <tr><td>Device ID field</td><td>Used for bus addressing</td><td>DNC — one device per USB connection</td></tr>
-      <tr><td>Heartbeat required?</td><td>Yes — every 20ms</td><td>Yes — same requirement</td></tr>
+      <tr><td>Device ID field</td><td>Used for bus addressing</td><td>DNC — but some firmware may still filter on it; sweep IDs 0–62 if needed</td></tr>
+      <tr><td>Heartbeat required?</td><td>Yes — every 20ms</td><td>N/A for param access; Yes for motor output</td></tr>
       <tr><td>CAN bus needed?</td><td>Yes + termination resistors</td><td>No — USB-C cable only</td></tr>
       <tr><td>Multiple devices?</td><td>Yes (up to 62)</td><td>One at a time</td></tr>
       <tr><td>Hardware needed</td><td>USB-to-CAN adapter (CANable etc.)</td><td>USB-C cable only</td></tr>
