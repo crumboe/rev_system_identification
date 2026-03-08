@@ -113,6 +113,12 @@ class SparkConnection implements ISparkConnection {
   /// Send a command and wait for the ack/data response.
   ///
   /// Times out after [timeout] (default 500 ms).
+  ///
+  /// Response matching ignores the device-ID field (lower 6 bits of the arb
+  /// ID) because the controller echoes its real CAN ID in every response,
+  /// while outbound USB commands always use device ID 0 (DNC over USB).
+  /// Matching on the remaining bits — device type, manufacturer, API class,
+  /// and API index — is specific enough to identify the correct response.
   Future<SparkResponse> sendAndReceive(
     int arbId,
     Uint8List payload, {
@@ -120,11 +126,14 @@ class SparkConnection implements ISparkConnection {
   }) async {
     sendCommand(arbId, payload);
 
-    // Wait for a response whose arb ID matches (modulo response type bits).
+    // Mask that keeps device-type (28:24), manufacturer (23:16),
+    // API class (15:10), and API index (9:6) while clearing device ID (5:0).
+    // 0x1FFFFFC0 = 0x1FFFFFFF & ~0x3F
+    const matchMask = 0x1FFFFFC0;
+
     return _responseController.stream
         .where((r) =>
-            (r.arbId & 0x1FFFFFFF) == (arbId & 0x1FFFFFFF) ||
-            r.apiClass == extractApiClass(arbId))
+            (r.arbId & matchMask) == (arbId & matchMask))
         .first
         .timeout(timeout);
   }

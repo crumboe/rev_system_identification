@@ -4,6 +4,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
+import 'package:flutter/foundation.dart';
 
 import '../can/interfaces.dart';
 import '../can/spark_connection.dart';
@@ -76,6 +77,16 @@ class SparkDevice {
     this.isSimulated = false,
   });
 
+  /// Whether the CAN ID was successfully read from the device on connect.
+  ///
+  /// `false` means either this is a fresh default (not yet read) or the
+  /// read failed.  When `false` and [canId] == 0, show a warning in the UI.
+  bool canIdReadSucceeded = false;
+
+  /// Human-readable note set when the connection has diagnostics to surface
+  /// (e.g. why the CAN ID could not be read, or a safety-lockout hint).
+  String? connectionNote;
+
   bool get isConnected => connection.isOpen;
 
   /// Blink the controller LED for identification.
@@ -129,7 +140,12 @@ class DeviceManager {
 
   /// Connect to a SPARK controller on the given COM port.
   ///
-  /// Reads the device's CAN ID automatically after connecting.
+  /// Reads the device's CAN ID automatically after connecting (retried up to
+  /// three times).  If the read still fails, [SparkDevice.connectionNote] is
+  /// set to an actionable explanation and [SparkDevice.canIdReadSucceeded] is
+  /// left `false`.  The device is still usable for motor control — USB
+  /// commands are device-ID-agnostic.
+  ///
   /// Returns the connected [SparkDevice].
   /// Throws if the port cannot be opened.
   Future<SparkDevice> connect(String portName, {String label = 'Motor'}) async {
@@ -149,10 +165,31 @@ class DeviceManager {
     );
 
     // Read the device's CAN ID from parameter 0.
-    try {
-      device.canId = await parameters.getCanId();
-    } catch (_) {
-      // If reading fails, leave canId at default 0.
+    // Retry up to three times to handle slow controller start-up.
+    const maxAttempts = 3;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        device.canId = await parameters.getCanId();
+        device.canIdReadSucceeded = true;
+        break;
+      } catch (e) {
+        if (attempt < maxAttempts - 1) {
+          // Brief pause before the next attempt.
+          await Future.delayed(_retryDelay);
+        } else {
+          // Surface a helpful diagnostic after all retries are exhausted.
+          final reason = _shortError(e);
+          device.connectionNote =
+              'CAN ID unreadable ($reason). '
+              'Motor control may still work — USB commands do not require '
+              'a known CAN ID. If this persists, power-cycle the controller '
+              'and reconnect (a previous CAN-bus connection can lock out USB).';
+          debugPrint(
+            '[DeviceManager] getCanId failed after $maxAttempts attempts '
+            'on $portName: $e',
+          );
+        }
+      }
     }
 
     _devices.add(device);
@@ -199,6 +236,7 @@ class DeviceManager {
       canId: 42,
       isSimulated: true,
     );
+    device.canIdReadSucceeded = true;
 
     _devices.add(device);
     _notifyChanged();
@@ -251,6 +289,37 @@ class DeviceManager {
     if (!_devicesChanged.isClosed) {
       _devicesChanged.add(List.unmodifiable(_devices));
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Diagnostics helpers
+  // -----------------------------------------------------------------------
+
+  /// Retry interval between CAN ID read attempts.
+  static const _retryDelay = Duration(milliseconds: 150);
+
+  /// Re-read the CAN ID for [device] (e.g. after a user power-cycles
+  /// the controller and clicks "Re-read CAN ID" in the UI).
+  Future<void> reReadCanId(SparkDevice device) async {
+    try {
+      device.canId = await device.parameters.getCanId();
+      device.canIdReadSucceeded = true;
+      device.connectionNote = null; // clear any prior warning
+    } catch (e) {
+      device.connectionNote =
+          'CAN ID re-read failed (${_shortError(e)}). '
+          'Check that the controller is powered and the USB cable is secure.';
+    }
+    _notifyChanged();
+  }
+
+  /// Produce a short, human-friendly error string from an exception.
+  static String _shortError(Object e) {
+    if (e is TimeoutException) return 'no response (timeout)';
+    if (e is StateError) return 'port closed unexpectedly';
+    final s = e.toString();
+    const prefix = 'Exception: ';
+    return s.startsWith(prefix) ? s.substring(prefix.length) : s;
   }
 
   /// Dispose all devices and close streams.
