@@ -515,6 +515,22 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
       _openLoopRampRate != _origOpenLoopRampRate ||
       _closedLoopRampRate != _origClosedLoopRampRate;
 
+  /// Ensure the heartbeat is running so the device responds to queries.
+  /// Returns whether the heartbeat was already running before this call.
+  Future<bool> _ensureHeartbeat() async {
+    final wasRunning = widget.device.heartbeat.isRunning;
+    if (!wasRunning) {
+      widget.device.heartbeat.start(enabled: false);
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    return wasRunning;
+  }
+
+  /// Stop the heartbeat if we started it (i.e. it was not previously running).
+  void _restoreHeartbeat(bool wasRunning) {
+    if (!wasRunning) widget.device.heartbeat.stop();
+  }
+
   Future<void> _readAllParams() async {
     setState(() {
       _loading = true;
@@ -524,12 +540,7 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
     try {
       final params = widget.device.parameters;
 
-      // Start heartbeat so device responds to parameter reads.
-      final wasRunning = widget.device.heartbeat.isRunning;
-      if (!wasRunning) {
-        widget.device.heartbeat.start(enabled: false);
-        await Future.delayed(const Duration(milliseconds: 200));
-      }
+      final wasRunning = await _ensureHeartbeat();
 
       final motorType =
           (await params.getParameter(kParamMotorType)).round();
@@ -544,7 +555,7 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
       final clRamp =
           await params.getParameter(kParamClosedLoopRampRate);
 
-      if (!wasRunning) widget.device.heartbeat.stop();
+      _restoreHeartbeat(wasRunning);
 
       if (!mounted) return;
       setState(() {
@@ -583,11 +594,7 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
     try {
       final params = widget.device.parameters;
 
-      final wasRunning = widget.device.heartbeat.isRunning;
-      if (!wasRunning) {
-        widget.device.heartbeat.start(enabled: false);
-        await Future.delayed(const Duration(milliseconds: 200));
-      }
+      final wasRunning = await _ensureHeartbeat();
 
       if (_motorType != _origMotorType) {
         await params.setMotorType(_motorType);
@@ -611,7 +618,7 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
 
       await params.burnFlash();
 
-      if (!wasRunning) widget.device.heartbeat.stop();
+      _restoreHeartbeat(wasRunning);
 
       if (!mounted) return;
 
@@ -721,6 +728,7 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
                       width: 120,
                       child: NumberBox<double>(
                         value: _smartCurrentLimit,
+                        // SPARK MAX/Flex supports 1–80 A smart current limit.
                         min: 1,
                         max: 80,
                         onChanged: (v) => setState(
