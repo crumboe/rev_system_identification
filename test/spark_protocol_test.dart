@@ -512,7 +512,7 @@ void main() {
   // =========================================================================
 
   group('encodeSlcanFrame', () {
-    test('produces T + 8-hex ID + DLC + hex data + CR', () {
+    test('produces T + 8-hex ID + DLC + hex data + CR LF', () {
       final arb = buildArbId(
         apiClass: kApiClassParameter,
         apiIndex: kParamIndexGet,
@@ -522,11 +522,11 @@ void main() {
       final frame = encodeSlcanFrame(arb, payload);
 
       expect(frame, startsWith('T'));
-      expect(frame, endsWith('\r'));
-      // T(1) + 8-char hex ID + DLC(1) + 16 hex chars (8 bytes) + \r = 26
-      expect(frame.length, equals(26));
-      // The arb ID hex should match the value padded to 8 chars.
-      expect(frame.substring(1, 9), equals(arb.toRadixString(16).padLeft(8, '0')));
+      expect(frame, endsWith('\r\n'));
+      // T(1) + 8-char hex ID + DLC(1) + 16 hex chars (8 bytes) + \r\n = 28
+      expect(frame.length, equals(28));
+      // The arb ID hex should match the value padded to 8 chars (uppercase).
+      expect(frame.substring(1, 9), equals(arb.toRadixString(16).padLeft(8, '0').toUpperCase()));
       // DLC = 8
       expect(frame[9], equals('8'));
     });
@@ -537,15 +537,15 @@ void main() {
       final frame = encodeSlcanFrame(arb, payload);
 
       expect(frame[9], equals('2')); // DLC = 2
-      expect(frame.substring(10, 14), equals('aabb'));
-      expect(frame.length, equals(14 + 1)); // T(1) + 8-char ID + DLC(1) + 4 hex chars + \r
+      expect(frame.substring(10, 14), equals('AABB'));
+      expect(frame.length, equals(14 + 2)); // T(1) + 8-char ID + DLC(1) + 4 hex chars + \r\n
     });
 
     test('empty payload yields DLC 0', () {
       const arb = 0x02050000;
       final frame = encodeSlcanFrame(arb, Uint8List(0));
       expect(frame[9], equals('0'));
-      expect(frame.length, equals(11)); // T + 8 + 1 + 0 + \r
+      expect(frame.length, equals(12)); // T + 8 + 1 + 0 + \r\n
     });
   });
 
@@ -558,8 +558,8 @@ void main() {
       );
       final payload = Uint8List.fromList([0x00, 0x00, 0xB2, 0x06, 0x00, 0x00, 0x80, 0x00]);
       final frame = encodeSlcanFrame(arb, payload);
-      // Strip trailing \r for decode
-      final stripped = frame.substring(0, frame.length - 1);
+      // Strip trailing \r\n for decode
+      final stripped = frame.substring(0, frame.length - 2);
       final resp = decodeSlcanFrame(stripped);
 
       expect(resp, isNotNull);

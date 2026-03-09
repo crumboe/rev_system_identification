@@ -733,12 +733,8 @@ class SimulatedParameterApi implements IParameterApi {
   }
 
   @override
-  Future<SparkResponse> burnFlash() async {
-    return SparkResponse(
-      responseType: kUsbResponseAck,
-      arbId: 0,
-      payload: Uint8List(8),
-    );
+  Future<void> burnFlash() async {
+    // Simulated — nothing to persist.
   }
 
   // -- CAN ID ---------------------------------------------------------------

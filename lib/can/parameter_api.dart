@@ -24,73 +24,73 @@ class ParameterApi implements IParameterApi {
   static const int _matchMask = 0x1FFFFFC0;
 
   /// Set a parameter by ID with a float32 value.
-  /// Set a parameter by ID with a float32 value.
   ///
-  /// Uses the modern parameter-write protocol (apiClass 0x0E):
-  ///   request  — index 0, payload: [paramId, value(4), ...]
-  ///   response — index 1, payload: [paramId, paramType, value(4), resultCode]
+  /// Uses API class 7, index 0 (matching the working Python SLCAN protocol).
+  /// Payload: [paramId, float32_LE(4), 0, 0, 0]
+  /// Python always sends the value as float32, even for integer params.
   Future<SparkResponse> setParameter(int paramId, double value) async {
     final requestArb = buildArbId(
-      apiClass: kApiClassParameterWrite,
-      apiIndex: kParamWriteIndexRequest,
+      apiClass: 0x07,
+      apiIndex: 0x00,
       deviceId: _deviceId,
     );
 
+    // Match Python: bytes([param_id]) + struct.pack('<f', value) + b'\x00'*3
     final payload = Uint8List(8);
     payload[0] = paramId & 0xFF;
     final bd = ByteData.sublistView(payload);
-    // Modern protocol carries raw 32-bit parameter value. Encode known
-    // integer/bool params as uint32 to avoid type-mismatch rejects.
-    if (_isIntegerLikeParam(paramId)) {
-      bd.setUint32(1, value.round() & 0xFFFFFFFF, Endian.little);
-    } else {
-      bd.setFloat32(1, value, Endian.little);
-    }
+    bd.setFloat32(1, value, Endian.little);
 
-    final response = await _sendAndReceiveExpected(
-      requestArb,
-      payload,
-      expectedApiClass: kApiClassParameterWrite,
-      expectedApiIndex: kParamWriteIndexResponse,
-    );
+    _conn.sendCommand(requestArb, payload);
 
-    // Modern write response: [paramId, paramType, value(4), resultCode]
-    if (response.payload.length >= 7) {
-      final resultCode = response.payload[6];
-      if (resultCode != 0) {
-        throw StateError(
-          'Parameter write failed (id=$paramId, resultCode=$resultCode)',
-        );
-      }
-    }
+    // Match Python write_param: accept any class-7 response from the device.
+    // Python does: api_class != 0x20 (i.e. not a status frame).
+    // No index filter — the device may respond on any index.
+    final response = await _conn.responses
+        .where((r) {
+          final cls = extractApiClass(r.arbId);
+          final dev = extractDeviceId(r.arbId);
+          return cls == 0x07 && dev == _deviceId;
+        })
+        .first
+        .timeout(const Duration(milliseconds: 500));
 
     return response;
   }
 
   /// Get a parameter by ID. Returns the numeric value from the response.
   ///
-  /// Uses the modern parameter-read protocol (apiClass 0x0F, firmware ≥25.0):
-  ///   request  — index 0, payload byte 0 = paramId
-  ///   response — index 1, payload: [paramId, paramType, value(4), ...]
+  /// Uses API class 7, index 1 (matching the working Python SLCAN protocol).
+  /// Request payload: [paramId, 0, 0, 0, 0, 0, 0, 0]
+  /// Response layout (per Python):
+  ///   byte[0] = param_id echo
+  ///   byte[1] = 0xFF (status OK)
+  ///   bytes[2:6] = value (float32/uint32 LE)
+  ///   byte[6] = type tag
   Future<double> getParameter(int paramId) async {
     final arbId = buildArbId(
-      apiClass: kApiClassParameterRead,
-      apiIndex: kParamReadIndexRequest,
+      apiClass: 0x07,
+      apiIndex: 0x01,
       deviceId: _deviceId,
     );
 
     final payload = Uint8List(8);
     payload[0] = paramId & 0xFF;
 
-    final response = await _sendAndReceiveExpected(
-      arbId,
-      payload,
-      expectedApiClass: kApiClassParameterRead,
-      expectedApiIndex: kParamReadIndexResponse,
-    );
+    _conn.sendCommand(arbId, payload);
 
-    // Modern response: [paramId, paramType, value(4 bytes), ...]
-    // Value starts at byte 2.
+    // Match the read-response specifically: class=7, same device.
+    // Python's read_param accepts api_class==7 responses.
+    final response = await _conn.responses
+        .where((r) {
+          final cls = extractApiClass(r.arbId);
+          final dev = extractDeviceId(r.arbId);
+          return cls == 0x07 && dev == _deviceId;
+        })
+        .first
+        .timeout(const Duration(milliseconds: 500));
+
+    // Value is at bytes[2:6] in the response
     if (_isIntegerLikeParam(paramId) || paramId == kParamCanId) {
       return readUint32(response.payload, 2).toDouble();
     }
@@ -137,21 +137,18 @@ class ParameterApi implements IParameterApi {
 
   /// Burn all current parameters to flash (persist across power cycles).
   ///
-  /// Uses the modern persist command: apiClass 0x01, index 0x03 with
-  /// response at 0x04.
-  Future<SparkResponse> burnFlash() async {
-    final modernArbId = buildArbId(
-      apiClass: kApiClassParameter,
-      apiIndex: 0x03,
+  /// Firmware 26.x: send apiClass=6, apiIndex=1 with 8 zero bytes.
+  /// The device writes to flash and will not respond during this time,
+  /// so we wait 200ms before returning rather than expecting a response.
+  Future<void> burnFlash() async {
+    final arbId = buildArbId(
+      apiClass: 0x06,
+      apiIndex: 0x01,
       deviceId: _deviceId,
     );
-    return await _sendAndReceiveExpected(
-      modernArbId,
-      Uint8List(0),
-      expectedApiClass: kApiClassParameter,
-      expectedApiIndex: 0x04,
-      timeout: const Duration(seconds: 2),
-    );
+    _conn.sendCommand(arbId, Uint8List(8));
+    // Device is writing to flash — wait before sending further commands.
+    await Future<void>.delayed(const Duration(milliseconds: 200));
   }
 
   // -----------------------------------------------------------------------

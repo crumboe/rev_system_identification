@@ -310,19 +310,19 @@ SparkResponse decodePacket(Uint8List packet) {
 
 /// Encode a CAN frame as an SLCAN extended-frame string.
 ///
-/// Format: `T<8-hex arb-ID><DLC><2*DLC hex data bytes>\r`
+/// Format: `T<8-hex arb-ID><DLC><2*DLC hex data bytes>\r\n`
 ///
-/// SLCAN is the ASCII text protocol used by many USB-CAN adapters and by
-/// some SPARK controller firmware revisions.  Each frame is a single text
-/// line terminated by `\r` (some devices also send `\n` after the `\r`).
+/// All hex digits are uppercase to match the SPARK MAX SLCAN protocol.
+/// Terminated with `\r\n` as required by firmware 26.x.
 String encodeSlcanFrame(int arbId, Uint8List payload) {
-  final idHex = (arbId & kArbIdMask).toRadixString(16).padLeft(8, '0');
+  final idHex =
+      (arbId & kArbIdMask).toRadixString(16).padLeft(8, '0').toUpperCase();
   final dlc = payload.length.clamp(0, 8);
-  final buf = StringBuffer('T$idHex$dlc');
+  final buf = StringBuffer('T$idHex${dlc.toRadixString(16).toUpperCase()}');
   for (var i = 0; i < dlc; i++) {
-    buf.write(payload[i].toRadixString(16).padLeft(2, '0'));
+    buf.write(payload[i].toRadixString(16).padLeft(2, '0').toUpperCase());
   }
-  buf.write('\r');
+  buf.write('\r\n');
   return buf.toString();
 }
 

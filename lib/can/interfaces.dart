@@ -86,7 +86,7 @@ abstract class IHeartbeatManager {
 abstract class IParameterApi {
   Future<SparkResponse> setParameter(int paramId, double value);
   Future<double> getParameter(int paramId);
-  Future<SparkResponse> burnFlash();
+  Future<void> burnFlash();
 
   // CAN ID
   Future<int> getCanId();
