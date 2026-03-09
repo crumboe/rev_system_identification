@@ -88,8 +88,15 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
   }
 
   List<CommsLogEntry> get _filtered {
-    if (_filter == null) return _entries;
-    return _entries.where((e) => e.direction == _filter).toList();
+    final log = ref.read(commsLogProvider);
+    if (_filter != null) {
+      return _entries.where((e) => e.direction == _filter).toList();
+    }
+    // Exclude heartbeats from "All" view unless they are enabled for logging
+    // (they fire at 50 Hz and would otherwise dominate the view).
+    return _entries
+        .where((e) => log.logHeartbeats || e.direction != CommDirection.heartbeat)
+        .toList();
   }
 
   @override
@@ -151,6 +158,20 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
                 () => _filter =
                     _filter == CommDirection.error ? null : CommDirection.error,
               ),
+            ),
+            CommandBarButton(
+              label: const Text('Heartbeats'),
+              icon: Icon(
+                FluentIcons.heart,
+                color: ref.read(commsLogProvider).logHeartbeats
+                    ? Colors.red
+                    : null,
+              ),
+              onPressed: () {
+                final log = ref.read(commsLogProvider);
+                log.logHeartbeats = !log.logHeartbeats;
+                setState(() {});
+              },
             ),
             const CommandBarSeparator(),
             // Auto-scroll toggle
@@ -362,6 +383,7 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
       case CommDirection.rx:
         return _rxColor(theme);
       case CommDirection.error:
+      case CommDirection.heartbeat:
         return Colors.red;
       case CommDirection.info:
         return theme.resources.textFillColorSecondary;
@@ -385,6 +407,8 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
         return 'ERR';
       case CommDirection.info:
         return 'INFO';
+      case CommDirection.heartbeat:
+        return 'HB';
     }
   }
 }

@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 
+import 'comms_log.dart';
 import 'interfaces.dart';
 import 'spark_protocol.dart';
 import 'spark_connection.dart';
@@ -100,6 +101,11 @@ class HeartbeatManager implements IHeartbeatManager {
 
     try {
       _connection.sendRaw(packet);
+      CommsLog.instance.logHeartbeat(
+        _connection.portName,
+        kHeartbeatArbId,
+        payload,
+      );
     } catch (_) {
       // Connection may have been lost — caller should detect via
       // SparkConnection.isOpen and handle accordingly.

@@ -29,6 +29,9 @@ enum CommDirection {
 
   /// Informational message (connect, disconnect, etc.).
   info,
+
+  /// FRC heartbeat packet (host → controller, 50 Hz).
+  heartbeat,
 }
 
 /// A single entry in the communication log.
@@ -182,6 +185,12 @@ class CommsLog {
     }
   }
 
+  /// Whether heartbeat packets should be recorded in the log.
+  ///
+  /// Defaults to `false` because heartbeats fire at 50 Hz and would otherwise
+  /// flood the log.  Toggle this from the Console screen.
+  bool logHeartbeats = false;
+
   /// Snapshot of all current log entries (newest last).
   List<CommsLogEntry> get entries => List.unmodifiable(_entries);
 
@@ -233,6 +242,19 @@ class CommsLog {
       direction: CommDirection.info,
       port: port,
       description: message,
+    ));
+  }
+
+  /// Log a heartbeat packet.  No-op when [logHeartbeats] is false.
+  void logHeartbeat(String port, int arbId, Uint8List payload) {
+    if (!logHeartbeats) return;
+    _add(CommsLogEntry(
+      timestamp: DateTime.now(),
+      direction: CommDirection.heartbeat,
+      port: port,
+      arbId: arbId,
+      payload: payload,
+      description: 'Heartbeat',
     ));
   }
 
