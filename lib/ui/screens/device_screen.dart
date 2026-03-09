@@ -1,10 +1,11 @@
 /// Device setup screen: COM port selection, connection, identification,
-/// and follower configuration.
+/// device parameter configuration, and follower configuration.
 library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../can/spark_protocol.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
@@ -232,18 +233,22 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             severity: InfoBarSeverity.info,
           )
         else
-          ...devices.map((device) => _DeviceCard(
-                device: device,
-                onDisconnect: () {
-                  dm.disconnect(device);
-                  setState(() {});
-                },
-                onIdentify: () => device.identify(),
-                onReReadCanId: () async {
-                  await dm.reReadCanId(device);
-                  setState(() {});
-                },
-              )),
+          ...devices.expand((device) => [
+                _DeviceCard(
+                  device: device,
+                  onDisconnect: () {
+                    dm.disconnect(device);
+                    setState(() {});
+                  },
+                  onIdentify: () => device.identify(),
+                  onReReadCanId: () async {
+                    await dm.reReadCanId(device);
+                    setState(() {});
+                  },
+                ),
+                if (device.isConnected)
+                  _DeviceConfigPanel(device: device),
+              ]),
 
         const SizedBox(height: 24),
 
@@ -452,6 +457,355 @@ class _DeviceCardState extends State<_DeviceCard> {
               isLong: true,
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Device Configuration Panel
+// ---------------------------------------------------------------------------
+
+/// Panel that reads all configurable parameters from a connected SPARK device,
+/// displays them in editable fields, and provides a Save button to write
+/// changes back and burn flash.
+class _DeviceConfigPanel extends StatefulWidget {
+  final SparkDevice device;
+
+  const _DeviceConfigPanel({required this.device});
+
+  @override
+  State<_DeviceConfigPanel> createState() => _DeviceConfigPanelState();
+}
+
+class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
+  bool _loading = true;
+  bool _saving = false;
+  String? _statusMessage;
+  InfoBarSeverity _statusSeverity = InfoBarSeverity.success;
+
+  // Editable parameter values.
+  int _motorType = kMotorTypeBrushless;
+  int _idleMode = kIdleModeCoast;
+  bool _motorInverted = false;
+  double _smartCurrentLimit = 40.0;
+  double _openLoopRampRate = 0.0;
+  double _closedLoopRampRate = 0.0;
+
+  // Snapshot of values read from device, to detect changes.
+  int _origMotorType = kMotorTypeBrushless;
+  int _origIdleMode = kIdleModeCoast;
+  bool _origMotorInverted = false;
+  double _origSmartCurrentLimit = 40.0;
+  double _origOpenLoopRampRate = 0.0;
+  double _origClosedLoopRampRate = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _readAllParams();
+  }
+
+  bool get _hasChanges =>
+      _motorType != _origMotorType ||
+      _idleMode != _origIdleMode ||
+      _motorInverted != _origMotorInverted ||
+      _smartCurrentLimit != _origSmartCurrentLimit ||
+      _openLoopRampRate != _origOpenLoopRampRate ||
+      _closedLoopRampRate != _origClosedLoopRampRate;
+
+  Future<void> _readAllParams() async {
+    setState(() {
+      _loading = true;
+      _statusMessage = null;
+    });
+
+    try {
+      final params = widget.device.parameters;
+
+      // Start heartbeat so device responds to parameter reads.
+      final wasRunning = widget.device.heartbeat.isRunning;
+      if (!wasRunning) {
+        widget.device.heartbeat.start(enabled: false);
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
+      final motorType =
+          (await params.getParameter(kParamMotorType)).round();
+      final idleMode =
+          (await params.getParameter(kParamIdleMode)).round();
+      final inverted =
+          (await params.getParameter(kParamMotorInverted)).round() != 0;
+      final currentLimit =
+          await params.getParameter(kParamSmartCurrentLimit);
+      final olRamp =
+          await params.getParameter(kParamOpenLoopRampRate);
+      final clRamp =
+          await params.getParameter(kParamClosedLoopRampRate);
+
+      if (!wasRunning) widget.device.heartbeat.stop();
+
+      if (!mounted) return;
+      setState(() {
+        _motorType = motorType;
+        _idleMode = idleMode;
+        _motorInverted = inverted;
+        _smartCurrentLimit = currentLimit;
+        _openLoopRampRate = olRamp;
+        _closedLoopRampRate = clRamp;
+
+        _origMotorType = motorType;
+        _origIdleMode = idleMode;
+        _origMotorInverted = inverted;
+        _origSmartCurrentLimit = currentLimit;
+        _origOpenLoopRampRate = olRamp;
+        _origClosedLoopRampRate = clRamp;
+
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _statusSeverity = InfoBarSeverity.error;
+        _statusMessage = 'Failed to read parameters: $e';
+      });
+    }
+  }
+
+  Future<void> _saveAllParams() async {
+    setState(() {
+      _saving = true;
+      _statusMessage = null;
+    });
+
+    try {
+      final params = widget.device.parameters;
+
+      final wasRunning = widget.device.heartbeat.isRunning;
+      if (!wasRunning) {
+        widget.device.heartbeat.start(enabled: false);
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
+      if (_motorType != _origMotorType) {
+        await params.setMotorType(_motorType);
+      }
+      if (_idleMode != _origIdleMode) {
+        await params.setIdleMode(_idleMode);
+      }
+      if (_motorInverted != _origMotorInverted) {
+        await params.setMotorInverted(_motorInverted);
+      }
+      if (_smartCurrentLimit != _origSmartCurrentLimit) {
+        await params.setSmartCurrentLimit(_smartCurrentLimit);
+      }
+      if (_openLoopRampRate != _origOpenLoopRampRate) {
+        await params.setOpenLoopRampRate(_openLoopRampRate);
+      }
+      if (_closedLoopRampRate != _origClosedLoopRampRate) {
+        await params.setParameter(
+            kParamClosedLoopRampRate, _closedLoopRampRate);
+      }
+
+      await params.burnFlash();
+
+      if (!wasRunning) widget.device.heartbeat.stop();
+
+      if (!mounted) return;
+
+      // Snapshot current values as the new originals.
+      _origMotorType = _motorType;
+      _origIdleMode = _idleMode;
+      _origMotorInverted = _motorInverted;
+      _origSmartCurrentLimit = _smartCurrentLimit;
+      _origOpenLoopRampRate = _openLoopRampRate;
+      _origClosedLoopRampRate = _closedLoopRampRate;
+
+      setState(() {
+        _saving = false;
+        _statusSeverity = InfoBarSeverity.success;
+        _statusMessage = 'Parameters saved and burned to flash.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _statusSeverity = InfoBarSeverity.error;
+        _statusMessage = 'Failed to save parameters: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12, left: 8, right: 8),
+      child: Expander(
+        header: const Text('Device Configuration'),
+        content: _loading
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: ProgressRing(),
+                ),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InfoBar(
+                    title: const Text('⚠ Motor Type'),
+                    content: const Text(
+                      'Setting the wrong motor type can damage your motor. '
+                      'Verify before saving.',
+                    ),
+                    severity: InfoBarSeverity.warning,
+                  ),
+                  const SizedBox(height: 12),
+                  _paramRow(
+                    'Motor Type',
+                    RadioGroup<int>(
+                      groupValue: _motorType,
+                      onChanged: (v) {
+                        if (v != null) setState(() => _motorType = v);
+                      },
+                      child: Row(
+                        children: [
+                          RadioButton<int>(
+                            value: kMotorTypeBrushless,
+                            content: const Text('Brushless'),
+                          ),
+                          const SizedBox(width: 16),
+                          RadioButton<int>(
+                            value: kMotorTypeBrushed,
+                            content: const Text('Brushed'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _paramRow(
+                    'Idle Mode',
+                    RadioGroup<int>(
+                      groupValue: _idleMode,
+                      onChanged: (v) {
+                        if (v != null) setState(() => _idleMode = v);
+                      },
+                      child: Row(
+                        children: [
+                          RadioButton<int>(
+                            value: kIdleModeCoast,
+                            content: const Text('Coast'),
+                          ),
+                          const SizedBox(width: 16),
+                          RadioButton<int>(
+                            value: kIdleModeBrake,
+                            content: const Text('Brake'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _paramRow(
+                    'Motor Inverted',
+                    ToggleSwitch(
+                      checked: _motorInverted,
+                      onChanged: (v) =>
+                          setState(() => _motorInverted = v),
+                    ),
+                  ),
+                  _paramRow(
+                    'Smart Current Limit (A)',
+                    SizedBox(
+                      width: 120,
+                      child: NumberBox<double>(
+                        value: _smartCurrentLimit,
+                        min: 1,
+                        max: 80,
+                        onChanged: (v) => setState(
+                            () => _smartCurrentLimit = v ?? 40.0),
+                      ),
+                    ),
+                  ),
+                  _paramRow(
+                    'Open-Loop Ramp Rate (s)',
+                    SizedBox(
+                      width: 120,
+                      child: NumberBox<double>(
+                        value: _openLoopRampRate,
+                        min: 0,
+                        max: 100,
+                        onChanged: (v) => setState(
+                            () => _openLoopRampRate = v ?? 0.0),
+                      ),
+                    ),
+                  ),
+                  _paramRow(
+                    'Closed-Loop Ramp Rate (s)',
+                    SizedBox(
+                      width: 120,
+                      child: NumberBox<double>(
+                        value: _closedLoopRampRate,
+                        min: 0,
+                        max: 100,
+                        onChanged: (v) => setState(
+                            () => _closedLoopRampRate = v ?? 0.0),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      FilledButton(
+                        onPressed:
+                            _saving || !_hasChanges ? null : _saveAllParams,
+                        child: _saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: ProgressRing(strokeWidth: 2),
+                              )
+                            : const Text('Save to Device'),
+                      ),
+                      const SizedBox(width: 8),
+                      Button(
+                        onPressed: _saving ? null : _readAllParams,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(FluentIcons.refresh, size: 12),
+                            SizedBox(width: 4),
+                            Text('Read from Device'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_statusMessage != null) ...[
+                    const SizedBox(height: 8),
+                    InfoBar(
+                      title: Text(_statusSeverity ==
+                              InfoBarSeverity.success
+                          ? 'Success'
+                          : 'Error'),
+                      content: Text(_statusMessage!),
+                      severity: _statusSeverity,
+                    ),
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _paramRow(String label, Widget child) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(width: 220, child: Text(label)),
+          child,
         ],
       ),
     );

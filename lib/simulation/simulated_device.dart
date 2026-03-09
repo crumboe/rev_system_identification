@@ -693,6 +693,7 @@ class SimulatedParameterApi implements IParameterApi {
     kParamSlot0MinOutput: -1.0,
     kParamSmartCurrentLimit: 40.0,
     kParamSecondaryCurrentLimit: 80.0,
+    kParamClosedLoopRampRate: 0.0,
     kParamForwardSoftLimit: 0.0,
     kParamForwardSoftLimitEnabled: 0.0,
     kParamReverseSoftLimit: 0.0,
