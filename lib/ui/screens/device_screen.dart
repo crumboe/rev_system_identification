@@ -988,8 +988,8 @@ const List<_ParamDescriptor> _kAllParams = [
   _ParamDescriptor(16,  'PID Slot 0 – F / kV',           notes: 'Velocity feedforward'),
   _ParamDescriptor(17,  'PID Slot 0 – I Zone',           notes: 'Integral zone'),
   _ParamDescriptor(18,  'PID Slot 0 – D Filter',         notes: 'D-term filter'),
-  _ParamDescriptor(19,  'PID Slot 0 – Min Output',       notes: '-1.0 to 0'),
-  _ParamDescriptor(20,  'PID Slot 0 – Max Output',       notes: '0 to 1.0'),
+  _ParamDescriptor(19,  'PID Slot 0 – Min Output',       notes: '−1.0 to 0.0'),
+  _ParamDescriptor(20,  'PID Slot 0 – Max Output',       notes: '0.0 to 1.0'),
   _ParamDescriptor(21,  'PID Slot 1 – P'),
   _ParamDescriptor(22,  'PID Slot 1 – I'),
   _ParamDescriptor(23,  'PID Slot 1 – D'),
@@ -1049,10 +1049,21 @@ class _ParamResult {
   String get displayValue {
     if (error != null) return '—';
     if (value == null) return '—';
-    // Show integers without decimals when the value is whole-number.
-    final v = value!;
-    return v == v.truncateToDouble() ? v.toInt().toString() : v.toStringAsFixed(6).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+    return _formatParamValue(value!);
   }
+}
+
+/// Format a parameter value for display.
+///
+/// Whole-number values are shown without a decimal point (e.g. "1" not
+/// "1.000000"). Fractional values are shown with up to 6 significant digits,
+/// trailing zeros removed.
+String _formatParamValue(double v) {
+  if (v == v.truncateToDouble()) return v.toInt().toString();
+  return v
+      .toStringAsFixed(6)
+      .replaceAll(RegExp(r'0+$'), '')
+      .replaceAll(RegExp(r'\.$'), '');
 }
 
 /// Dialog that reads every known SPARK parameter and shows them in a table.
@@ -1086,6 +1097,8 @@ class _AllRegistersDialogState extends State<_AllRegistersDialog> {
     final wasRunning = widget.device.heartbeat.isRunning;
     if (!wasRunning) {
       widget.device.heartbeat.start(enabled: false);
+      // Allow the controller time to become responsive after heartbeat starts.
+      // 200 ms matches the same delay used elsewhere in the app during connect.
       await Future.delayed(const Duration(milliseconds: 200));
     }
 
