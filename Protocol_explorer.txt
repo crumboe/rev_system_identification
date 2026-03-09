@@ -1,0 +1,173 @@
+╔══════════════════════════════════════════════════════════╗
+║     CAN Protocol Explorer v4 — Diagnostic Report       ║
+╚══════════════════════════════════════════════════════════╝
+Time: 2026-03-09 09:57:00.056098
+Protocol mode: SLCAN text
+Transport verified: true
+Detected device ID: 7
+
+┌─────────────────────────────────────────────────────────┐
+│ Summary                                                 │
+├─────────────────────────────────────────────────────────┤
+│ [OK ] Transport Verification                              │
+│ [OK ] System ID Query (devId=7)                           │
+│ [OK ] System ID Query (devId=0)                           │
+│ [OK ] Param WRITE (0x0E) idleMode=brake devId=7           │
+│ [OK ] Param WRITE (0x0E) idleMode=brake devId=0           │
+│ [OK ] Param READ Modern (0x0F) paramId=0 devId=7          │
+│ [OK ] Param READ Modern (0x0F) paramId=0 devId=0          │
+│ [OK ] Param READ Modern (0x0F) paramId=2 devId=7          │
+│ [OK ] Param READ Legacy (0x01) paramId=0 devId=7          │
+│ [OK ] Param READ (0x0F) USB cmdType=1                     │
+│ [OK ] Identify (apiClass=0x07, apiIndex=0x07)             │
+│ [OK ] Full Traffic Capture (5s passive)                   │
+└─────────────────────────────────────────────────────────┘
+
+[Transport Verification]
+  Listen for 3 seconds — expect status frames on apiClass=0x2E
+  Elapsed: 3001 ms
+  Frames captured: 915
+  Status frames: 912 (apiClasses: 0x2e)
+  NON-STATUS frames: 3
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 3 non-status frame(s)
+
+[System ID Query (devId=7)]
+  System command that should produce a response with the CAN ID
+  TX arbId: 0x02050987  apiClass=0x2 apiIndex=0x6 devId=7
+  TX payload: 
+  Elapsed: 1501 ms
+  Frames captured: 459
+  Status frames: 458 (apiClasses: 0x2e)
+  NON-STATUS frames: 1
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 1 non-status frame(s)
+
+[System ID Query (devId=0)]
+  Same command but addressed to device 0 (USB convention)
+  TX arbId: 0x02050980  apiClass=0x2 apiIndex=0x6 devId=0
+  TX payload: 
+  Elapsed: 1501 ms
+  Frames captured: 460
+  Status frames: 458 (apiClasses: 0x2e)
+  NON-STATUS frames: 2
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 2 non-status frame(s)
+
+[Param WRITE (0x0E) idleMode=brake devId=7]
+  Modern write protocol. Expect response on apiClass=0x0E, apiIndex=0x01
+  TX arbId: 0x02053807  apiClass=0xe apiIndex=0x0 devId=7
+  TX payload: 06 01 00 00 00 00 00 00
+  Elapsed: 1501 ms
+  Frames captured: 458
+  Status frames: 457 (apiClasses: 0x2e)
+  NON-STATUS frames: 1
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 1 non-status frame(s)
+
+[Param WRITE (0x0E) idleMode=brake devId=0]
+  Same write but addressed to device 0
+  TX arbId: 0x02053800  apiClass=0xe apiIndex=0x0 devId=0
+  TX payload: 06 01 00 00 00 00 00 00
+  Elapsed: 1501 ms
+  Frames captured: 459
+  Status frames: 457 (apiClasses: 0x2e)
+  NON-STATUS frames: 2
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 2 non-status frame(s)
+
+[Param READ Modern (0x0F) paramId=0 devId=7]
+  Modern read. Expect response on apiClass=0x0F, apiIndex=0x01
+  TX arbId: 0x02053c07  apiClass=0xf apiIndex=0x0 devId=7
+  TX payload: 00 00 00 00 00 00 00 00
+  Elapsed: 1501 ms
+  Frames captured: 457
+  Status frames: 456 (apiClasses: 0x2e)
+  NON-STATUS frames: 1
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 1 non-status frame(s)
+
+[Param READ Modern (0x0F) paramId=0 devId=0]
+  Same read but addressed to device 0
+  TX arbId: 0x02053c00  apiClass=0xf apiIndex=0x0 devId=0
+  TX payload: 00 00 00 00 00 00 00 00
+  Elapsed: 1500 ms
+  Frames captured: 458
+  Status frames: 456 (apiClasses: 0x2e)
+  NON-STATUS frames: 2
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 2 non-status frame(s)
+
+[Param READ Modern (0x0F) paramId=2 devId=7]
+  Read Motor Type parameter
+  TX arbId: 0x02053c07  apiClass=0xf apiIndex=0x0 devId=7
+  TX payload: 02 00 00 00 00 00 00 00
+  Elapsed: 1501 ms
+  Frames captured: 457
+  Status frames: 456 (apiClasses: 0x2e)
+  NON-STATUS frames: 1
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 1 non-status frame(s)
+
+[Param READ Legacy (0x01) paramId=0 devId=7]
+  Legacy read. Expect response on apiClass=0x01, apiIndex=0x01
+  TX arbId: 0x02050447  apiClass=0x1 apiIndex=0x1 devId=7
+  TX payload: 00 00 00 00 00 00 00 00
+  Elapsed: 1502 ms
+  Frames captured: 458
+  Status frames: 456 (apiClasses: 0x2e)
+  NON-STATUS frames: 2
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 2 non-status frame(s)
+
+[Param READ (0x0F) USB cmdType=1]
+  Same read but with USB command type 1 instead of 0
+  TX arbId: 0x02053c07  apiClass=0xf apiIndex=0x0 devId=7
+  TX payload: 00 00 00 00 00 00 00 00
+  Elapsed: 1501 ms
+  Frames captured: 457
+  Status frames: 456 (apiClasses: 0x2e)
+  NON-STATUS frames: 1
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 1 non-status frame(s)
+
+[Identify (apiClass=0x07, apiIndex=0x07)]
+  Fire-and-forget identify. Should blink LED, may or may not produce response
+  TX arbId: 0x02051dc7  apiClass=0x7 apiIndex=0x7 devId=7
+  TX payload: 
+  Elapsed: 1501 ms
+  Frames captured: 458
+  Status frames: 456 (apiClasses: 0x2e)
+  NON-STATUS frames: 2
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 2 non-status frame(s)
+
+[Full Traffic Capture (5s passive)]
+  No commands sent — just capturing all background traffic
+  Elapsed: 5001 ms
+  Frames captured: 1525
+  Status frames: 1520 (apiClasses: 0x2e)
+  NON-STATUS frames: 5
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+    -> arbId=0x0205bc07 type=1 apiClass=0x2f apiIndex=0x0 devId=7 payload=12 e2 2e be 00 00 00 00
+  RESULT: Got 5 non-status frame(s)
+
+
+═══ Analysis ═══
+Transport OK — status frames confirmed on apiClass=0x2E.
+
+Response matrix:
+  Parameter WRITE (0x0E):  RESPONSE
+  Parameter READ modern (0x0F): RESPONSE
+  Parameter READ legacy (0x01): RESPONSE
+  System ID Query (0x02):  RESPONSE

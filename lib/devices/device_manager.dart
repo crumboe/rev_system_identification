@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter/foundation.dart';
 
+import '../can/candle_connection.dart';
+import '../can/candle_ffi.dart';
 import '../can/interfaces.dart';
 import '../can/spark_connection.dart';
 import '../can/spark_protocol.dart';
@@ -49,6 +51,15 @@ class PortInfo {
   String toString() => '$name ($description)';
 }
 
+/// The type of connection used to communicate with a SPARK controller.
+enum ConnectionType {
+  /// Bidirectional CAN via Candle/WinUSB (MI_00). Full param read/write.
+  candle,
+  /// Serial SLCAN (CDC COM port). Status broadcast + commands, limited
+  /// response reception.
+  serial,
+}
+
 /// Represents a fully-connected SPARK controller with all API layers.
 class SparkDevice {
   final ISparkConnection connection;
@@ -61,6 +72,9 @@ class SparkDevice {
 
   /// The CAN device ID (6-bit, 0–63).
   int canId;
+
+  /// The type of connection used (Candle WinUSB or serial SLCAN).
+  final ConnectionType connectionType;
 
   /// Whether this device is the leader in follower configurations.
   bool isLeader;
@@ -75,6 +89,7 @@ class SparkDevice {
     required this.control,
     this.label = 'Motor',
     this.canId = 0,
+    this.connectionType = ConnectionType.serial,
     this.isLeader = true,
     this.isSimulated = false,
   });
@@ -137,10 +152,96 @@ class DeviceManager {
   }
 
   // -----------------------------------------------------------------------
+  // Candle (WinUSB) device enumeration
+  // -----------------------------------------------------------------------
+
+  /// Whether CANBridge.dll is available (REV Hardware Client installed).
+  bool get isCandleAvailable => CandleApi.isAvailable;
+
+  /// Scan for Candle/WinUSB CAN devices.
+  ///
+  /// Returns a list of discovered CAN devices. Empty if CANBridge.dll is
+  /// unavailable or no WinUSB devices are found.
+  List<CandleDeviceInfo> scanCandleDevices() {
+    return CandleConnection.scanDevices();
+  }
+
+  // -----------------------------------------------------------------------
   // Connection
   // -----------------------------------------------------------------------
 
-  /// Connect to a SPARK controller on the given COM port.
+  /// Auto-connect to a SPARK controller using the best available method.
+  ///
+  /// Tries Candle (WinUSB, bidirectional CAN) first, then falls back to the
+  /// serial SLCAN path.  This mirrors how the REV Hardware Client discovers
+  /// devices — if the user has it installed, we get the same quality of
+  /// connection.
+  ///
+  /// Returns the connected [SparkDevice].
+  /// Throws if no SPARK device could be found or connected.
+  Future<SparkDevice> autoConnect({String label = 'Motor'}) async {
+    // 1. Try Candle (WinUSB) first — gives full bidirectional CAN.
+    try {
+      final candleDevices = scanCandleDevices();
+      if (candleDevices.isNotEmpty) {
+        debugPrint(
+          '[DeviceManager] Found ${candleDevices.length} Candle device(s), '
+          'connecting via WinUSB…',
+        );
+        return await connectCandle(
+          deviceIndex: candleDevices.first.index,
+          deviceName: candleDevices.first.name,
+          label: label,
+        );
+      }
+    } catch (e) {
+      debugPrint('[DeviceManager] Candle connect failed: $e — trying serial…');
+    }
+
+    // 2. Fall back to serial SLCAN.
+    final ports = scanPorts();
+    final sparkPorts = ports.where((p) => p.isLikelySpark).toList();
+    final targetPorts = sparkPorts.isNotEmpty ? sparkPorts : ports;
+
+    if (targetPorts.isEmpty) {
+      throw StateError(
+        'No SPARK controller found. Check USB connection and ensure the '
+        'device is powered on.',
+      );
+    }
+
+    return await connect(targetPorts.first.name, label: label);
+  }
+
+  /// Connect to a SPARK controller via the Candle (WinUSB) interface.
+  ///
+  /// This gives full bidirectional CAN communication — parameter read/write,
+  /// confirmed motor control, etc.  Requires REV Hardware Client installed.
+  Future<SparkDevice> connectCandle({
+    int deviceIndex = 0,
+    String? deviceName,
+    String label = 'Motor',
+  }) async {
+    final connection = CandleConnection.create(
+      deviceIndex: deviceIndex,
+      deviceName: deviceName,
+    );
+    if (connection == null) {
+      throw StateError(
+        'CANBridge.dll not found. Install the REV Hardware Client to enable '
+        'bidirectional CAN communication.',
+      );
+    }
+    connection.open();
+
+    return _initializeDevice(
+      connection,
+      connectionType: ConnectionType.candle,
+      label: label,
+    );
+  }
+
+  /// Connect to a SPARK controller on the given COM port (serial SLCAN).
   ///
   /// Reads the device's CAN ID automatically after connecting.  First tries
   /// device ID 0 (up to three times), then sweeps IDs 0–62 in case the
@@ -156,6 +257,19 @@ class DeviceManager {
     final connection = SparkConnection.fromPortName(portName);
     connection.open();
 
+    return _initializeDevice(
+      connection,
+      connectionType: ConnectionType.serial,
+      label: label,
+    );
+  }
+
+  /// Shared initialization: heartbeat, CAN ID read, API setup.
+  Future<SparkDevice> _initializeDevice(
+    ISparkConnection connection, {
+    required ConnectionType connectionType,
+    required String label,
+  }) async {
     final heartbeat = HeartbeatManager(connection);
     final parameters = ParameterApi(connection);
     final control = ControlApi(connection);
@@ -165,6 +279,7 @@ class DeviceManager {
       heartbeat: heartbeat,
       parameters: parameters,
       control: control,
+      connectionType: connectionType,
       label: label,
     );
 
@@ -198,8 +313,8 @@ class DeviceManager {
     // USB (despite the spec saying it is "don't care").
     if (!found) {
       debugPrint(
-        '[DeviceManager] device ID 0 did not respond on $portName — '
-        'sweeping IDs 0–62…',
+        '[DeviceManager] device ID 0 did not respond on '
+        '${connection.portName} — sweeping IDs 0–62…',
       );
       final sweepResult = await _sweepForCanId(connection);
       if (sweepResult != null) {
@@ -216,7 +331,8 @@ class DeviceManager {
           'a known CAN ID. If this persists, power-cycle the controller '
           'and reconnect (a previous CAN-bus connection can lock out USB).';
       debugPrint(
-        '[DeviceManager] getCanId failed after sweep on $portName',
+        '[DeviceManager] getCanId failed after sweep on '
+        '${connection.portName}',
       );
     } else {
       // Rebind APIs to the discovered CAN ID so addressed commands
@@ -389,28 +505,31 @@ class DeviceManager {
   ///
   /// Uses a shorter timeout per attempt to keep the total sweep under ~7 s.
   Future<int?> _sweepForCanId(ISparkConnection conn) async {
-    const matchMask = 0x1FFFFFFF;
+    const matchMask = 0x1FFFFFC0;
     for (var id = 0; id <= kMaxCanDeviceId; id++) {
       try {
         final requestArb = buildArbId(
           apiClass: kApiClassParameterRead,
-          apiIndex: (kParamCanId ~/ 2) & 0x0F,
+          apiIndex: kParamReadIndexRequest,
           deviceId: id,
         );
         final expectedArb = buildArbId(
-          apiClass: kApiClassParameterRead | 0x20,
-          apiIndex: (kParamCanId ~/ 2) & 0x0F,
+          apiClass: kApiClassParameterRead,
+          apiIndex: kParamReadIndexResponse,
           deviceId: id,
         );
 
-        conn.sendCommand(requestArb, Uint8List(8));
+        final payload = Uint8List(8);
+        payload[0] = kParamCanId & 0xFF;
+        conn.sendCommand(requestArb, payload);
 
         final response = await conn.responses
-            .where((r) => (r.arbId & matchMask) == expectedArb)
+            .where((r) => (r.arbId & matchMask) == (expectedArb & matchMask))
             .first
             .timeout(const Duration(milliseconds: 100));
 
-        final canId = readUint32(response.payload, 0);
+        // Response: [paramId, paramType, value(4), ...]
+        final canId = readUint32(response.payload, 2);
         if (canId < 0 || canId > kMaxCanDeviceId) {
           continue;
         }

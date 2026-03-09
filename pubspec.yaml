@@ -38,6 +38,9 @@ dependencies:
   # Serial port communication
   flutter_libserialport: ^0.4.0
 
+  # FFI for native DLL bindings (CANBridge/Candle)
+  ffi: ^2.1.0
+
   # State management
   flutter_riverpod: ^2.6.0
   riverpod_annotation: ^2.6.0

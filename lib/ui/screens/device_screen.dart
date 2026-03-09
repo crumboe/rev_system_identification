@@ -6,6 +6,11 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../can/can_diagnostic.dart';
+import '../../can/can_diagnostic_v4.dart';
+import '../../can/can_diagnostic_v5.dart';
+import '../../can/candle_connection.dart';
+import '../../can/spark_connection.dart';
 import '../../can/spark_protocol.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
@@ -20,8 +25,10 @@ class DeviceScreen extends ConsumerStatefulWidget {
 
 class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   List<PortInfo> _ports = [];
+  List<CandleDeviceInfo> _candleDevices = [];
   String? _selectedPort;
   bool _connecting = false;
+  bool _autoConnecting = false;
   String? _errorMessage;
 
   /// Sentinel port names for simulated devices.
@@ -41,6 +48,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     final dm = ref.read(deviceManagerProvider);
     setState(() {
       _ports = dm.scanPorts();
+      _candleDevices = dm.scanCandleDevices();
       _errorMessage = null;
     });
   }
@@ -88,6 +96,24 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
       setState(() {
         _connecting = false;
         _errorMessage = 'Failed to connect: $e';
+      });
+    }
+  }
+
+  Future<void> _autoConnect() async {
+    setState(() {
+      _autoConnecting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final dm = ref.read(deviceManagerProvider);
+      await dm.autoConnect(label: 'Leader');
+      setState(() => _autoConnecting = false);
+    } catch (e) {
+      setState(() {
+        _autoConnecting = false;
+        _errorMessage = 'Auto-connect failed: $e';
       });
     }
   }
@@ -146,6 +172,208 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     }
   }
 
+  Future<void> _runCanDiagnostic(SparkDevice device) async {
+    final logLines = <String>[];
+    final diag = CanDiagnostic(
+      device.connection,
+      log: (msg) {
+        logLines.add(msg);
+        debugPrint('[CAN_DIAG] $msg');
+      },
+    );
+
+    // Start heartbeat if needed so the controller is responsive.
+    final wasRunning = device.heartbeat.isRunning;
+    if (!wasRunning) {
+      device.heartbeat.start(enabled: false);
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    final report = await diag.run(deviceId: device.canId);
+
+    if (!wasRunning) {
+      device.heartbeat.stop();
+    }
+
+    if (!mounted) return;
+
+    // Show result in a scrollable dialog.
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => ContentDialog(
+        title: const Text('CAN Protocol Diagnostic'),
+        constraints: const BoxConstraints(maxWidth: 800, maxHeight: 600),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            report.fullReport,
+            style: const TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 12,
+            ),
+          ),
+        ),
+        actions: [
+          Button(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: report.fullReport));
+              if (ctx.mounted) {
+                displayInfoBar(ctx,
+                    builder: (ctx2, close) => const InfoBar(
+                          title: Text('Copied to clipboard'),
+                          severity: InfoBarSeverity.success,
+                        ));
+              }
+            },
+            child: const Text('Copy to Clipboard'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runProtocolExplorer(SparkDevice device) async {
+    final logLines = <String>[];
+    final diag = CanDiagnosticV4(
+      device.connection,
+      log: (msg) {
+        logLines.add(msg);
+        debugPrint('[V4_DIAG] $msg');
+      },
+    );
+
+    // Start heartbeat if needed so the controller is responsive.
+    final wasRunning = device.heartbeat.isRunning;
+    if (!wasRunning) {
+      device.heartbeat.start(enabled: false);
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    // Detect protocol mode from the real SparkConnection if available.
+    String modeHint = 'unknown (interface)';
+    final conn = device.connection;
+    if (conn is SparkConnection) {
+      modeHint = conn.protocolModeDescription;
+    }
+
+    final report = await diag.run(
+      deviceId: device.canId,
+      protocolModeHint: modeHint,
+    );
+
+    if (!wasRunning) {
+      device.heartbeat.stop();
+    }
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => ContentDialog(
+        title: const Text('Protocol Explorer v4'),
+        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 700),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            report.fullReport,
+            style: const TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 11,
+            ),
+          ),
+        ),
+        actions: [
+          Button(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: report.fullReport));
+              if (ctx.mounted) {
+                displayInfoBar(ctx,
+                    builder: (ctx2, close) => const InfoBar(
+                          title: Text('Copied to clipboard'),
+                          severity: InfoBarSeverity.success,
+                        ));
+              }
+            },
+            child: const Text('Copy to Clipboard'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runRawDiagnostic(SparkDevice device) async {
+    final logLines = <String>[];
+    final conn = device.connection;
+    if (conn is! SparkConnection) return;
+
+    final diag = CanDiagnosticV5(
+      conn,
+      log: (msg) {
+        logLines.add(msg);
+        debugPrint('[V5_DIAG] $msg');
+      },
+    );
+
+    final wasRunning = device.heartbeat.isRunning;
+    if (!wasRunning) {
+      device.heartbeat.start(enabled: false);
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    final report = await diag.run(
+      deviceId: device.canId,
+      protocolModeHint: conn.protocolModeDescription,
+    );
+
+    if (!wasRunning) {
+      device.heartbeat.stop();
+    }
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => ContentDialog(
+        title: const Text('Raw Byte Diagnostic v5'),
+        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 700),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            report.fullReport,
+            style: const TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 11,
+            ),
+          ),
+        ),
+        actions: [
+          Button(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: report.fullReport));
+              if (ctx.mounted) {
+                displayInfoBar(ctx,
+                    builder: (ctx2, close) => const InfoBar(
+                          title: Text('Copied to clipboard'),
+                          severity: InfoBarSeverity.success,
+                        ));
+              }
+            },
+            child: const Text('Copy to Clipboard'),
+          ),
+          Button(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final dm = ref.watch(deviceManagerProvider);
@@ -154,12 +382,67 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     return ScaffoldPage.scrollable(
       header: const PageHeader(title: Text('Device Setup')),
       children: [
-        // Port selection section
+        // Auto-connect section
         const Text(
-          'Serial Port',
+          'Connect',
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 8),
+        if (_candleDevices.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: InfoBar(
+              title: const Text('REV Hardware Client detected'),
+              content: Text(
+                'Found ${_candleDevices.length} CAN device(s) via WinUSB. '
+                'Auto Connect will use bidirectional CAN for full '
+                'parameter read/write support.',
+              ),
+              severity: InfoBarSeverity.success,
+            ),
+          ),
+        Row(
+          children: [
+            FilledButton(
+              onPressed:
+                  !_connecting && !_autoConnecting ? _autoConnect : null,
+              child: _autoConnecting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: ProgressRing(strokeWidth: 2),
+                    )
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(FluentIcons.plug_connected, size: 14),
+                        SizedBox(width: 6),
+                        Text('Auto Connect'),
+                      ],
+                    ),
+            ),
+            const SizedBox(width: 8),
+            Button(
+              onPressed: _refreshPorts,
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(FluentIcons.refresh, size: 14),
+                  SizedBox(width: 6),
+                  Text('Refresh'),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // Manual port selection (fallback / advanced)
+        const Text(
+          'Manual Port Selection',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
         Row(
           children: [
             Flexible(
@@ -183,19 +466,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             ),
             const SizedBox(width: 8),
             Button(
-              onPressed: _refreshPorts,
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(FluentIcons.refresh, size: 14),
-                  SizedBox(width: 6),
-                  Text('Refresh'),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: _selectedPort != null && !_connecting
+              onPressed: _selectedPort != null && !_connecting && !_autoConnecting
                   ? _connect
                   : null,
               child: _connecting
@@ -246,6 +517,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     await dm.reReadCanId(device);
                     setState(() {});
                   },
+                  onRunDiagnostic: () => _runCanDiagnostic(device),
+                  onRunExplorer: () => _runProtocolExplorer(device),
+                  onRunRawDiag: () => _runRawDiagnostic(device),
                 ),
                 if (device.isConnected)
                   _DeviceConfigPanel(device: device),
@@ -291,12 +565,18 @@ class _DeviceCard extends StatefulWidget {
   final VoidCallback onDisconnect;
   final VoidCallback onIdentify;
   final Future<void> Function() onReReadCanId;
+  final Future<void> Function() onRunDiagnostic;
+  final Future<void> Function() onRunExplorer;
+  final Future<void> Function() onRunRawDiag;
 
   const _DeviceCard({
     required this.device,
     required this.onDisconnect,
     required this.onIdentify,
     required this.onReReadCanId,
+    required this.onRunDiagnostic,
+    required this.onRunExplorer,
+    required this.onRunRawDiag,
   });
 
   @override
@@ -305,6 +585,9 @@ class _DeviceCard extends StatefulWidget {
 
 class _DeviceCardState extends State<_DeviceCard> {
   bool _reReading = false;
+  bool _runningDiag = false;
+  bool _runningExplorer = false;
+  bool _runningRawDiag = false;
 
   Future<void> _handleReReadCanId() async {
     setState(() => _reReading = true);
@@ -406,6 +689,36 @@ class _DeviceCardState extends State<_DeviceCard> {
                               ),
                             ),
                           ],
+                          if (!widget.device.isSimulated) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: widget.device.connectionType ==
+                                        ConnectionType.candle
+                                    ? Colors.successPrimaryColor
+                                        .withValues(alpha: 0.15)
+                                    : theme.accentColor
+                                        .withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                widget.device.connectionType ==
+                                        ConnectionType.candle
+                                    ? 'CAN (WinUSB)'
+                                    : 'SERIAL',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  color: widget.device.connectionType ==
+                                          ConnectionType.candle
+                                      ? Colors.successPrimaryColor
+                                      : theme.accentColor,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       Text(
@@ -439,6 +752,70 @@ class _DeviceCardState extends State<_DeviceCard> {
                 Button(
                   onPressed: widget.onIdentify,
                   child: const Text('Identify'),
+                ),
+                const SizedBox(width: 8),
+                Button(
+                  onPressed: _runningDiag
+                      ? null
+                      : () async {
+                          setState(() => _runningDiag = true);
+                          try {
+                            await widget.onRunDiagnostic();
+                          } finally {
+                            if (mounted) setState(() => _runningDiag = false);
+                          }
+                        },
+                  child: _runningDiag
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: ProgressRing(strokeWidth: 2),
+                        )
+                      : const Text('CAN Diagnostic'),
+                ),
+                const SizedBox(width: 8),
+                Button(
+                  onPressed: _runningExplorer
+                      ? null
+                      : () async {
+                          setState(() => _runningExplorer = true);
+                          try {
+                            await widget.onRunExplorer();
+                          } finally {
+                            if (mounted) {
+                              setState(() => _runningExplorer = false);
+                            }
+                          }
+                        },
+                  child: _runningExplorer
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: ProgressRing(strokeWidth: 2),
+                        )
+                      : const Text('Protocol Explorer'),
+                ),
+                const SizedBox(width: 8),
+                Button(
+                  onPressed: _runningRawDiag
+                      ? null
+                      : () async {
+                          setState(() => _runningRawDiag = true);
+                          try {
+                            await widget.onRunRawDiag();
+                          } finally {
+                            if (mounted) {
+                              setState(() => _runningRawDiag = false);
+                            }
+                          }
+                        },
+                  child: _runningRawDiag
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: ProgressRing(strokeWidth: 2),
+                        )
+                      : const Text('Raw Byte Diag'),
                 ),
                 const SizedBox(width: 8),
                 Button(
@@ -1242,7 +1619,7 @@ class _RegistersTable extends StatelessWidget {
                       r.displayValue,
                       style: monoStyle?.copyWith(
                         color: r.error != null
-                            ? Colors.errorSecondary
+                            ? Colors.red
                             : null,
                       ),
                     ),

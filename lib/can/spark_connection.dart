@@ -3,15 +3,17 @@
 /// Opens a COM port at 115200 8N1, sends command packets, receives response
 /// packets, and demuxes status frames from ack/data responses.
 ///
-/// Two wire formats are supported and auto-detected on the first received
-/// data:
+/// The SPARK MAX uses SLCAN (Serial Line CAN) text protocol:
 ///
-/// * **Binary 12-byte packets** — the legacy SPARK USB-serial protocol.
-///   Each packet is a 4-byte command word (uint32 LE) + 8-byte payload.
+/// * **Commands** are sent as SLCAN extended frames:
+///   `T<8-hex arb-ID><DLC><hex data>\r`
 ///
-/// * **SLCAN text frames** — the Serial Line CAN protocol used by some
-///   firmware revisions.  Each frame is a CR-terminated ASCII string:
-///   `T<8-hex arb-ID><DLC><hex data>\r[\n]`.
+/// * **Status / broadcast frames** come back as SLCAN text.
+///
+/// * **Command responses** may arrive as SLCAN text or (potentially)
+///   as binary 12-byte packets.
+///
+/// The receive path handles both SLCAN text and binary packets to be safe.
 library;
 
 import 'dart:async';
@@ -38,23 +40,30 @@ class SparkConnection implements ISparkConnection {
   StatusFrame1? lastStatus1;
   StatusFrame2? lastStatus2;
 
-  /// Raw byte buffer for reassembling packets.
-  final _rxBuffer = BytesBuilder(copy: false);
+  /// Raw byte buffer for incoming data — processes both SLCAN text and
+  /// binary 12-byte packets in a unified stream.
+  final _rxBuf = <int>[];
 
-  /// Whether the controller uses SLCAN text protocol instead of binary.
-  bool _slcanMode = false;
+  /// Raw byte capture — when enabled, every received byte is also stored here
+  /// for diagnostics to inspect before/after the parser processes them.
+  final _rawCapture = <int>[];
+  bool rawCaptureEnabled = false;
 
-  /// Whether the protocol has been auto-detected.
-  bool _protocolDetected = false;
-
-  /// Text accumulator for SLCAN line assembly.
-  String _slcanText = '';
+  /// Take a snapshot of captured raw bytes and clear the buffer.
+  List<int> takeRawCapture() {
+    final snapshot = List<int>.from(_rawCapture);
+    _rawCapture.clear();
+    return snapshot;
+  }
 
   bool _isOpen = false;
   bool get isOpen => _isOpen;
 
   /// The COM port name (e.g. "COM3").
   String get portName => _port.name ?? 'unknown';
+
+  /// Human-readable description of the current protocol mode.
+  String get protocolModeDescription => 'SLCAN TX, hybrid SLCAN+binary RX';
 
   SparkConnection(this._port);
 
@@ -115,43 +124,27 @@ class SparkConnection implements ISparkConnection {
   }
 
   // -------------------------------------------------------------------------
-  // Sending
+  // Sending — SLCAN text frames
   // -------------------------------------------------------------------------
 
-  /// Write an SLCAN text frame to the serial port.
-  void _writeSlcanFrame(String frame) {
-    _port.write(Uint8List.fromList(frame.codeUnits));
-  }
-
-  /// Send a raw 12-byte packet.
+  /// Send raw bytes to the serial port.
   ///
-  /// In SLCAN mode the binary packet is transparently re-encoded as an
-  /// SLCAN text frame before being written to the port.
+  /// Used by the heartbeat (which sends a binary 12-byte packet) and by
+  /// diagnostics that need to test raw binary frames.
   void sendRaw(Uint8List packet) {
-    assert(packet.length == 12);
     if (!_isOpen) throw StateError('Port is not open');
-    if (_slcanMode) {
-      // Decode the binary packet to extract arb ID + payload, then
-      // re-encode as SLCAN text.
-      final decoded = decodePacket(packet);
-      _writeSlcanFrame(encodeSlcanFrame(decoded.arbId, decoded.payload));
-    } else {
-      _port.write(packet);
-    }
+    _port.write(packet);
   }
 
   /// Send a command to the connected controller.
   ///
   /// [arbId] is the 29-bit CAN arb ID, [payload] is ≤ 8 bytes.
-  /// In SLCAN mode the command is sent as an SLCAN text frame.
+  /// Encodes as an SLCAN extended frame (`T<arbId><DLC><data>\r`) and
+  /// writes the ASCII text to the serial port.
   void sendCommand(int arbId, Uint8List payload) {
     CommsLog.instance.logTx(portName, arbId, payload);
-    if (_slcanMode) {
-      if (!_isOpen) throw StateError('Port is not open');
-      _writeSlcanFrame(encodeSlcanFrame(arbId, payload));
-    } else {
-      sendRaw(encodePacket(arbId, payload));
-    }
+    final slcan = encodeSlcanFrame(arbId, payload);
+    _port.write(Uint8List.fromList(slcan.codeUnits));
   }
 
   /// Send a command and wait for the ack/data response.
@@ -159,8 +152,7 @@ class SparkConnection implements ISparkConnection {
   /// Times out after [timeout] (default 500 ms).
   ///
   /// Response matching ignores the device-ID field (lower 6 bits of the arb
-  /// ID) because the controller echoes its real CAN ID in every response,
-  /// while outbound USB commands always use device ID 0 (DNC over USB).
+  /// ID) because the controller echoes its real CAN ID in every response.
   /// Matching on the remaining bits — device type, manufacturer, API class,
   /// and API index — is specific enough to identify the correct response.
   Future<SparkResponse> sendAndReceive(
@@ -213,81 +205,123 @@ class SparkConnection implements ISparkConnection {
   /// Once true, we prefer new-protocol data over legacy data.
   bool _usingNewProtocol = false;
 
+  /// Hybrid receive handler — processes mixed SLCAN text and binary packets
+  /// from the same byte stream.
+  ///
+  /// SLCAN frames always start with an ASCII letter ('T', 't', 'r', 'R',
+  /// etc.) and end with CR (`\r`, 0x0D).  Binary 12-byte response packets
+  /// start with a uint32-LE command word whose MSB (byte index 3) has
+  /// bits 31:29 = responseType (0 or 1) and bits 28:24 = devType (0x02),
+  /// so byte[3] is always in the range 0x00–0x3F — never a printable ASCII
+  /// letter.  We use this to distinguish the two formats.
   void _onDataReceived(Uint8List data) {
-    // ----- SLCAN mode: accumulate text and extract CR-delimited lines ------
-    if (_slcanMode) {
-      _slcanText += String.fromCharCodes(data);
-      _processSlcanLines();
-      return;
-    }
-
-    // ----- Auto-detect protocol from the first data received ---------------
-    _rxBuffer.add(data);
-
-    if (!_protocolDetected && _rxBuffer.length >= 4) {
-      final peek = _rxBuffer.takeBytes();
-      if (isSlcanData(Uint8List.fromList(peek))) {
-        _slcanMode = true;
-        _protocolDetected = true;
-        CommsLog.instance.logInfo(
-          portName,
-          'Auto-detected SLCAN text protocol',
-        );
-        _slcanText = String.fromCharCodes(peek);
-        _processSlcanLines();
-        return;
-      }
-      // Valid binary — put the bytes back and continue as binary.
-      _protocolDetected = true;
-      _rxBuffer.add(peek);
-    }
-
-    if (!_protocolDetected) return; // need more data
-
-    // ----- Binary mode: extract 12-byte packets ----------------------------
-    _processBinaryPackets();
+    if (rawCaptureEnabled) _rawCapture.addAll(data);
+    _rxBuf.addAll(data);
+    _drainRxBuf();
   }
 
-  /// Process complete SLCAN text lines from [_slcanText].
-  void _processSlcanLines() {
-    while (true) {
-      final crIdx = _slcanText.indexOf('\r');
-      if (crIdx == -1) break;
+  /// Consume as many complete frames (SLCAN or binary) from [_rxBuf] as
+  /// possible.
+  void _drainRxBuf() {
+    while (_rxBuf.isNotEmpty) {
+      final first = _rxBuf.first;
 
-      final line = _slcanText.substring(0, crIdx);
-
-      // Consume \r and optional \n.
-      var next = crIdx + 1;
-      if (next < _slcanText.length && _slcanText.codeUnitAt(next) == 0x0A) {
-        next++;
-      }
-      _slcanText = _slcanText.substring(next);
-
-      if (line.isEmpty) continue;
-
-      final response = decodeSlcanFrame(line);
-      if (response != null) {
-        _processResponse(response);
+      if (first == 0x54 || first == 0x74) {
+        // 'T' (0x54) or 't' (0x74) — SLCAN extended/standard frame.
+        if (!_tryParseSlcanLine()) return; // need more data
+      } else if (first == 0x0D || first == 0x0A) {
+        // Stray CR/LF — skip.
+        _rxBuf.removeAt(0);
+      } else if (_looksLikeBinarySparkPacket()) {
+        // Binary 12-byte response whose first byte may be printable ASCII.
+        // Must check this BEFORE the generic printable-ASCII skip, because
+        // binary responses with apiIndex=1 & deviceId=7 have byte[0]=0x47
+        // ('G') which falls in the printable range.
+        if (!_tryParseBinaryPacket()) return; // need more data
+      } else if (first >= 0x20 && first < 0x7F) {
+        // Other printable ASCII — likely an SLCAN command echo
+        // (e.g. 'V', 'N', 'O', 'S', 'C', 'z', 'Z').
+        // Consume until CR, then discard.
+        if (!_skipToNextCr()) return; // need more data
+      } else {
+        // Non-printable byte that doesn't match a SPARK header — could be
+        // a binary packet from a non-SPARK device or corrupted data.
+        if (!_tryParseBinaryPacket()) return; // need more data
       }
     }
   }
 
-  /// Process complete binary 12-byte packets from [_rxBuffer].
-  void _processBinaryPackets() {
-    while (_rxBuffer.length >= 12) {
-      final bytes = _rxBuffer.takeBytes();
-      final packet = Uint8List.sublistView(bytes, 0, 12);
-      final remainder = bytes.length > 12
-          ? Uint8List.sublistView(bytes, 12)
-          : null;
+  /// Check whether the bytes at the head of [_rxBuf] look like a binary
+  /// SPARK MAX response packet.
+  ///
+  /// Binary responses are 12 bytes: uint32-LE command word + 8-byte payload.
+  /// The command word is `(responseType << 29) | arbId` where the arbId
+  /// contains devType (bits 28:24) and manufacturer (bits 23:16).
+  ///
+  /// For SPARK MAX: devType=2, manufacturer=5.
+  /// In little-endian layout:
+  ///   byte[2] = manufacturer = 0x05
+  ///   byte[3] = (responseType << 5) | devType
+  ///           = 0x02 (rspType=0) or 0x22 (rspType=1)
+  bool _looksLikeBinarySparkPacket() {
+    if (_rxBuf.length < 4) return false;
+    return _rxBuf[2] == 0x05 &&
+        (_rxBuf[3] == 0x02 || _rxBuf[3] == 0x22);
+  }
 
-      final response = decodePacket(packet);
+  /// Try to extract a complete SLCAN line (up to CR) from [_rxBuf].
+  /// Returns false if we need more data.
+  bool _tryParseSlcanLine() {
+    final crIdx = _rxBuf.indexOf(0x0D); // '\r'
+    if (crIdx == -1) return false; // no complete line yet
+
+    final lineBytes = _rxBuf.sublist(0, crIdx);
+    // Remove the line + CR (and optional LF).
+    var consume = crIdx + 1;
+    if (consume < _rxBuf.length && _rxBuf[consume] == 0x0A) consume++;
+    _rxBuf.removeRange(0, consume);
+
+    final line = String.fromCharCodes(lineBytes);
+    if (line.isEmpty) return true;
+
+    final response = decodeSlcanFrame(line);
+    if (response != null) {
       _processResponse(response);
-
-      if (remainder != null && remainder.isNotEmpty) {
-        _rxBuffer.add(remainder);
-      }
+    } else {
+      CommsLog.instance.logInfo(
+        portName,
+        'Unrecognized SLCAN: "${line.length > 80 ? line.substring(0, 80) : line}"',
+      );
     }
+    return true;
+  }
+
+  /// Skip past an unrecognized ASCII line (up to CR).
+  bool _skipToNextCr() {
+    final crIdx = _rxBuf.indexOf(0x0D);
+    if (crIdx == -1) return false;
+    var consume = crIdx + 1;
+    if (consume < _rxBuf.length && _rxBuf[consume] == 0x0A) consume++;
+    final skipped = String.fromCharCodes(_rxBuf.sublist(0, crIdx));
+    _rxBuf.removeRange(0, consume);
+    CommsLog.instance.logInfo(
+      portName,
+      'Skipped non-frame text: "${skipped.length > 60 ? skipped.substring(0, 60) : skipped}"',
+    );
+    return true;
+  }
+
+  /// Try to extract a 12-byte binary packet from [_rxBuf].
+  /// Returns false if we need more data.
+  bool _tryParseBinaryPacket() {
+    if (_rxBuf.length < 12) return false;
+
+    final packetBytes = Uint8List.fromList(_rxBuf.sublist(0, 12));
+    _rxBuf.removeRange(0, 12);
+
+    final response = decodePacket(packetBytes);
+    _processResponse(response);
+    return true;
   }
 
   /// Process a single decoded response — shared by both binary and SLCAN

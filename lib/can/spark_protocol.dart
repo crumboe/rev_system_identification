@@ -45,12 +45,15 @@ const int kParamIndexBurnFlash = 0x02;
 //   index 0: write request
 //   index 1: write response
 //
-// Parameter reads use API class 0x0F, where each apiIndex corresponds to
-// a pair of parameter IDs: index N reads params (2N) and (2N+1).
+// Parameter reads use API class 0x0F:
+//   index 0: read request  (payload byte 0 = paramId)
+//   index 1: read response  (payload: paramId, paramType, value(4), ...)
 const int kApiClassParameterWrite = 0x0E;
 const int kApiClassParameterRead = 0x0F;
 const int kParamWriteIndexRequest = 0x00;
 const int kParamWriteIndexResponse = 0x01;
+const int kParamReadIndexRequest = 0x00;
+const int kParamReadIndexResponse = 0x01;
 
 // System API indices
 const int kSystemIndexIdentify = 0x00;

@@ -47,7 +47,7 @@ abstract class ISparkConnection {
   /// Dispose of resources permanently.
   void dispose();
 
-  /// Send a raw 12-byte packet.
+  /// Send raw bytes to the serial port.
   void sendRaw(Uint8List packet);
 
   /// Send a command (arb ID + payload).

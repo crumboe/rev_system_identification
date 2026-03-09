@@ -1,6 +1,6 @@
 /// High-level API for reading and writing SPARK controller parameters.
 ///
-/// Wraps the low-level CAN parameter protocol (API Class 0x01) with
+/// Uses the modern CAN parameter protocol (API Classes 0x0E/0x0F) with
 /// named getters/setters for commonly-used configuration values.
 library;
 
@@ -24,104 +24,77 @@ class ParameterApi implements IParameterApi {
   static const int _matchMask = 0x1FFFFFC0;
 
   /// Set a parameter by ID with a float32 value.
+  /// Set a parameter by ID with a float32 value.
+  ///
+  /// Uses the modern parameter-write protocol (apiClass 0x0E):
+  ///   request  — index 0, payload: [paramId, value(4), ...]
+  ///   response — index 1, payload: [paramId, paramType, value(4), resultCode]
   Future<SparkResponse> setParameter(int paramId, double value) async {
-    // Prefer modern firmware write frame (apiClass 0x0E, index 0).
-    // Fall back to legacy parameter-set on timeout.
-    try {
-      final requestArb = buildArbId(
-        apiClass: kApiClassParameterWrite,
-        apiIndex: kParamWriteIndexRequest,
-        deviceId: _deviceId,
-      );
-
-      final payload = Uint8List(8);
-      payload[0] = paramId & 0xFF;
-      final bd = ByteData.sublistView(payload);
-      // Modern protocol carries raw 32-bit parameter value. Encode known
-      // integer/bool params as uint32 to avoid type-mismatch rejects.
-      if (_isIntegerLikeParam(paramId)) {
-        bd.setUint32(1, value.round() & 0xFFFFFFFF, Endian.little);
-      } else {
-        bd.setFloat32(1, value, Endian.little);
-      }
-
-      final response = await _sendAndReceiveExpected(
-        requestArb,
-        payload,
-        expectedApiClass: kApiClassParameterWrite,
-        expectedApiIndex: kParamWriteIndexResponse,
-      );
-
-      // Modern write response: [paramId, paramType, value(4), resultCode]
-      if (response.payload.length >= 7) {
-        final resultCode = response.payload[6];
-        if (resultCode != 0) {
-          throw StateError(
-            'Parameter write failed (id=$paramId, resultCode=$resultCode)',
-          );
-        }
-      }
-
-      return response;
-    } on TimeoutException {
-      final arbId = buildArbId(
-        apiClass: kApiClassParameter,
-        apiIndex: kParamIndexSet,
-        deviceId: _deviceId,
-      );
-      final payload = buildParamSetPayload(value, paramId);
-      return _conn.sendAndReceive(arbId, payload);
-    }
-  }
-
-  /// Get a parameter by ID. Returns the float32 value from the response.
-  Future<double> getParameter(int paramId) async {
-    // Prefer the modern read-pair protocol used by >=25.0 firmware.
-    // If that times out, fall back to the legacy parameter-get frame.
-    try {
-      return await _getParameterModern(paramId);
-    } on TimeoutException {
-      // Legacy path for older firmware/protocol variants.
-      final arbId = buildArbId(
-        apiClass: kApiClassParameter,
-        apiIndex: kParamIndexGet,
-        deviceId: _deviceId,
-      );
-      final payload = buildParamGetPayload(paramId);
-      final response = await _conn.sendAndReceive(arbId, payload);
-      return readFloat32(response.payload, 0);
-    }
-  }
-
-  Future<double> _getParameterModern(int paramId) async {
-    final pairIndex = (paramId ~/ 2) & 0x0F;
-    final arbId = buildArbId(
-      apiClass: kApiClassParameterRead,
-      apiIndex: pairIndex,
+    final requestArb = buildArbId(
+      apiClass: kApiClassParameterWrite,
+      apiIndex: kParamWriteIndexRequest,
       deviceId: _deviceId,
     );
 
-    // Read-pair frames carry two raw uint32 parameter values in the response.
     final payload = Uint8List(8);
-    // Modern read responses arrive in API class 0x2F with same index.
+    payload[0] = paramId & 0xFF;
+    final bd = ByteData.sublistView(payload);
+    // Modern protocol carries raw 32-bit parameter value. Encode known
+    // integer/bool params as uint32 to avoid type-mismatch rejects.
+    if (_isIntegerLikeParam(paramId)) {
+      bd.setUint32(1, value.round() & 0xFFFFFFFF, Endian.little);
+    } else {
+      bd.setFloat32(1, value, Endian.little);
+    }
+
+    final response = await _sendAndReceiveExpected(
+      requestArb,
+      payload,
+      expectedApiClass: kApiClassParameterWrite,
+      expectedApiIndex: kParamWriteIndexResponse,
+    );
+
+    // Modern write response: [paramId, paramType, value(4), resultCode]
+    if (response.payload.length >= 7) {
+      final resultCode = response.payload[6];
+      if (resultCode != 0) {
+        throw StateError(
+          'Parameter write failed (id=$paramId, resultCode=$resultCode)',
+        );
+      }
+    }
+
+    return response;
+  }
+
+  /// Get a parameter by ID. Returns the numeric value from the response.
+  ///
+  /// Uses the modern parameter-read protocol (apiClass 0x0F, firmware ≥25.0):
+  ///   request  — index 0, payload byte 0 = paramId
+  ///   response — index 1, payload: [paramId, paramType, value(4), ...]
+  Future<double> getParameter(int paramId) async {
+    final arbId = buildArbId(
+      apiClass: kApiClassParameterRead,
+      apiIndex: kParamReadIndexRequest,
+      deviceId: _deviceId,
+    );
+
+    final payload = Uint8List(8);
+    payload[0] = paramId & 0xFF;
+
     final response = await _sendAndReceiveExpected(
       arbId,
       payload,
-      expectedApiClass: kApiClassParameterRead | 0x20,
-      expectedApiIndex: pairIndex,
+      expectedApiClass: kApiClassParameterRead,
+      expectedApiIndex: kParamReadIndexResponse,
     );
 
-    final offset = (paramId & 1) == 0 ? 0 : 4;
-    final raw = readUint32(response.payload, offset);
-
-    // CAN ID is integer-typed in modern frames; do not reinterpret as float.
-    if (paramId == kParamCanId) {
-      return raw.toDouble();
+    // Modern response: [paramId, paramType, value(4 bytes), ...]
+    // Value starts at byte 2.
+    if (_isIntegerLikeParam(paramId) || paramId == kParamCanId) {
+      return readUint32(response.payload, 2).toDouble();
     }
-
-    // Most tunable parameters are float32; interpret raw bits as float.
-    final bytes = ByteData(4)..setUint32(0, raw, Endian.little);
-    return bytes.getFloat32(0, Endian.little);
+    return readFloat32(response.payload, 2);
   }
 
   Future<SparkResponse> _sendAndReceiveExpected(
@@ -163,33 +136,22 @@ class ParameterApi implements IParameterApi {
   }
 
   /// Burn all current parameters to flash (persist across power cycles).
+  ///
+  /// Uses the modern persist command: apiClass 0x01, index 0x03 with
+  /// response at 0x04.
   Future<SparkResponse> burnFlash() async {
-    // Modern persist command: apiClass 0x01, index 0x03 with response at 0x04.
-    try {
-      final modernArbId = buildArbId(
-        apiClass: kApiClassParameter,
-        apiIndex: 0x03,
-        deviceId: _deviceId,
-      );
-      return await _sendAndReceiveExpected(
-        modernArbId,
-        Uint8List(0),
-        expectedApiClass: kApiClassParameter,
-        expectedApiIndex: 0x04,
-        timeout: const Duration(seconds: 2),
-      );
-    } on TimeoutException {
-      final legacyArbId = buildArbId(
-        apiClass: kApiClassSystem,
-        apiIndex: kSystemIndexBurnFlash,
-        deviceId: _deviceId,
-      );
-      return _conn.sendAndReceive(
-        legacyArbId,
-        Uint8List(8),
-        timeout: const Duration(seconds: 2),
-      );
-    }
+    final modernArbId = buildArbId(
+      apiClass: kApiClassParameter,
+      apiIndex: 0x03,
+      deviceId: _deviceId,
+    );
+    return await _sendAndReceiveExpected(
+      modernArbId,
+      Uint8List(0),
+      expectedApiClass: kApiClassParameter,
+      expectedApiIndex: 0x04,
+      timeout: const Duration(seconds: 2),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -199,10 +161,7 @@ class ParameterApi implements IParameterApi {
   /// Read the device's CAN ID (parameter 0).
   Future<int> getCanId() async {
     try {
-      // For CAN ID specifically, do not fall back to legacy 0x01 polling
-      // because modern firmware commonly answers on 0x2F or only broadcasts
-      // status, which can otherwise generate repeated timeout spam.
-      final value = await _getParameterModern(kParamCanId);
+      final value = await getParameter(kParamCanId);
       final canId = value.toInt();
       if (canId >= 0 && canId <= kMaxCanDeviceId) {
         return canId;
@@ -212,8 +171,6 @@ class ParameterApi implements IParameterApi {
     }
 
     // Fallback: infer CAN ID from any inbound status frame's device-id bits.
-    // This avoids mis-reporting when a non-parameter DATA frame (e.g. 0x2F/0)
-    // is matched by firmware behavior differences.
     final response = await _conn.responses
         .where((r) =>
             r.apiClass == kApiClassNewStatus || r.apiClass == kApiClassStatus)

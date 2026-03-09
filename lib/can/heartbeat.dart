@@ -7,10 +7,8 @@ library;
 
 import 'dart:async';
 
-import 'comms_log.dart';
 import 'interfaces.dart';
 import 'spark_protocol.dart';
-import 'spark_connection.dart';
 
 /// Manages the FRC heartbeat for a [SparkConnection].
 ///
@@ -97,15 +95,9 @@ class HeartbeatManager implements IHeartbeatManager {
     final modeFlags = kHeartbeatFlagWatchdog | (enabled ? kHeartbeatFlagEnabled : 0);
 
     final payload = buildHeartbeatPayload(timestampMs, modeFlags: modeFlags);
-    final packet = encodePacket(kHeartbeatArbId, payload);
 
     try {
-      _connection.sendRaw(packet);
-      CommsLog.instance.logHeartbeat(
-        _connection.portName,
-        kHeartbeatArbId,
-        payload,
-      );
+      _connection.sendCommand(kHeartbeatArbId, payload);
     } catch (_) {
       // Connection may have been lost — caller should detect via
       // SparkConnection.isOpen and handle accordingly.
