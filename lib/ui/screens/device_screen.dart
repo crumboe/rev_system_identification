@@ -3,6 +3,7 @@
 library;
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../can/spark_protocol.dart';
@@ -788,6 +789,18 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
                           ],
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      Button(
+                        onPressed: _saving ? null : _showAllRegisters,
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(FluentIcons.table, size: 12),
+                            SizedBox(width: 4),
+                            Text('All Registers'),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                   if (_statusMessage != null) ...[
@@ -804,6 +817,18 @@ class _DeviceConfigPanelState extends State<_DeviceConfigPanel> {
                 ],
               ),
       ),
+    );
+  }
+
+  /// Open a popup that reads all known SPARK parameters and shows them in a
+  /// human-readable table. The table can be copied to the clipboard in
+  /// tab-separated format for pasting into a spreadsheet.
+  Future<void> _showAllRegisters() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => _AllRegistersDialog(device: widget.device),
     );
   }
 
@@ -936,5 +961,313 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
         _result = 'Error: $e';
       });
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// All Registers Dialog
+// ---------------------------------------------------------------------------
+
+/// One entry in the known-parameter catalogue.
+class _ParamDescriptor {
+  final int id;
+  final String name;
+  final String? notes;
+
+  const _ParamDescriptor(this.id, this.name, {this.notes});
+}
+
+/// Full catalogue of known SPARK controller parameters.
+const List<_ParamDescriptor> _kAllParams = [
+  _ParamDescriptor(0,   'CAN ID',                        notes: '0–62'),
+  _ParamDescriptor(2,   'Motor Type',                    notes: '0=Brushed, 1=Brushless'),
+  _ParamDescriptor(6,   'Idle Mode',                     notes: '0=Coast, 1=Brake'),
+  _ParamDescriptor(13,  'PID Slot 0 – P',                notes: 'Proportional gain'),
+  _ParamDescriptor(14,  'PID Slot 0 – I',                notes: 'Integral gain'),
+  _ParamDescriptor(15,  'PID Slot 0 – D',                notes: 'Derivative gain'),
+  _ParamDescriptor(16,  'PID Slot 0 – F / kV',           notes: 'Velocity feedforward'),
+  _ParamDescriptor(17,  'PID Slot 0 – I Zone',           notes: 'Integral zone'),
+  _ParamDescriptor(18,  'PID Slot 0 – D Filter',         notes: 'D-term filter'),
+  _ParamDescriptor(19,  'PID Slot 0 – Min Output',       notes: '−1.0 to 0.0'),
+  _ParamDescriptor(20,  'PID Slot 0 – Max Output',       notes: '0.0 to 1.0'),
+  _ParamDescriptor(21,  'PID Slot 1 – P'),
+  _ParamDescriptor(22,  'PID Slot 1 – I'),
+  _ParamDescriptor(23,  'PID Slot 1 – D'),
+  _ParamDescriptor(24,  'PID Slot 1 – F / kV'),
+  _ParamDescriptor(25,  'PID Slot 1 – I Zone'),
+  _ParamDescriptor(26,  'PID Slot 1 – D Filter'),
+  _ParamDescriptor(27,  'PID Slot 1 – Min Output'),
+  _ParamDescriptor(28,  'PID Slot 1 – Max Output'),
+  _ParamDescriptor(45,  'Motor Inverted',                notes: '0=Normal, 1=Inverted'),
+  _ParamDescriptor(54,  'Forward Soft Limit Enabled',    notes: '0=Disabled, 1=Enabled'),
+  _ParamDescriptor(55,  'Reverse Soft Limit Enabled',    notes: '0=Disabled, 1=Enabled'),
+  _ParamDescriptor(56,  'Open-Loop Ramp Rate (s)'),
+  _ParamDescriptor(59,  'Smart Current Stall Limit (A)'),
+  _ParamDescriptor(60,  'Smart Current Free Limit (A)'),
+  _ParamDescriptor(61,  'Smart Current Config'),
+  _ParamDescriptor(75,  'Compensated Nominal Voltage (V)'),
+  _ParamDescriptor(112, 'Position Conversion Factor'),
+  _ParamDescriptor(113, 'Velocity Conversion Factor'),
+  _ParamDescriptor(114, 'Closed-Loop Ramp Rate (s)'),
+  _ParamDescriptor(115, 'Forward Soft Limit (rot)'),
+  _ParamDescriptor(116, 'Reverse Soft Limit (rot)'),
+  _ParamDescriptor(155, 'Product ID',                    notes: 'Read-only'),
+  _ParamDescriptor(156, 'Firmware Major Version',        notes: 'Read-only'),
+  _ParamDescriptor(157, 'Firmware Minor Version',        notes: 'Read-only'),
+  _ParamDescriptor(166, 'MAXMotion Cruise Velocity'),
+  _ParamDescriptor(167, 'MAXMotion Max Acceleration'),
+  _ParamDescriptor(168, 'MAXMotion Max Jerk'),
+  _ParamDescriptor(169, 'MAXMotion Allowed Error'),
+  _ParamDescriptor(170, 'MAXMotion Position Mode',       notes: '0=Trapezoidal, 1=S-Curve'),
+  _ParamDescriptor(194, 'Follower Leader ID'),
+  _ParamDescriptor(195, 'Follower Config',               notes: '0x1A=REV, 0x1B=Talon'),
+  _ParamDescriptor(198, 'Parameter Table Version'),
+  _ParamDescriptor(204, 'Slot 0 FF – kS',               notes: 'Static friction (V)'),
+  _ParamDescriptor(205, 'Slot 0 FF – kA',               notes: 'Acceleration gain'),
+  _ParamDescriptor(206, 'Slot 0 FF – kG',               notes: 'Gravity compensation (V)'),
+  _ParamDescriptor(207, 'Slot 0 FF – kCos',             notes: 'Cosine gravity (V)'),
+  _ParamDescriptor(208, 'Slot 0 FF – kCos Ratio'),
+  _ParamDescriptor(209, 'Slot 1 FF – kS'),
+  _ParamDescriptor(210, 'Slot 1 FF – kA'),
+  _ParamDescriptor(211, 'Slot 1 FF – kG'),
+  _ParamDescriptor(212, 'Slot 1 FF – kCos'),
+  _ParamDescriptor(213, 'Slot 1 FF – kCos Ratio'),
+];
+
+/// Represents the read result for one parameter.
+class _ParamResult {
+  final _ParamDescriptor descriptor;
+  final double? value;   // null means the read failed
+  final String? error;
+
+  const _ParamResult({
+    required this.descriptor,
+    this.value,
+    this.error,
+  });
+
+  String get displayValue {
+    if (error != null) return '—';
+    if (value == null) return '—';
+    return _formatParamValue(value!);
+  }
+}
+
+/// Format a parameter value for display.
+///
+/// Whole-number values are shown without a decimal point (e.g. "1" not
+/// "1.000000"). Fractional values are shown with up to 6 significant digits,
+/// trailing zeros removed.
+String _formatParamValue(double v) {
+  if (v == v.truncateToDouble()) return v.toInt().toString();
+  return v
+      .toStringAsFixed(6)
+      .replaceAll(RegExp(r'0+$'), '')
+      .replaceAll(RegExp(r'\.$'), '');
+}
+
+/// Dialog that reads every known SPARK parameter and shows them in a table.
+///
+/// Opens as a modal overlay; includes a "Copy to Clipboard" button that
+/// formats the table as TSV for easy pasting into Google Sheets / Excel.
+class _AllRegistersDialog extends StatefulWidget {
+  final SparkDevice device;
+
+  const _AllRegistersDialog({required this.device});
+
+  @override
+  State<_AllRegistersDialog> createState() => _AllRegistersDialogState();
+}
+
+class _AllRegistersDialogState extends State<_AllRegistersDialog> {
+  List<_ParamResult>? _results;
+  bool _loading = true;
+  String? _copyConfirmation;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAll();
+  }
+
+  Future<void> _fetchAll() async {
+    final params = widget.device.parameters;
+
+    // Ensure the heartbeat is running while we query.
+    final wasRunning = widget.device.heartbeat.isRunning;
+    if (!wasRunning) {
+      widget.device.heartbeat.start(enabled: false);
+      // Allow the controller time to become responsive after heartbeat starts.
+      // 200 ms matches the same delay used elsewhere in the app during connect.
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    final results = <_ParamResult>[];
+    for (final desc in _kAllParams) {
+      try {
+        final value = await params.getParameter(desc.id);
+        results.add(_ParamResult(descriptor: desc, value: value));
+      } catch (e) {
+        results.add(_ParamResult(descriptor: desc, error: e.toString()));
+      }
+    }
+
+    if (!wasRunning) widget.device.heartbeat.stop();
+
+    if (mounted) {
+      setState(() {
+        _results = results;
+        _loading = false;
+      });
+    }
+  }
+
+  void _copyToClipboard() {
+    final rows = _results;
+    if (rows == null) return;
+
+    // Build TSV: header row + data rows.
+    final sb = StringBuffer();
+    sb.writeln('ID\tName\tValue\tNotes');
+    for (final r in rows) {
+      final notes = r.descriptor.notes ?? '';
+      sb.writeln('${r.descriptor.id}\t${r.descriptor.name}\t${r.displayValue}\t$notes');
+    }
+
+    Clipboard.setData(ClipboardData(text: sb.toString()));
+    setState(() => _copyConfirmation = 'Copied to clipboard!');
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copyConfirmation = null);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ContentDialog(
+      constraints: const BoxConstraints(maxWidth: 680, maxHeight: 640),
+      title: Row(
+        children: [
+          const Icon(FluentIcons.table, size: 16),
+          const SizedBox(width: 8),
+          const Expanded(child: Text('All Registers')),
+          if (!_loading)
+            Button(
+              onPressed: _copyToClipboard,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(FluentIcons.copy, size: 12),
+                  const SizedBox(width: 4),
+                  Text(_copyConfirmation ?? 'Copy to Clipboard'),
+                ],
+              ),
+            ),
+        ],
+      ),
+      content: _loading
+          ? const SizedBox(
+              height: 200,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ProgressRing(),
+                    SizedBox(height: 12),
+                    Text('Reading parameters from device…'),
+                  ],
+                ),
+              ),
+            )
+          : _RegistersTable(results: _results!),
+      actions: [
+        Button(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The scrollable table shown inside [_AllRegistersDialog].
+class _RegistersTable extends StatelessWidget {
+  final List<_ParamResult> results;
+
+  const _RegistersTable({required this.results});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    final headerStyle = theme.typography.bodyStrong;
+    final monoStyle = theme.typography.body?.copyWith(
+      fontFamily: 'Consolas, monospace',
+    );
+
+    return SizedBox(
+      // Fixed height keeps the dialog compact; user can scroll the table.
+      height: 460,
+      child: SingleChildScrollView(
+        child: Table(
+          columnWidths: const {
+            0: FixedColumnWidth(48),   // ID
+            1: FlexColumnWidth(3),     // Name
+            2: FixedColumnWidth(120),  // Value
+            3: FlexColumnWidth(2),     // Notes
+          },
+          border: TableBorder.all(
+            color: theme.resources.controlStrokeColorDefault,
+            width: 1,
+          ),
+          children: [
+            // Header row
+            TableRow(
+              decoration: BoxDecoration(
+                color: theme.resources.subtleFillColorSecondary,
+              ),
+              children: [
+                _cell(Text('ID', style: headerStyle), isHeader: true),
+                _cell(Text('Name', style: headerStyle), isHeader: true),
+                _cell(Text('Value', style: headerStyle), isHeader: true),
+                _cell(Text('Notes', style: headerStyle), isHeader: true),
+              ],
+            ),
+            // Data rows
+            for (final r in results)
+              TableRow(
+                children: [
+                  _cell(Text('${r.descriptor.id}', style: monoStyle)),
+                  _cell(Text(r.descriptor.name)),
+                  _cell(
+                    Text(
+                      r.displayValue,
+                      style: monoStyle?.copyWith(
+                        color: r.error != null
+                            ? Colors.errorSecondary
+                            : null,
+                      ),
+                    ),
+                  ),
+                  _cell(
+                    Text(
+                      r.descriptor.notes ?? '',
+                      style: theme.typography.caption,
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _cell(Widget child, {bool isHeader = false}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: isHeader ? 6 : 4,
+      ),
+      child: child,
+    );
   }
 }
