@@ -92,10 +92,15 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
     if (_filter != null) {
       return _entries.where((e) => e.direction == _filter).toList();
     }
-    // Exclude heartbeats from "All" view unless they are enabled for logging
-    // (they fire at 50 Hz and would otherwise dominate the view).
+    // Exclude heartbeats and status frames from "All" view unless enabled.
     return _entries
-        .where((e) => log.logHeartbeats || e.direction != CommDirection.heartbeat)
+        .where((e) {
+          if (!log.logHeartbeats && e.direction == CommDirection.heartbeat) {
+            return false;
+          }
+          if (!log.showStatusFrames && e.isStatusFrame) return false;
+          return true;
+        })
         .toList();
   }
 
@@ -170,6 +175,20 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
               onPressed: () {
                 final log = ref.read(commsLogProvider);
                 log.logHeartbeats = !log.logHeartbeats;
+                setState(() {});
+              },
+            ),
+            CommandBarButton(
+              label: const Text('Status Frames'),
+              icon: Icon(
+                FluentIcons.streaming,
+                color: ref.read(commsLogProvider).showStatusFrames
+                    ? theme.accentColor
+                    : null,
+              ),
+              onPressed: () {
+                final log = ref.read(commsLogProvider);
+                log.showStatusFrames = !log.showStatusFrames;
                 setState(() {});
               },
             ),

@@ -41,6 +41,12 @@ class _TestScreenState extends ConsumerState<TestScreen> {
   /// Polls the encoder position from the device when idle.
   Timer? _positionPollTimer;
 
+  /// Live telemetry preview data (rolling 10s window when idle).
+  final List<DataPoint> _previewData = [];
+
+  /// Wall-clock reference for preview telemetry timestamps.
+  DateTime? _previewStartTime;
+
   /// Each inner list is one test's data. Segments are separated so charts
   /// render each test in a distinct color with no connecting line.
   final List<List<DataPoint>> _liveSegments = [];
@@ -55,6 +61,18 @@ class _TestScreenState extends ConsumerState<TestScreen> {
 
   void _startNewSegment() {
     _liveSegments.add(<DataPoint>[]);
+  }
+
+  /// Returns the segments to display in charts: preview data when idle,
+  /// test data when running.
+  List<List<DataPoint>> get _chartSegments {
+    if (_isRunning || _liveSegments.any((s) => s.isNotEmpty)) {
+      return _liveSegments;
+    }
+    if (_previewData.isNotEmpty) {
+      return [_previewData];
+    }
+    return const [];
   }
 
   @override
@@ -78,11 +96,45 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     if (_isRunning) return; // test runner drives position during a run
     final device = ref.read(deviceManagerProvider).leader;
     if (device == null || !device.isConnected) return;
+
+    final status0 = device.connection.lastStatus0;
+    final status1 = device.connection.lastStatus1;
     final status2 = device.connection.lastStatus2;
-    if (status2 == null) return;
+    // Don't require status2 — voltage/current can be charted even without
+    // a position frame (e.g. no motor connected, or Status 2 not yet received).
+    if (status0 == null && status1 == null && status2 == null) return;
+
     final config = ref.read(mechanismConfigProvider);
-    final userPos = status2.positionRotations * config.positionConversionFactor;
-    if ((userPos - _currentPosition).abs() > 0.01) {
+    final userPos = status2 != null
+        ? status2.positionRotations * config.positionConversionFactor
+        : _currentPosition;
+
+    // Build a preview data point from status frames.
+    _previewStartTime ??= DateTime.now();
+    final elapsed =
+        DateTime.now().difference(_previewStartTime!).inMilliseconds / 1000.0;
+
+    final velocity = status1 != null
+        ? status1.velocityRpm * config.velocityConversionFactor
+        : 0.0;
+    final voltage = status1 != null
+        ? status1.busVoltage * (status0?.appliedOutput ?? 0.0)
+        : 0.0;
+    final current = status1?.outputCurrentAmps ?? 0.0;
+
+    _previewData.add(DataPoint(
+      timestamp: elapsed,
+      voltage: voltage,
+      velocity: velocity,
+      position: userPos,
+      current: current,
+    ));
+
+    // Trim to a 10-second rolling window.
+    final cutoff = elapsed - 10.0;
+    _previewData.removeWhere((dp) => dp.timestamp < cutoff);
+
+    if ((userPos - _currentPosition).abs() > 0.01 || _previewData.isNotEmpty) {
       setState(() => _currentPosition = userPos);
     }
   }
@@ -216,10 +268,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                 Expanded(
                                   child: _LiveChart(
                                     title: 'Velocity',
-                                    segments: _liveSegments,
+                                    segments: _chartSegments,
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.velocity,
                                     yLabel: config.velocityUnit,
+                                    rollingWindow: _isRunning ? null : 10.0,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -227,10 +280,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                 Expanded(
                                   child: _LiveChart(
                                     title: 'Voltage',
-                                    segments: _liveSegments,
+                                    segments: _chartSegments,
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.voltage,
                                     yLabel: 'V',
+                                    rollingWindow: _isRunning ? null : 10.0,
                                   ),
                                 ),
                               ],
@@ -244,10 +298,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                 Expanded(
                                   child: _LiveChart(
                                     title: 'Position',
-                                    segments: _liveSegments,
+                                    segments: _chartSegments,
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.position,
                                     yLabel: config.positionUnit,
+                                    rollingWindow: _isRunning ? null : 10.0,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -255,10 +310,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                 Expanded(
                                   child: _LiveChart(
                                     title: 'Current',
-                                    segments: _liveSegments,
+                                    segments: _chartSegments,
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.current,
                                     yLabel: 'A',
+                                    rollingWindow: _isRunning ? null : 10.0,
                                   ),
                                 ),
                               ],
@@ -386,6 +442,8 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       _isRunning = true;
       _currentTest = testType;
       _liveSegments.clear();
+      _previewData.clear();
+      _previewStartTime = null;
       _startNewSegment();
       _statusMessage = 'Running ${testType.displayName}...';
     });
@@ -441,6 +499,8 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       _isRunning = true;
       _statusMessage = 'Running full characterization...';
       _liveSegments.clear();
+      _previewData.clear();
+      _previewStartTime = null;
       _startNewSegment();
     });
 
@@ -662,12 +722,17 @@ class _LiveChart extends StatelessWidget {
   final double Function(DataPoint) yExtractor;
   final String yLabel;
 
+  /// If non-null, the X axis uses a fixed window of this many seconds
+  /// ending at the latest data point (rolling preview mode).
+  final double? rollingWindow;
+
   const _LiveChart({
     required this.title,
     required this.segments,
     required this.segmentColors,
     required this.yExtractor,
     required this.yLabel,
+    this.rollingWindow,
   });
 
   @override
@@ -684,6 +749,22 @@ class _LiveChart extends StatelessWidget {
         barWidth: 1.5,
         dotData: const FlDotData(show: false),
       ));
+    }
+
+    // Compute X axis bounds.
+    double? minX;
+    double? maxX;
+    if (rollingWindow != null && lineBars.isNotEmpty) {
+      // Find the latest timestamp across all segments.
+      double latest = 0;
+      for (final bar in lineBars) {
+        if (bar.spots.isNotEmpty && bar.spots.last.x > latest) {
+          latest = bar.spots.last.x;
+        }
+      }
+      maxX = latest;
+      minX = latest - rollingWindow!;
+      if (minX < 0) minX = 0;
     }
 
     return Card(
@@ -703,7 +784,8 @@ class _LiveChart extends StatelessWidget {
                 ? const Center(child: Text('No data'))
                 : LineChart(
                     LineChartData(
-                      minX: 0,
+                      minX: minX ?? 0,
+                      maxX: maxX,
                       lineTouchData: LineTouchData(
                         touchTooltipData: LineTouchTooltipData(
                           getTooltipItems: (touchedSpots) {

@@ -1,7 +1,13 @@
 /// High-level API for reading and writing SPARK controller parameters.
 ///
-/// Uses the modern CAN parameter protocol (API Classes 0x0E/0x0F) with
-/// named getters/setters for commonly-used configuration values.
+/// Uses the firmware 26.x CAN parameter protocol:
+///   - Read:  API Class=0x07, Index=0x01
+///   - Write: API Class=0x0E, Index=0x00 (5-byte payload, no type tag)
+///   - Write ACK: API Class=0x0E, Index=0x01
+///   - Burn:  API Class=0x3F, Index=0x0F (2-byte magic payload)
+///   - Burn ACK: API Class=0x01, Index=0x04
+///
+/// Protocol confirmed from Python `spark_rw_verify.py` (physically verified).
 library;
 
 import 'dart:async';
@@ -9,6 +15,52 @@ import 'dart:typed_data';
 
 import 'interfaces.dart';
 import 'spark_protocol.dart';
+
+/// Result of a raw parameter read, including the type tag from the device.
+class ParamReadResult {
+  /// The parameter ID echoed back by the device.
+  final int paramId;
+
+  /// The type tag from byte[6]: 0x00=bool, 0x02=int, 0x03=float, 0x04=uint.
+  final int typeTag;
+
+  /// The raw 4 value bytes (bytes[2:6] of the response).
+  final Uint8List rawBytes;
+
+  /// The value interpreted according to [typeTag].
+  final double value;
+
+  const ParamReadResult({
+    required this.paramId,
+    required this.typeTag,
+    required this.rawBytes,
+    required this.value,
+  });
+
+  @override
+  String toString() =>
+      'ParamReadResult(id=$paramId, type=0x${typeTag.toRadixString(16)}, '
+      'value=$value)';
+}
+
+/// Exception thrown when a parameter write's read-back value doesn't match
+/// the value that was sent.
+class ParameterWriteException implements Exception {
+  final int paramId;
+  final double sentValue;
+  final double readBackValue;
+
+  ParameterWriteException({
+    required this.paramId,
+    required this.sentValue,
+    required this.readBackValue,
+  });
+
+  @override
+  String toString() =>
+      'ParameterWriteException: param $paramId — sent $sentValue, '
+      'read back $readBackValue';
+}
 
 /// Provides typed access to SPARK controller parameters.
 class ParameterApi implements IParameterApi {
@@ -18,137 +70,265 @@ class ParameterApi implements IParameterApi {
   ParameterApi(this._conn, {int deviceId = 0}) : _deviceId = deviceId;
 
   // -----------------------------------------------------------------------
+  // Known parameter type tags from the protocol specification.
+  // Used as fallback when a read returns type 0x00 for a zero-valued float
+  // (firmware bug: zero floats can be misidentified as bool).
+  // -----------------------------------------------------------------------
+
+  static const Map<int, int> _knownParamTypes = {
+    // uint params
+    0: kParamTypeUint,   // kCanID
+    1: kParamTypeUint,   // kInputMode (read-only)
+    2: kParamTypeUint,   // kMotorType
+    5: kParamTypeUint,   // kCtrlType (read-only)
+    6: kParamTypeUint,   // kIdleMode
+    10: kParamTypeUint,  // kPolePairs
+    12: kParamTypeUint,  // kCurrentChopCycles
+    57: kParamTypeUint,  // kFollowerID
+    58: kParamTypeUint,  // kFollowerConfig
+    59: kParamTypeUint,  // kSmartCurrentStallLimit
+    60: kParamTypeUint,  // kSmartCurrentFreeLimit
+    61: kParamTypeUint,  // kSmartCurrentConfig
+    69: kParamTypeUint,  // kEncoderCountsPerRev
+    70: kParamTypeUint,  // kEncoderAverageDepth
+    71: kParamTypeUint,  // kEncoderSampleDelta
+    121: kParamTypeUint, // kAnalogAverageDepth
+    122: kParamTypeUint, // kAnalogSensorMode
+    124: kParamTypeUint, // kAnalogSampleDelta
+    127: kParamTypeUint, // kDataPortConfig
+    128: kParamTypeUint, // kAltEncoderCountsPerRev
+    129: kParamTypeUint, // kAltEncoderAverageDepth
+    130: kParamTypeUint, // kAltEncoderSampleDelta
+    // bool params
+    50: kParamTypeBool,  // kLimitSwitchFwdPolarity
+    51: kParamTypeBool,  // kLimitSwitchRevPolarity
+    52: kParamTypeBool,  // kHardLimitFwdEn
+    53: kParamTypeBool,  // kHardLimitRevEn
+    45: kParamTypeBool,  // kMotorInverted (param 45, bool in REVLib)
+    123: kParamTypeBool, // kAnalogInverted
+    131: kParamTypeBool, // kAltEncoderInverted
+    // float params (selected \u2014 most params 7\u201344, 56, 75\u201395, 96\u2013116, 119\u2013120, 132\u2013133)
+    7: kParamTypeFloat,  // kInputDeadband
+    11: kParamTypeFloat, // kCurrentChop
+    56: kParamTypeFloat, // kRampRate
+    75: kParamTypeFloat, // kCompensatedNominalVoltage
+    112: kParamTypeFloat, // kPositionConversionFactor
+    113: kParamTypeFloat, // kVelocityConversionFactor
+    114: kParamTypeFloat, // kClosedLoopRampRate
+    115: kParamTypeFloat, // kSoftLimitFwd
+    116: kParamTypeFloat, // kSoftLimitRev
+    119: kParamTypeFloat, // kAnalogPositionConversion
+    120: kParamTypeFloat, // kAnalogVelocityConversion
+    132: kParamTypeFloat, // kAltEncoderPositionFactor
+    133: kParamTypeFloat, // kAltEncoderVelocityFactor
+  };
+
+  // Fill in PID slot params (13-44, all float)
+  static int _resolveTypeTag(int paramId, int deviceTypeTag) {
+    // If the device returned a non-zero type tag, trust it.
+    if (deviceTypeTag != kParamTypeBool) return deviceTypeTag;
+
+    // Type tag is 0x00 (bool). Check if this is actually a bool param
+    // or a zero-valued float misidentified by the firmware bug.
+    if (_knownParamTypes.containsKey(paramId)) {
+      return _knownParamTypes[paramId]!;
+    }
+
+    // PID params (IDs 13-44) and SmartMotion params (76-95) are all float.
+    if ((paramId >= 13 && paramId <= 44) ||
+        (paramId >= 76 && paramId <= 95) ||
+        (paramId >= 96 && paramId <= 111)) {
+      return kParamTypeFloat;
+    }
+
+    // Default: trust the device's reported tag.
+    return deviceTypeTag;
+  }
+
+  // -----------------------------------------------------------------------
   // Low-level parameter access
   // -----------------------------------------------------------------------
 
-  static const int _matchMask = 0x1FFFFFC0;
-
-  /// Set a parameter by ID with a float32 value.
+  /// Read a parameter and return the full result including type tag.
   ///
-  /// Uses API class 7, index 0 (matching the working Python SLCAN protocol).
-  /// Payload: [paramId, float32_LE(4), 0, 0, 0]
-  /// Python always sends the value as float32, even for integer params.
-  Future<SparkResponse> setParameter(int paramId, double value) async {
-    final requestArb = buildArbId(
-      apiClass: 0x07,
-      apiIndex: 0x00,
+  /// Uses API Class=7, Index=1.
+  /// Request:  [paramId, 0, 0, 0, 0, 0, 0, 0]
+  /// Response: [paramId, 0xFF, value(4), typeTag, 0x00]
+  Future<ParamReadResult> readParameterRaw(int paramId) async {
+    final arbId = buildArbId(
+      apiClass: kApiClassParam,
+      apiIndex: kParamIndexRead,
       deviceId: _deviceId,
     );
 
-    // Match Python: bytes([param_id]) + struct.pack('<f', value) + b'\x00'*3
-    final payload = Uint8List(8);
-    payload[0] = paramId & 0xFF;
-    final bd = ByteData.sublistView(payload);
-    bd.setFloat32(1, value, Endian.little);
+    final payload = buildParamReadPayload(paramId);
+    _conn.sendCommand(arbId, payload);
 
-    _conn.sendCommand(requestArb, payload);
-
-    // Match Python write_param: accept any class-7 response from the device.
-    // Python does: api_class != 0x20 (i.e. not a status frame).
-    // No index filter — the device may respond on any index.
     final response = await _conn.responses
         .where((r) {
           final cls = extractApiClass(r.arbId);
           final dev = extractDeviceId(r.arbId);
-          return cls == 0x07 && dev == _deviceId;
+          // Accept class=7 responses from this device where byte[1]=0xFF
+          // (read response marker).
+          return cls == kApiClassParam &&
+              dev == _deviceId &&
+              r.payload[0] == (paramId & 0xFF) &&
+              r.payload[1] == 0xFF;
         })
         .first
         .timeout(const Duration(milliseconds: 500));
 
-    return response;
+    final rawTypeTag = response.payload[6];
+    final typeTag = _resolveTypeTag(paramId, rawTypeTag);
+    final rawBytes = Uint8List.sublistView(response.payload, 2, 6);
+
+    final double value;
+    switch (typeTag) {
+      case kParamTypeFloat:
+        value = readFloat32(response.payload, 2);
+      case kParamTypeBool:
+      case kParamTypeInt:
+      case kParamTypeUint:
+      default:
+        value = readUint32(response.payload, 2).toDouble();
+    }
+
+    return ParamReadResult(
+      paramId: paramId,
+      typeTag: typeTag,
+      rawBytes: rawBytes,
+      value: value,
+    );
+  }
+
+  /// Encode [value] into 4 little-endian bytes according to [tag].
+  static Uint8List _encodeValue(double value, int tag) {
+    final bytes = Uint8List(4);
+    final bd = ByteData.sublistView(bytes);
+    switch (tag) {
+      case kParamTypeFloat:
+        bd.setFloat32(0, value, Endian.little);
+      case kParamTypeBool:
+        bd.setUint32(0, value != 0.0 ? 1 : 0, Endian.little);
+      case kParamTypeInt:
+      case kParamTypeUint:
+      default:
+        bd.setUint32(0, value.toInt(), Endian.little);
+    }
+    return bytes;
+  }
+
+  /// Set a parameter by ID with ACK verification.
+  ///
+  /// Matches the confirmed Python protocol:
+  /// 1. Read the parameter first to discover the device's actual type tag.
+  /// 2. Encode the value according to the resolved type tag.
+  /// 3. Write using cls=0x0E, idx=0x00 with 5-byte payload [paramId, value(4B)].
+  /// 4. Wait for ACK on cls=0x0E, idx=0x01 where data[0]==paramId.
+  ///
+  /// Throws [ParameterWriteException] if the ACK indicates a mismatch.
+  @override
+  Future<SparkResponse> setParameter(int paramId, double value) async {
+    // --- Step 1: Read to discover the device's actual type tag ---
+    final preRead = await readParameterRaw(paramId);
+    final typeTag = preRead.typeTag; // already resolved by readParameterRaw
+
+    // --- Step 2: Encode and write (cls=0x0E, idx=0x00, 5-byte payload) ---
+    final valueBytes = _encodeValue(value, typeTag);
+    final requestArb = buildArbId(
+      apiClass: kApiClassParameterWrite,
+      apiIndex: kParamWriteIndexRequest,
+      deviceId: _deviceId,
+    );
+    final payload = buildParamWritePayload(paramId, valueBytes);
+    _conn.sendCommand(requestArb, payload);
+
+    // --- Step 3: Wait for ACK on cls=0x0E, idx=0x01 ---
+    final ack = await _conn.responses
+        .where((r) {
+          final cls = extractApiClass(r.arbId);
+          final idx = extractApiIndex(r.arbId);
+          final dev = extractDeviceId(r.arbId);
+          return cls == kApiClassParameterWrite &&
+              idx == kParamWriteIndexResponse &&
+              dev == _deviceId &&
+              r.payload[0] == (paramId & 0xFF);
+        })
+        .first
+        .timeout(const Duration(milliseconds: 500));
+
+    // Verify the ACK echoes the correct type tag (data[1]).
+    final ackTypeTag = ack.payload[1];
+    if (ackTypeTag != typeTag) {
+      throw ParameterWriteException(
+        paramId: paramId,
+        sentValue: value,
+        readBackValue: double.nan,
+      );
+    }
+
+    return ack;
   }
 
   /// Get a parameter by ID. Returns the numeric value from the response.
   ///
-  /// Uses API class 7, index 1 (matching the working Python SLCAN protocol).
-  /// Request payload: [paramId, 0, 0, 0, 0, 0, 0, 0]
-  /// Response layout (per Python):
-  ///   byte[0] = param_id echo
-  ///   byte[1] = 0xFF (status OK)
-  ///   bytes[2:6] = value (float32/uint32 LE)
-  ///   byte[6] = type tag
+  /// Uses API Class=7, Index=1.
+  /// Response type tag at byte[6] determines interpretation:
+  ///   0x00=bool, 0x02=int, 0x03=float, 0x04=uint
+  @override
   Future<double> getParameter(int paramId) async {
-    final arbId = buildArbId(
-      apiClass: 0x07,
-      apiIndex: 0x01,
-      deviceId: _deviceId,
-    );
-
-    final payload = Uint8List(8);
-    payload[0] = paramId & 0xFF;
-
-    _conn.sendCommand(arbId, payload);
-
-    // Match the read-response specifically: class=7, same device.
-    // Python's read_param accepts api_class==7 responses.
-    final response = await _conn.responses
-        .where((r) {
-          final cls = extractApiClass(r.arbId);
-          final dev = extractDeviceId(r.arbId);
-          return cls == 0x07 && dev == _deviceId;
-        })
-        .first
-        .timeout(const Duration(milliseconds: 500));
-
-    // Value is at bytes[2:6] in the response
-    if (_isIntegerLikeParam(paramId) || paramId == kParamCanId) {
-      return readUint32(response.payload, 2).toDouble();
-    }
-    return readFloat32(response.payload, 2);
-  }
-
-  Future<SparkResponse> _sendAndReceiveExpected(
-    int requestArb,
-    Uint8List payload, {
-    required int expectedApiClass,
-    required int expectedApiIndex,
-    Duration timeout = const Duration(milliseconds: 500),
-  }) async {
-    final expectedArb = buildArbId(
-      apiClass: expectedApiClass,
-      apiIndex: expectedApiIndex,
-      deviceId: _deviceId,
-    );
-
-    _conn.sendCommand(requestArb, payload);
-
-    return _conn.responses
-        .where((r) => (r.arbId & _matchMask) == (expectedArb & _matchMask))
-        .first
-        .timeout(timeout);
-  }
-
-  bool _isIntegerLikeParam(int paramId) {
-    switch (paramId) {
-      case kParamCanId:
-      case kParamMotorType:
-      case kParamIdleMode:
-      case kParamMotorInverted:
-      case kParamForwardSoftLimitEnabled:
-      case kParamReverseSoftLimitEnabled:
-      case kParamFollowerId:
-      case kParamFollowerConfig:
-      case kParamMAXMotionPositionMode0:
-        return true;
-      default:
-        return false;
-    }
+    final result = await readParameterRaw(paramId);
+    return result.value;
   }
 
   /// Burn all current parameters to flash (persist across power cycles).
   ///
-  /// Firmware 26.x: send apiClass=6, apiIndex=1 with 8 zero bytes.
-  /// The device writes to flash and will not respond during this time,
-  /// so we wait 200ms before returning rather than expecting a response.
-  Future<void> burnFlash() async {
+  /// Firmware 26.x: send apiClass=0x3F, apiIndex=0x0F with 2-byte payload
+  /// [0xA3, 0x3A] (magic token).
+  /// ACK: cls=0x01, idx=0x04 (~125ms later).
+  ///
+  /// Confirmed from Python `spark_rw_verify.py` (physically verified).
+  ///
+  /// If [heartbeat] is provided, it is stopped before the burn command
+  /// and restarted after the ACK is received.
+  @override
+  Future<void> burnFlash({IHeartbeatManager? heartbeat}) async {
+    // Stop heartbeat FIRST so the bus is quiet before burning.
+    // The Python script never sends heartbeats during burn — the device
+    // returns 0xFF (error) if other traffic is present on the bus.
+    final wasRunning = heartbeat?.isRunning ?? false;
+    if (wasRunning) heartbeat!.stop();
+
+    // Allow 500ms for the bus to quiet and for the device to finish
+    // committing any pending parameter writes to RAM.
+    await Future<void>.delayed(const Duration(milliseconds: 1000));
+
     final arbId = buildArbId(
-      apiClass: 0x06,
-      apiIndex: 0x01,
+      apiClass: kApiClassPersistParameters,
+      apiIndex: kPersistParametersIndex,
       deviceId: _deviceId,
     );
-    _conn.sendCommand(arbId, Uint8List(8));
-    // Device is writing to flash — wait before sending further commands.
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    _conn.sendCommand(arbId, buildPersistParametersPayload());
+
+    // Wait for burn ACK on cls=0x01, idx=0x04.
+    try {
+      await _conn.responses
+          .where((r) {
+            final cls = extractApiClass(r.arbId);
+            final idx = extractApiIndex(r.arbId);
+            final dev = extractDeviceId(r.arbId);
+            return cls == kBurnFlashAckApiClass &&
+                idx == kBurnFlashAckApiIndex &&
+                dev == _deviceId;
+          })
+          .first
+          .timeout(const Duration(milliseconds: 500));
+    } on TimeoutException {
+      // Burn may still succeed even without ACK — wait the fallback time.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+
+    if (wasRunning) heartbeat!.start();
   }
 
   // -----------------------------------------------------------------------
@@ -251,14 +431,25 @@ class ParameterApi implements IParameterApi {
     double maxOutput = 1.0,
     double minOutput = -1.0,
   }) async {
-    await setSlot0P(p);
-    await setSlot0I(i);
-    await setSlot0D(d);
-    await setSlot0F(f);
-    await setSlot0IZone(iZone);
-    await setSlot0DFilter(dFilter);
-    await setSlot0MaxOutput(maxOutput);
-    await setSlot0MinOutput(minOutput);
+    final writes = <Future<void> Function()>[
+      () => setSlot0P(p),
+      () => setSlot0I(i),
+      () => setSlot0D(d),
+      () => setSlot0F(f),
+      () => setSlot0IZone(iZone),
+      () => setSlot0DFilter(dFilter),
+      () => setSlot0MaxOutput(maxOutput),
+      () => setSlot0MinOutput(minOutput),
+    ];
+    ParameterWriteException? firstError;
+    for (final w in writes) {
+      try {
+        await w();
+      } on ParameterWriteException catch (e) {
+        firstError ??= e;
+      }
+    }
+    if (firstError != null) throw firstError;
   }
 
   /// Read all PID Slot 0 values.
@@ -370,12 +561,23 @@ class ParameterApi implements IParameterApi {
     double kCos = 0.0,
     double kCosRatio = 0.0,
   }) async {
-    await setSlot0FfKs(kS);
-    await setSlot0FfKv(kV);
-    await setSlot0FfKa(kA);
-    await setSlot0FfKg(kG);
-    await setSlot0FfKcos(kCos);
-    await setSlot0FfKcosRatio(kCosRatio);
+    final writes = <Future<void> Function()>[
+      () => setSlot0FfKs(kS),
+      () => setSlot0FfKv(kV),
+      () => setSlot0FfKa(kA),
+      () => setSlot0FfKg(kG),
+      () => setSlot0FfKcos(kCos),
+      () => setSlot0FfKcosRatio(kCosRatio),
+    ];
+    ParameterWriteException? firstError;
+    for (final w in writes) {
+      try {
+        await w();
+      } on ParameterWriteException catch (e) {
+        firstError ??= e;
+      }
+    }
+    if (firstError != null) throw firstError;
   }
 
   /// Read all FeedForward Slot 0 values.

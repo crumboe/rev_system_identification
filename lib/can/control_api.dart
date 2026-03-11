@@ -16,21 +16,36 @@ class ControlApi implements IControlApi {
   ControlApi(this._conn, {int deviceId = 0}) : _deviceId = deviceId;
 
   // -----------------------------------------------------------------------
-  // Setpoint commands (API Class 0x00, Index 0x00)
+  // Setpoint commands (API Class 0x00, different indices per control mode)
   // -----------------------------------------------------------------------
 
+  /// Map from control type constant to the fw26 API index.
+  static const Map<int, int> _controlTypeToApiIndex = {
+    kControlTypeDutyCycle: kControlIndexDutyCycle,       // index 2
+    kControlTypeVelocity: kControlIndexVelocity,         // index 11
+    kControlTypePosition: kControlIndexPosition,         // index 10
+    kControlTypeVoltage: kControlIndexVoltage,           // index 5
+  };
+
   /// Send a setpoint command to the controller.
+  ///
+  /// Firmware 26.x uses distinct API indices per control mode.
+  /// Payload is float32 LE + 4 zero bytes.
   void setSetpoint(
     double value,
     int controlType, {
     int pidSlot = 0,
   }) {
+    final apiIndex = _controlTypeToApiIndex[controlType];
+    if (apiIndex == null) {
+      throw ArgumentError('Unsupported control type: $controlType');
+    }
     final arbId = buildArbId(
       apiClass: kApiClassControl,
-      apiIndex: kControlIndexSetpoint,
+      apiIndex: apiIndex,
       deviceId: _deviceId,
     );
-    final payload = buildSetpointPayload(value, controlType, pidSlot: pidSlot);
+    final payload = buildSetpointPayload(value);
     _conn.sendCommand(arbId, payload);
   }
 

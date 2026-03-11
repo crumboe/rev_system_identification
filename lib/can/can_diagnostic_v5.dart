@@ -139,11 +139,15 @@ class CanDiagnosticV5 {
     {
       // Send 10 heartbeats via SLCAN to "wake" the device.
       for (var i = 0; i < 10; i++) {
-        final hbPayload = buildHeartbeatPayload(i * 20,
-            modeFlags: kHeartbeatFlagWatchdog);
-        final hbSlcan = encodeSlcanFrame(kHeartbeatArbId, hbPayload);
+        final hbArbId = buildArbId(
+          apiClass: kApiClassSecondaryHeartbeat,
+          apiIndex: kSecondaryHeartbeatIndex,
+          deviceId: deviceId,
+        );
+        final hbPayload = buildSecondaryHeartbeatPayload(deviceId);
+        final hbSlcan = encodeSlcanFrame(hbArbId, hbPayload);
         _conn.sendRaw(Uint8List.fromList(hbSlcan.codeUnits));
-        await Future.delayed(const Duration(milliseconds: 20));
+        await Future.delayed(const Duration(milliseconds: 80));
       }
       buf.writeln('  Sent 10 SLCAN heartbeats');
       // Now send the param read.

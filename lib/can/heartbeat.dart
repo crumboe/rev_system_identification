@@ -1,8 +1,11 @@
-/// FRC Heartbeat manager for keeping SPARK controllers enabled.
+/// Firmware 26.x heartbeat manager for keeping SPARK controllers enabled.
 ///
-/// The heartbeat must be sent every 20 ms or the controller will disable
-/// its output within ~100 ms.  This implementation runs a periodic timer
-/// on a separate Dart isolate for reliable timing.
+/// Uses the SECONDARY_HEARTBEAT frame from CANSparkFrames.h:
+///   API Class=11 (0x0B), Index=2, 8-byte enabled_sparks_bitfield.
+/// Each bit in the 64-bit bitfield enables the SPARK with that CAN device ID.
+///
+/// Must be sent every ≤100ms (80ms recommended) or the controller will
+/// disable its output.
 library;
 
 import 'dart:async';
@@ -24,14 +27,21 @@ class HeartbeatManager implements IHeartbeatManager {
 
   bool _running = false;
   bool _enabled = false;
+  int _deviceId;
 
   /// The heartbeat period in milliseconds.
-  static const int periodMs = 20;
+  /// HC2 uses 25ms (SECONDARY_HEARTBEAT_INTERVAL from HeartbeatSender).
+  static const int periodMs = 25;
 
   bool get isRunning => _running;
   bool get isEnabled => _enabled;
 
-  HeartbeatManager(this._connection);
+  /// Update the device ID used in the heartbeat arb ID.
+  set deviceId(int id) => _deviceId = id;
+  int get deviceId => _deviceId;
+
+  HeartbeatManager(this._connection, {int deviceId = 0})
+      : _deviceId = deviceId;
 
   /// Start sending heartbeats in a timer-based loop.
   ///
@@ -91,13 +101,33 @@ class HeartbeatManager implements IHeartbeatManager {
   void _sendHeartbeat({required bool enabled}) {
     if (!_connection.isOpen) return;
 
-    final timestampMs = _stopwatch.elapsedMilliseconds;
-    final modeFlags = kHeartbeatFlagWatchdog | (enabled ? kHeartbeatFlagEnabled : 0);
-
-    final payload = buildHeartbeatPayload(timestampMs, modeFlags: modeFlags);
+    // Secondary heartbeat: API Class=11, Index=2, 8-byte bitfield.
+    // Each bit enables the SPARK with that CAN device ID.
+    //
+    // HC2 pattern: always send the heartbeat frame — when disabled, send
+    // all-zeros payload (clears device bit). This keeps the controller in
+    // a known state rather than relying on heartbeat timeout.
+    //
+    // IMPORTANT: The arb ID uses deviceId=0 (broadcast), NOT the target
+    // device ID. The *payload* bitfield selects which device to enable.
+    final arbId = buildArbId(
+      apiClass: kApiClassSecondaryHeartbeat,
+      apiIndex: kSecondaryHeartbeatIndex,
+      deviceId: 0, // broadcast — HC2 confirmed
+    );
+    final payload = enabled
+        ? buildSecondaryHeartbeatPayload(_deviceId)
+        : buildSecondaryHeartbeatPayload(-1); // -1 → no bits set → all zeros
 
     try {
-      _connection.sendCommand(kHeartbeatArbId, payload);
+      _connection.sendCommand(arbId, payload);
+
+      // HC2 also sends a REV universal secondary heartbeat (broadcast to
+      // all devices regardless of CAN ID). 1-byte payload: 0x01 = enabled.
+      _connection.sendCommand(
+        kRevUniversalSecondaryHeartbeatId,
+        buildUniversalHeartbeatPayload(enabled),
+      );
     } catch (_) {
       // Connection may have been lost — caller should detect via
       // SparkConnection.isOpen and handle accordingly.

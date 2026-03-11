@@ -187,75 +187,69 @@ void main() {
   // =========================================================================
 
   group('buildSetpointPayload', () {
-    test('float32 value and control type byte are placed correctly', () {
-      final payload = buildSetpointPayload(3.14, kControlTypeVelocity);
+    test('float32 value is placed correctly, rest are zeros', () {
+      final payload = buildSetpointPayload(3.14);
       // Read back the float
       final bd = ByteData.sublistView(payload);
       final readValue = bd.getFloat32(0, Endian.little);
       expect(readValue, closeTo(3.14, 1e-5));
-      expect(payload[4], equals(kControlTypeVelocity & 0xFF));
-      expect(payload[5], equals(0)); // pidSlot = 0
-    });
-
-    test('pidSlot is stored at byte 5', () {
-      final payload =
-          buildSetpointPayload(0.0, kControlTypePosition, pidSlot: 1);
-      expect(payload[5], equals(1));
+      // Bytes 4-7 should be zero (fw26: no controlType/pidSlot in payload)
+      expect(payload[4], equals(0));
+      expect(payload[5], equals(0));
+      expect(payload[6], equals(0));
+      expect(payload[7], equals(0));
     });
 
     test('negative value round-trips through float32', () {
-      final payload = buildSetpointPayload(-7.5, kControlTypeDutyCycle);
+      final payload = buildSetpointPayload(-7.5);
       final bd = ByteData.sublistView(payload);
       expect(bd.getFloat32(0, Endian.little), closeTo(-7.5, 1e-5));
     });
 
-    test('MAXMotion control types are encoded', () {
-      final p1 = buildSetpointPayload(1.0, kControlTypeMAXMotionPosition);
-      expect(p1[4], equals(kControlTypeMAXMotionPosition));
-
-      final p2 = buildSetpointPayload(500.0, kControlTypeMAXMotionVelocity);
-      expect(p2[4], equals(kControlTypeMAXMotionVelocity));
+    test('zero payload is all zeros', () {
+      final payload = buildSetpointPayload(0.0);
+      expect(payload.every((b) => b == 0), isTrue);
     });
   });
 
-  group('buildParamSetPayload', () {
-    test('float value and param ID are placed correctly', () {
-      final payload = buildParamSetPayload(1.5, kParamSlot0P);
+  group('buildParamWritePayload', () {
+    test('paramId and value bytes are placed correctly (5-byte, no type tag)', () {
+      // Write a float param: kParamSlot0P (id=13), value=1.5
+      final valueBytes = Uint8List(4);
+      ByteData.sublistView(valueBytes).setFloat32(0, 1.5, Endian.little);
+      final payload = buildParamWritePayload(kParamSlot0P, valueBytes);
+      expect(payload.length, equals(5));
+      expect(payload[0], equals(kParamSlot0P)); // param ID
+      // bytes[1:5] = float value
       final bd = ByteData.sublistView(payload);
-      expect(bd.getFloat32(0, Endian.little), closeTo(1.5, 1e-5));
-      expect(bd.getUint16(4, Endian.little), equals(kParamSlot0P));
+      expect(bd.getFloat32(1, Endian.little), closeTo(1.5, 1e-5));
     });
 
-    test('MAXMotion param IDs are encoded correctly', () {
-      final payload = buildParamSetPayload(
-          600.0, kParamMAXMotionCruiseVelocity0);
-      final bd = ByteData.sublistView(payload);
-      expect(bd.getFloat32(0, Endian.little), closeTo(600.0, 1e-3));
-      expect(bd.getUint16(4, Endian.little),
-          equals(kParamMAXMotionCruiseVelocity0));
+    test('uint param value is placed correctly', () {
+      final valueBytes = Uint8List(4);
+      ByteData.sublistView(valueBytes).setUint32(0, 166, Endian.little);
+      final payload = buildParamWritePayload(
+          kParamMAXMotionCruiseVelocity0, valueBytes);
+      expect(payload.length, equals(5));
+      expect(payload[0], equals(kParamMAXMotionCruiseVelocity0 & 0xFF));
     });
   });
 
-  group('buildParamGetPayload', () {
-    test('param ID is stored at offset 0 as uint16', () {
-      final payload = buildParamGetPayload(kParamSlot0FfKs);
-      final bd = ByteData.sublistView(payload);
-      expect(bd.getUint16(0, Endian.little), equals(kParamSlot0FfKs));
+  group('buildParamReadPayload', () {
+    test('param ID at byte 0, rest zeros', () {
+      final payload = buildParamReadPayload(kParamSlot0FfKs);
+      expect(payload[0], equals(kParamSlot0FfKs & 0xFF));
+      for (var i = 1; i < 8; i++) {
+        expect(payload[i], equals(0), reason: 'byte[$i] should be 0');
+      }
     });
   });
 
   group('buildHeartbeatPayload', () {
-    test('timestamp and mode flags are placed correctly', () {
-      final payload = buildHeartbeatPayload(12345, modeFlags: 0x11);
-      final bd = ByteData.sublistView(payload);
-      expect(bd.getUint32(0, Endian.little), equals(12345));
-      expect(payload[5], equals(0x11));
-    });
-
-    test('timestamp wraps at uint32 max', () {
-      final payload = buildHeartbeatPayload(0xFFFFFFFF + 1);
-      final bd = ByteData.sublistView(payload);
-      expect(bd.getUint32(0, Endian.little), equals(0));
+    test('fw26 heartbeat is 8 zero bytes', () {
+      final payload = buildHeartbeatPayload();
+      expect(payload.length, equals(8));
+      expect(payload.every((b) => b == 0), isTrue);
     });
   });
 
@@ -374,8 +368,30 @@ void main() {
   // =========================================================================
 
   group('Protocol constants', () {
-    test('heartbeat arb ID is canonical FRC value', () {
-      expect(kHeartbeatArbId, equals(0x01011840));
+    test('secondary heartbeat uses API Class=11, Index=2', () {
+      final arbId = buildArbId(
+        apiClass: kApiClassSecondaryHeartbeat,
+        apiIndex: kSecondaryHeartbeatIndex,
+        deviceId: 0,
+      );
+      expect(extractApiClass(arbId), equals(0x0B));
+      expect(extractApiIndex(arbId), equals(0x02));
+    });
+
+    test('persist parameters uses API Class=63, Index=15 with magic number', () {
+      final arbId = buildArbId(
+        apiClass: kApiClassPersistParameters,
+        apiIndex: kPersistParametersIndex,
+        deviceId: 0,
+      );
+      expect(extractApiClass(arbId), equals(0x3F));
+      expect(extractApiIndex(arbId), equals(0x0F));
+
+      final payload = buildPersistParametersPayload();
+      expect(payload.length, equals(2));
+      // Magic bytes [0xA3, 0x3A] — confirmed from Python
+      expect(payload[0], equals(0xA3));
+      expect(payload[1], equals(0x3A));
     });
 
     test('control types are sequential 0–6', () {
@@ -512,19 +528,19 @@ void main() {
   // =========================================================================
 
   group('encodeSlcanFrame', () {
-    test('produces T + 8-hex ID + DLC + hex data + CR LF', () {
+    test('produces T + 8-hex ID + DLC + hex data + CR', () {
       final arb = buildArbId(
         apiClass: kApiClassParameter,
         apiIndex: kParamIndexGet,
         deviceId: 0,
       );
-      final payload = buildParamGetPayload(kParamCanId); // paramId=0
+      final payload = buildParamReadPayload(kParamCanId); // paramId=0
       final frame = encodeSlcanFrame(arb, payload);
 
       expect(frame, startsWith('T'));
-      expect(frame, endsWith('\r\n'));
-      // T(1) + 8-char hex ID + DLC(1) + 16 hex chars (8 bytes) + \r\n = 28
-      expect(frame.length, equals(28));
+      expect(frame, endsWith('\r'));
+      // T(1) + 8-char hex ID + DLC(1) + 16 hex chars (8 bytes) + \r = 27
+      expect(frame.length, equals(27));
       // The arb ID hex should match the value padded to 8 chars (uppercase).
       expect(frame.substring(1, 9), equals(arb.toRadixString(16).padLeft(8, '0').toUpperCase()));
       // DLC = 8
@@ -538,14 +554,14 @@ void main() {
 
       expect(frame[9], equals('2')); // DLC = 2
       expect(frame.substring(10, 14), equals('AABB'));
-      expect(frame.length, equals(14 + 2)); // T(1) + 8-char ID + DLC(1) + 4 hex chars + \r\n
+      expect(frame.length, equals(14 + 1)); // T(1) + 8-char ID + DLC(1) + 4 hex chars + \r
     });
 
     test('empty payload yields DLC 0', () {
       const arb = 0x02050000;
       final frame = encodeSlcanFrame(arb, Uint8List(0));
       expect(frame[9], equals('0'));
-      expect(frame.length, equals(12)); // T + 8 + 1 + 0 + \r\n
+      expect(frame.length, equals(11)); // T + 8 + 1 + 0 + \r
     });
   });
 
@@ -558,8 +574,8 @@ void main() {
       );
       final payload = Uint8List.fromList([0x00, 0x00, 0xB2, 0x06, 0x00, 0x00, 0x80, 0x00]);
       final frame = encodeSlcanFrame(arb, payload);
-      // Strip trailing \r\n for decode
-      final stripped = frame.substring(0, frame.length - 2);
+      // Strip trailing \r for decode
+      final stripped = frame.substring(0, frame.length - 1);
       final resp = decodeSlcanFrame(stripped);
 
       expect(resp, isNotNull);

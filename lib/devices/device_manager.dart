@@ -2,13 +2,10 @@
 library;
 
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter/foundation.dart';
 
-import '../can/candle_connection.dart';
-import '../can/candle_ffi.dart';
 import '../can/interfaces.dart';
 import '../can/spark_connection.dart';
 import '../can/spark_protocol.dart';
@@ -53,10 +50,7 @@ class PortInfo {
 
 /// The type of connection used to communicate with a SPARK controller.
 enum ConnectionType {
-  /// Bidirectional CAN via Candle/WinUSB (MI_00). Full param read/write.
-  candle,
-  /// Serial SLCAN (CDC COM port). Status broadcast + commands, limited
-  /// response reception.
+  /// Serial SLCAN (CDC COM port).
   serial,
 }
 
@@ -73,7 +67,7 @@ class SparkDevice {
   /// The CAN device ID (6-bit, 0–63).
   int canId;
 
-  /// The type of connection used (Candle WinUSB or serial SLCAN).
+  /// The type of connection used.
   final ConnectionType connectionType;
 
   /// Whether this device is the leader in follower configurations.
@@ -130,6 +124,61 @@ class DeviceManager {
   final _devicesChanged = StreamController<List<SparkDevice>>.broadcast();
   Stream<List<SparkDevice>> get devicesChanged => _devicesChanged.stream;
 
+  /// Timer for periodic device re-scan when no devices are connected.
+  Timer? _rescanTimer;
+
+  /// Callback invoked when a device is auto-reconnected after disconnect.
+  /// UI layers can listen to [devicesChanged] instead, but this provides
+  /// an explicit signal for showing reconnect notifications.
+  void Function(SparkDevice)? onAutoReconnect;
+
+  /// Start periodic scanning for disconnected devices.
+  ///
+  /// When no devices are connected (or all are disconnected), scans every
+  /// 5 seconds for serial devices and auto-connects if found.
+  void startAutoRescan() {
+    _rescanTimer?.cancel();
+    _rescanTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _rescanIfNeeded(),
+    );
+  }
+
+  /// Stop the periodic re-scan timer.
+  void stopAutoRescan() {
+    _rescanTimer?.cancel();
+    _rescanTimer = null;
+  }
+
+  Future<void> _rescanIfNeeded() async {
+    // Only re-scan if we have no connected devices.
+    final hasConnected = _devices.any((d) => d.isConnected);
+    if (hasConnected) return;
+
+    // Remove stale disconnected devices.
+    _devices.removeWhere((d) => !d.isConnected && !d.isSimulated);
+    if (_devices.isNotEmpty) {
+      _notifyChanged();
+    }
+
+    try {
+      final ports = scanPorts();
+      final sparkPorts = ports.where((p) => p.isLikelySpark).toList();
+      if (sparkPorts.isNotEmpty) {
+        debugPrint(
+          '[DeviceManager] Auto-rescan found ${sparkPorts.length} '
+          'serial port(s), reconnecting…',
+        );
+        final device = await connect(
+          sparkPorts.first.name,
+        );
+        onAutoReconnect?.call(device);
+      }
+    } catch (e) {
+      debugPrint('[DeviceManager] Auto-rescan connect failed: $e');
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Port enumeration
   // -----------------------------------------------------------------------
@@ -152,53 +201,16 @@ class DeviceManager {
   }
 
   // -----------------------------------------------------------------------
-  // Candle (WinUSB) device enumeration
-  // -----------------------------------------------------------------------
-
-  /// Whether CANBridge.dll is available (REV Hardware Client installed).
-  bool get isCandleAvailable => CandleApi.isAvailable;
-
-  /// Scan for Candle/WinUSB CAN devices.
-  ///
-  /// Returns a list of discovered CAN devices. Empty if CANBridge.dll is
-  /// unavailable or no WinUSB devices are found.
-  List<CandleDeviceInfo> scanCandleDevices() {
-    return CandleConnection.scanDevices();
-  }
-
-  // -----------------------------------------------------------------------
   // Connection
   // -----------------------------------------------------------------------
 
-  /// Auto-connect to a SPARK controller using the best available method.
+  /// Auto-connect to a SPARK controller via serial SLCAN.
   ///
-  /// Tries Candle (WinUSB, bidirectional CAN) first, then falls back to the
-  /// serial SLCAN path.  This mirrors how the REV Hardware Client discovers
-  /// devices — if the user has it installed, we get the same quality of
-  /// connection.
+  /// Scans for likely SPARK serial ports and connects to the first one found.
   ///
   /// Returns the connected [SparkDevice].
   /// Throws if no SPARK device could be found or connected.
   Future<SparkDevice> autoConnect({String label = 'Motor'}) async {
-    // 1. Try Candle (WinUSB) first — gives full bidirectional CAN.
-    try {
-      final candleDevices = scanCandleDevices();
-      if (candleDevices.isNotEmpty) {
-        debugPrint(
-          '[DeviceManager] Found ${candleDevices.length} Candle device(s), '
-          'connecting via WinUSB…',
-        );
-        return await connectCandle(
-          deviceIndex: candleDevices.first.index,
-          deviceName: candleDevices.first.name,
-          label: label,
-        );
-      }
-    } catch (e) {
-      debugPrint('[DeviceManager] Candle connect failed: $e — trying serial…');
-    }
-
-    // 2. Fall back to serial SLCAN.
     final ports = scanPorts();
     final sparkPorts = ports.where((p) => p.isLikelySpark).toList();
     final targetPorts = sparkPorts.isNotEmpty ? sparkPorts : ports;
@@ -211,34 +223,6 @@ class DeviceManager {
     }
 
     return await connect(targetPorts.first.name, label: label);
-  }
-
-  /// Connect to a SPARK controller via the Candle (WinUSB) interface.
-  ///
-  /// This gives full bidirectional CAN communication — parameter read/write,
-  /// confirmed motor control, etc.  Requires REV Hardware Client installed.
-  Future<SparkDevice> connectCandle({
-    int deviceIndex = 0,
-    String? deviceName,
-    String label = 'Motor',
-  }) async {
-    final connection = CandleConnection.create(
-      deviceIndex: deviceIndex,
-      deviceName: deviceName,
-    );
-    if (connection == null) {
-      throw StateError(
-        'CANBridge.dll not found. Install the REV Hardware Client to enable '
-        'bidirectional CAN communication.',
-      );
-    }
-    connection.open();
-
-    return _initializeDevice(
-      connection,
-      connectionType: ConnectionType.candle,
-      label: label,
-    );
   }
 
   /// Connect to a SPARK controller on the given COM port (serial SLCAN).
@@ -255,7 +239,7 @@ class DeviceManager {
   /// Throws if the port cannot be opened.
   Future<SparkDevice> connect(String portName, {String label = 'Motor'}) async {
     final connection = SparkConnection.fromPortName(portName);
-    connection.open();
+    await connection.open();
 
     return _initializeDevice(
       connection,
@@ -283,11 +267,11 @@ class DeviceManager {
       label: label,
     );
 
-    // Start a *disabled* heartbeat (watchdog only, motor not enabled) as a
-    // precaution before querying.  Per REV docs, the heartbeat is only
-    // strictly required for motor output, but sending it ensures the
-    // controller is fully responsive in case firmware behaviour varies.
-    heartbeat.start(enabled: false);
+    // Start heartbeat so the controller stays responsive to queries.
+    // fw26 requires the heartbeat to be actively sent — there is no
+    // "disabled" mode in the payload; the motor won't run without
+    // setpoint commands regardless.
+    heartbeat.start(enabled: true);
     await Future.delayed(const Duration(milliseconds: 200));
 
     // Read the device's CAN ID from parameter 0.
@@ -368,7 +352,7 @@ class DeviceManager {
     }
 
     final connection = SimulatedSparkConnection(physics);
-    connection.open();
+    await connection.open();
 
     final heartbeat = SimulatedHeartbeatManager();
     final parameters = SimulatedParameterApi();
@@ -433,7 +417,7 @@ class DeviceManager {
       leaderCanId,
       followerType: followerType,
     );
-    await device.parameters.burnFlash();
+    await device.parameters.burnFlash(heartbeat: device.heartbeat);
     _notifyChanged();
   }
 
@@ -456,7 +440,7 @@ class DeviceManager {
     // Ensure the heartbeat is running so the controller responds to queries.
     final wasRunning = device.heartbeat.isRunning;
     if (!wasRunning) {
-      device.heartbeat.start(enabled: false);
+      device.heartbeat.start(enabled: true);
       await Future.delayed(const Duration(milliseconds: 200));
     }
 
@@ -505,30 +489,32 @@ class DeviceManager {
   ///
   /// Uses a shorter timeout per attempt to keep the total sweep under ~7 s.
   Future<int?> _sweepForCanId(ISparkConnection conn) async {
-    const matchMask = 0x1FFFFFC0;
     for (var id = 0; id <= kMaxCanDeviceId; id++) {
       try {
+        // fw26 param read: apiClass=7, apiIndex=1
         final requestArb = buildArbId(
-          apiClass: kApiClassParameterRead,
-          apiIndex: kParamReadIndexRequest,
-          deviceId: id,
-        );
-        final expectedArb = buildArbId(
-          apiClass: kApiClassParameterRead,
-          apiIndex: kParamReadIndexResponse,
+          apiClass: kApiClassParam,
+          apiIndex: kParamIndexRead,
           deviceId: id,
         );
 
-        final payload = Uint8List(8);
-        payload[0] = kParamCanId & 0xFF;
+        final payload = buildParamReadPayload(kParamCanId);
         conn.sendCommand(requestArb, payload);
 
         final response = await conn.responses
-            .where((r) => (r.arbId & matchMask) == (expectedArb & matchMask))
+            .where((r) {
+              final cls = extractApiClass(r.arbId);
+              final dev = extractDeviceId(r.arbId);
+              // Match class=7 responses from this device where byte[1]=0xFF
+              return cls == kApiClassParam &&
+                  dev == id &&
+                  r.payload[0] == kParamCanId &&
+                  r.payload[1] == 0xFF;
+            })
             .first
             .timeout(const Duration(milliseconds: 100));
 
-        // Response: [paramId, paramType, value(4), ...]
+        // Response: [paramId, 0xFF, value(4), typeTag, status]
         final canId = readUint32(response.payload, 2);
         if (canId < 0 || canId > kMaxCanDeviceId) {
           continue;
@@ -546,6 +532,12 @@ class DeviceManager {
   void _retargetApisToCanId(SparkDevice device) {
     device.parameters = ParameterApi(device.connection, deviceId: device.canId);
     device.control = ControlApi(device.connection, deviceId: device.canId);
+    // Update heartbeat to use the discovered CAN device ID so the
+    // fw26 heartbeat arb ID (apiClass=6, index=0) targets the right device.
+    final hb = device.heartbeat;
+    if (hb is HeartbeatManager) {
+      hb.deviceId = device.canId;
+    }
   }
 
   /// Produce a short, human-friendly error string from an exception.
@@ -559,6 +551,7 @@ class DeviceManager {
 
   /// Dispose all devices and close streams.
   void dispose() {
+    stopAutoRescan();
     disconnectAll();
     _devicesChanged.close();
   }

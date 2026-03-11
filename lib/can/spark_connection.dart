@@ -71,10 +71,20 @@ class SparkConnection implements ISparkConnection {
   // Connection lifecycle
   // -------------------------------------------------------------------------
 
-  /// Open the serial port and start listening for responses.
+  /// Open the serial port, run the SLCAN init sequence, and start listening.
+  ///
+  /// Mirrors the proven Python init sequence from spark_rw_verify.py:
+  ///   1. Open port at 115200 8N1
+  ///   2. Wait 300 ms for the port/device to settle
+  ///   3. Flush any stale data in the receive buffer
+  ///   4. Send `S8\r` (set CAN bitrate to 1 Mbps)
+  ///   5. Wait 20 ms
+  ///   6. Send `O\r`  (open the CAN channel)
+  ///   7. Wait 100 ms for the device to process
+  ///   8. Flush receive buffer again (discard echo / garbage)
   ///
   /// Throws [SerialPortError] if the port cannot be opened.
-  void open() {
+  Future<void> open() async {
     if (_isOpen) return;
 
     final config = SerialPortConfig()
@@ -92,6 +102,22 @@ class SparkConnection implements ISparkConnection {
     _port.config = config;
     _isOpen = true;
     CommsLog.instance.logInfo(portName, 'Port opened at 115200 8N1');
+
+    // Let the port and device settle after open (matches Python's 300 ms).
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    // Drain any stale bytes sitting in the OS receive buffer.
+    _port.flush();
+
+    // SLCAN init: set bitrate to 1 Mbps, then open the CAN channel.
+    _port.write(Uint8List.fromList('S8\r'.codeUnits));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    _port.write(Uint8List.fromList('O\r'.codeUnits));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    // Flush echo / garbage produced by the init commands.
+    _port.flush();
+    CommsLog.instance.logInfo(portName, 'SLCAN init: S8 + O sent');
 
     // Start reading in the background.
     _reader = SerialPortReader(_port, timeout: 100);

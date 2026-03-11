@@ -51,7 +51,7 @@ class SimulatedSparkConnection implements ISparkConnection {
       : _portName = portName ?? '🧪 ${physics.label}';
 
   @override
-  void open() {
+  Future<void> open() async {
     if (_isOpen) return;
     _isOpen = true;
     // Note: do NOT reset physics here — user may have set start position.
@@ -733,7 +733,7 @@ class SimulatedParameterApi implements IParameterApi {
   }
 
   @override
-  Future<void> burnFlash() async {
+  Future<void> burnFlash({IHeartbeatManager? heartbeat}) async {
     // Simulated — nothing to persist.
   }
 

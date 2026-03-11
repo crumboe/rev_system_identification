@@ -97,6 +97,13 @@ class CommsLogEntry {
     String get arbDeviceId =>
       arbId != null ? extractDeviceId(arbId!).toString() : '—';
 
+  /// Whether this entry is a status frame (legacy or new).
+  bool get isStatusFrame {
+    if (arbId == null) return false;
+    final cls = extractApiClass(arbId!);
+    return cls == kApiClassStatus || cls == kApiClassNewStatus;
+  }
+
   /// Payload formatted as space-separated hex bytes (or '—' if absent).
   String get payloadHex => payload != null
       ? payload!.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ')
@@ -191,6 +198,12 @@ class CommsLog {
   /// flood the log.  Toggle this from the Console screen.
   bool logHeartbeats = false;
 
+  /// Whether status frames should be shown in the UI log.
+  ///
+  /// Defaults to `false` because status frames arrive at high frequency
+  /// and dominate the log.  Toggle this from the Console screen.
+  bool showStatusFrames = false;
+
   /// Snapshot of all current log entries (newest last).
   List<CommsLogEntry> get entries => List.unmodifiable(_entries);
 
@@ -202,7 +215,24 @@ class CommsLog {
   // -----------------------------------------------------------------------
 
   /// Log an outbound packet (TX).
+  ///
+  /// Heartbeat frames are automatically reclassified as [CommDirection.heartbeat]
+  /// so the heartbeat filter works regardless of which code path sends them.
   void logTx(String port, int arbId, Uint8List payload) {
+    final apiClass = extractApiClass(arbId);
+    final apiIndex = extractApiIndex(arbId);
+    final isHeartbeat =
+        (apiClass == kApiClassSecondaryHeartbeat &&
+            apiIndex == kSecondaryHeartbeatIndex) ||
+        (apiClass == kApiClassHeartbeatBurn &&
+            apiIndex == kHeartbeatIndex) ||
+        arbId == kRevUniversalSecondaryHeartbeatId;
+
+    if (isHeartbeat) {
+      logHeartbeat(port, arbId, payload);
+      return;
+    }
+
     _add(CommsLogEntry(
       timestamp: DateTime.now(),
       direction: CommDirection.tx,
@@ -271,6 +301,14 @@ class CommsLog {
   // -----------------------------------------------------------------------
 
   void _add(CommsLogEntry entry) {
+    // Always write to the CSV file regardless of UI filter state.
+    _logSink?.writeln(entry.toCsvRow());
+
+    // Skip adding to in-memory buffer if the entry would be filtered out,
+    // so filtered-out high-frequency traffic doesn't evict useful entries.
+    if (!logHeartbeats && entry.direction == CommDirection.heartbeat) return;
+    if (!showStatusFrames && entry.isStatusFrame) return;
+
     _entries.add(entry);
     if (_entries.length > maxEntries) {
       _entries.removeRange(0, _entries.length - maxEntries);
@@ -278,7 +316,6 @@ class CommsLog {
     if (!_controller.isClosed) {
       _controller.add(List.unmodifiable(_entries));
     }
-    _logSink?.writeln(entry.toCsvRow());
   }
 
   // -----------------------------------------------------------------------
@@ -289,34 +326,45 @@ class CommsLog {
     final apiClass = extractApiClass(arbId);
     final apiIndex = extractApiIndex(arbId);
 
-    // Heartbeat
-    if (arbId == kHeartbeatArbId) return 'Heartbeat';
+    // Heartbeat — secondary (apiClass=11, apiIndex=2) or legacy (apiClass=7, apiIndex=0)
+    if ((apiClass == kApiClassSecondaryHeartbeat && apiIndex == kSecondaryHeartbeatIndex) ||
+        (apiClass == kApiClassHeartbeatBurn && apiIndex == kHeartbeatIndex)) {
+      return 'Heartbeat';
+    }
+
+    // Persist parameters (burn flash) — apiClass=63, apiIndex=15
+    if (apiClass == kApiClassPersistParameters && apiIndex == kPersistParametersIndex) {
+      return 'PersistParameters (BurnFlash)';
+    }
 
     if (apiClass == kApiClassControl) {
-      if (apiIndex == kControlIndexSetpoint) {
-        if (payload.length >= 5) {
-          final bd = ByteData.sublistView(payload);
-          final value = bd.getFloat32(0, Endian.little);
-          final ctrlType = payload[4];
-          final typeName = _controlTypeName(ctrlType);
-          return 'Set setpoint $typeName = ${value.toStringAsFixed(3)}';
-        }
-        return 'Set setpoint';
+      // fw26: each control mode has its own API index
+      String? modeName;
+      switch (apiIndex) {
+        case kControlIndexDutyCycle:
+          modeName = 'DutyCycle';
+        case kControlIndexVelocity:
+          modeName = 'Velocity';
+        case kControlIndexPosition:
+          modeName = 'Position';
+        case kControlIndexVoltage:
+          modeName = 'Voltage';
       }
-    } else if (apiClass == kApiClassParameter) {
-      if (apiIndex == kParamIndexGet) {
-        final paramId = readUint16(payload, 0);
-        return 'Get parameter ${_paramName(paramId)} (id=$paramId)';
+      if (modeName != null && payload.length >= 4) {
+        final bd = ByteData.sublistView(payload);
+        final value = bd.getFloat32(0, Endian.little);
+        return 'Set $modeName = ${value.toStringAsFixed(3)}';
       }
-      if (apiIndex == kParamIndexSet) {
-        if (payload.length >= 6) {
-          final bd = ByteData.sublistView(payload);
-          final value = bd.getFloat32(0, Endian.little);
-          final paramId = bd.getUint16(4, Endian.little);
-          return 'Set parameter ${_paramName(paramId)} (id=$paramId) = '
-              '${value.toStringAsFixed(4)}';
-        }
-        return 'Set parameter';
+      if (modeName != null) return 'Set $modeName';
+    } else if (apiClass == kApiClassParam) {
+      if (apiIndex == kParamIndexRead) {
+        final paramId = payload[0];
+        return 'Read parameter ${_paramName(paramId)} (id=$paramId)';
+      }
+    } else if (apiClass == kApiClassParameterWrite) {
+      if (apiIndex == kParamWriteIndexRequest) {
+        final paramId = payload[0];
+        return 'Write parameter ${_paramName(paramId)} (id=$paramId)';
       }
     } else if (apiClass == kApiClassSystem) {
       return 'System: ${_systemIndexName(apiIndex)}';
@@ -342,14 +390,33 @@ class CommsLog {
 
     final typeStr = response.isAck ? 'ACK' : 'DATA';
     switch (apiClass) {
-      case kApiClassParameter:
-        if (apiIndex == kParamIndexGet || apiIndex == kParamIndexSet) {
-          if (response.payload.length >= 4) {
-            final value = readFloat32(response.payload, 0);
-            return '$typeStr param value = ${value.toStringAsFixed(4)}';
+      case kApiClassParam:
+        if (apiIndex == kParamIndexRead) {
+          // Read response: [paramId, 0xFF, value(4), typeTag, status]
+          if (response.payload.length >= 7 && response.payload[1] == 0xFF) {
+            final paramId = response.payload[0];
+            final typeTag = response.payload[6];
+            final double value;
+            if (typeTag == kParamTypeFloat) {
+              value = readFloat32(response.payload, 2);
+            } else {
+              value = readUint32(response.payload, 2).toDouble();
+            }
+            return '$typeStr read ${_paramName(paramId)} = '
+                '${value.toStringAsFixed(4)} (${_typeTagName(typeTag)})';
           }
         }
         return '$typeStr parameter';
+
+      case kApiClassParameterWrite:
+        if (apiIndex == kParamWriteIndexResponse) {
+          // Write ACK: [paramId, typeTag, value(4), flags]
+          if (response.payload.length >= 2) {
+            final paramId = response.payload[0];
+            return '$typeStr write ${_paramName(paramId)} ACK';
+          }
+        }
+        return '$typeStr parameter write';
 
       case kApiClassSystem:
         return '$typeStr system: ${_systemIndexName(apiIndex)}';
@@ -359,24 +426,21 @@ class CommsLog {
         'apiIndex=0x${apiIndex.toRadixString(16)}';
   }
 
-  static String _controlTypeName(int ct) {
-    switch (ct) {
-      case kControlTypeDutyCycle:
-        return 'DutyCycle';
-      case kControlTypeVelocity:
-        return 'Velocity';
-      case kControlTypeVoltage:
-        return 'Voltage';
-      case kControlTypePosition:
-        return 'Position';
-      case kControlTypeCurrent:
-        return 'Current';
-      case kControlTypeMAXMotionPosition:
-        return 'MAXMotion/Position';
-      case kControlTypeMAXMotionVelocity:
-        return 'MAXMotion/Velocity';
+  // _controlTypeName removed: fw26 uses per-mode API indices instead
+  // of a control-type byte in the payload. See _describeOutbound().
+
+  static String _typeTagName(int typeTag) {
+    switch (typeTag) {
+      case kParamTypeBool:
+        return 'bool';
+      case kParamTypeInt:
+        return 'int';
+      case kParamTypeFloat:
+        return 'float';
+      case kParamTypeUint:
+        return 'uint';
       default:
-        return 'type=$ct';
+        return '0x${typeTag.toRadixString(16)}';
     }
   }
 

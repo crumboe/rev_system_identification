@@ -39,7 +39,7 @@ abstract class ISparkConnection {
   Stream<SparkResponse> get responses;
 
   /// Open the connection.
-  void open();
+  Future<void> open();
 
   /// Close the connection.
   void close();
@@ -86,7 +86,7 @@ abstract class IHeartbeatManager {
 abstract class IParameterApi {
   Future<SparkResponse> setParameter(int paramId, double value);
   Future<double> getParameter(int paramId);
-  Future<void> burnFlash();
+  Future<void> burnFlash({IHeartbeatManager? heartbeat});
 
   // CAN ID
   Future<int> getCanId();

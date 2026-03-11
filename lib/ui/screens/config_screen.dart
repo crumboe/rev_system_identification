@@ -152,7 +152,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Gear Ratio (output:input)',
           child: SizedBox(
-            width: 120,
+            width: 180,
             child: NumberBox<double>(
               value: config.gearRatio,
               min: 0.001,
@@ -164,7 +164,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Current Limit (A)',
           child: SizedBox(
-            width: 120,
+            width: 180,
             child: NumberBox<double>(
               value: config.currentLimitAmps,
               min: 1,
@@ -214,7 +214,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Position (rot → ${config.positionUnit})',
           child: SizedBox(
-            width: 150,
+            width: 210,
             child: NumberBox<double>(
               value: config.positionConversionFactor,
               onChanged: (v) =>
@@ -225,7 +225,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Velocity (RPM → ${config.velocityUnit})',
           child: SizedBox(
-            width: 150,
+            width: 210,
             child: NumberBox<double>(
               value: config.velocityConversionFactor,
               onChanged: (v) =>
@@ -256,7 +256,7 @@ class ConfigScreen extends ConsumerWidget {
             label:
                 'Forward Limit (${config.positionUnit})',
             child: SizedBox(
-              width: 150,
+              width: 210,
               child: NumberBox<double>(
                 value: config.forwardSoftLimit,
                 onChanged: (v) {
@@ -270,7 +270,7 @@ class ConfigScreen extends ConsumerWidget {
             label:
                 'Reverse Limit (${config.positionUnit})',
             child: SizedBox(
-              width: 150,
+              width: 210,
               child: NumberBox<double>(
                 value: config.reverseSoftLimit,
                 onChanged: (v) {
@@ -352,7 +352,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Quasistatic Ramp Rate (V/s)',
           child: SizedBox(
-            width: 120,
+            width: 180,
             child: NumberBox<double>(
               value: testParams.quasistaticRampRate,
               min: 0.05,
@@ -365,7 +365,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Dynamic Step Voltage (V)',
           child: SizedBox(
-            width: 120,
+            width: 180,
             child: NumberBox<double>(
               value: testParams.dynamicStepVoltage,
               min: 1.0,
@@ -378,7 +378,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Dynamic Step Duration (s)',
           child: SizedBox(
-            width: 120,
+            width: 180,
             child: NumberBox<double>(
               value: testParams.dynamicStepDuration,
               min: 0.5,
@@ -391,7 +391,7 @@ class ConfigScreen extends ConsumerWidget {
         _ConfigRow(
           label: 'Max Test Voltage (V)',
           child: SizedBox(
-            width: 120,
+            width: 180,
             child: NumberBox<double>(
               value: testParams.maxTestVoltage,
               min: 2.0,
@@ -415,7 +415,7 @@ class ConfigScreen extends ConsumerWidget {
               if (testParams.currentTripAmps != null) ...[
                 const SizedBox(width: 12),
                 SizedBox(
-                  width: 100,
+                  width: 160,
                   child: NumberBox<double>(
                     value: testParams.currentTripAmps,
                     min: 5.0,

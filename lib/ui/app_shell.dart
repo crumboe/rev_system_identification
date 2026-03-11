@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/app_state.dart';
 import 'screens/home_screen.dart';
 import 'screens/device_screen.dart';
+import 'screens/device_config_screen.dart';
 import 'screens/config_screen.dart';
 import 'screens/test_screen.dart';
 import 'screens/results_screen.dart';
@@ -43,6 +44,11 @@ class AppShell extends ConsumerWidget {
             icon: const Icon(FluentIcons.plug_connected),
             title: const Text('Device Setup'),
             body: const DeviceScreen(),
+          ),
+          PaneItem(
+            icon: const Icon(FluentIcons.slider_thumb),
+            title: const Text('Device Parameters'),
+            body: const DeviceConfigScreen(),
           ),
           PaneItem(
             icon: const Icon(FluentIcons.settings),

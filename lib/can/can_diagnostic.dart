@@ -276,7 +276,7 @@ class CanDiagnostic {
         apiIndex: kParamIndexGet,
         deviceId: detectedId,
       ),
-      txPayload: buildParamGetPayload(kParamCanId),
+      txPayload: buildParamReadPayload(kParamCanId),
       expectApiClass: kApiClassParameter,
       expectApiIndex: kParamIndexGet,
     ));

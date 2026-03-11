@@ -31,29 +31,67 @@ const int kApiClassSystem = 0x02;
 const int kApiClassStatus = 0x06;
 const int kApiClassFrameRate = 0x07;
 
-// Control API indices
-const int kControlIndexSetpoint = 0x00;
+// Control API indices — fw26 uses distinct API indices per control mode.
+// All setpoint payloads are float32 LE + 4 zero bytes.
+const int kControlIndexDutyCycle = 0x02;
+const int kControlIndexPosition = 0x0A;
+const int kControlIndexVelocity = 0x0B;
+const int kControlIndexVoltage = 0x05;
 
-// Parameter API indices
-const int kParamIndexSet = 0x00;
-const int kParamIndexGet = 0x01;
-const int kParamIndexBurnFlash = 0x02;
+// Parameter API indices — fw26 uses API class 7 for read, 0x0E for write.
+//   Read:  apiClass=0x07, apiIndex=0x01
+//   Write: apiClass=0x0E, apiIndex=0x00  (5-byte payload, no type tag)
+//   Write ACK: apiClass=0x0E, apiIndex=0x01
+const int kApiClassParam = 0x07;
+const int kParamIndexWrite = 0x00;
+const int kParamIndexRead = 0x01;
 
-// New parameter protocol (REV firmware >= 25.0)
-//
-// Parameter writes use API class 0x0E:
-//   index 0: write request
-//   index 1: write response
-//
-// Parameter reads use API class 0x0F:
-//   index 0: read request  (payload byte 0 = paramId)
-//   index 1: read response  (payload: paramId, paramType, value(4), ...)
+// Persist parameters (burn flash) — from CANSparkFrames.h
+// Frame ID 0x205FFC0 → API Class=63, Index=15, 2-byte payload
+const int kApiClassPersistParameters = 0x3F; // Class 63
+const int kPersistParametersIndex = 0x0F;    // Index 15
+const int kPersistParametersMagicNumber = 15011; // 0x3AA3 — required magic value
+
+// Secondary heartbeat — from CANSparkFrames.h
+// Frame ID 0x2052C80 → API Class=11, Index=2, 8-byte enabled_sparks_bitfield
+const int kApiClassSecondaryHeartbeat = 0x0B; // Class 11
+const int kSecondaryHeartbeatIndex = 0x02;    // Index 2
+
+// REV universal secondary heartbeat — broadcast to ALL devices regardless of
+// CAN ID.  Extracted from HC2 HeartbeatSender bytecode:
+//   devType=0, mfr=5, apiClass=0, apiIndex=11, devId=0 → 0x000502C0
+// HC2 sends BOTH this and the device-specific heartbeat at 25ms intervals.
+const int kRevUniversalSecondaryHeartbeatId = 0x000502C0;
+
+// Legacy heartbeat/burn constants (kept for reference)
+const int kApiClassHeartbeatBurn = 0x07;
+const int kHeartbeatIndex = 0x00;
+const int kBurnFlashIndex = 0x02;
+
+// Parameter type tags (byte[6] in read/write payloads)
+// Confirmed empirically: 0x00=bool, 0x02=int, 0x03=float, 0x04=uint
+const int kParamTypeBool = 0x00;
+const int kParamTypeInt = 0x02;
+
+// Parameter write API (fw26 confirmed protocol — cls=0x0E)
 const int kApiClassParameterWrite = 0x0E;
 const int kApiClassParameterRead = 0x0F;
 const int kParamWriteIndexRequest = 0x00;
 const int kParamWriteIndexResponse = 0x01;
 const int kParamReadIndexRequest = 0x00;
 const int kParamReadIndexResponse = 0x01;
+
+// Burn flash ACK: cls=0x01, idx=0x04 (confirmed from Python)
+const int kBurnFlashAckApiClass = 0x01;
+const int kBurnFlashAckApiIndex = 0x04;
+
+// Legacy aliases kept for backward compatibility
+const int kParamIndexSet = 0x00;
+const int kParamIndexGet = 0x01;
+const int kParamIndexBurnFlash = 0x02;
+const int kControlIndexSetpoint = 0x00;
+const int kParamTypeFloat = 0x03;
+const int kParamTypeUint = 0x04;
 
 // System API indices
 const int kSystemIndexIdentify = 0x00;
@@ -93,9 +131,9 @@ const int kNewStatusIndex8 = 0x08; // Setpoint + isAtSetpoint + pidSlot
 const int kNewStatusIndex9 = 0x09; // MAXMotion setpoint position/velocity
 
 // Control types for setpoint command — from REVLib 2026.0.4
-const int kControlTypeDutyCycle = 0;
+const int kControlTypeDutyCycle = 2;
 const int kControlTypeVelocity = 1;
-const int kControlTypeVoltage = 2;
+const int kControlTypeVoltage = 5;
 const int kControlTypePosition = 3;
 const int kControlTypeCurrent = 4;
 const int kControlTypeMAXMotionPosition = 5;
@@ -108,18 +146,8 @@ const int kUsbCmdTypeStandard = 0x00;
 const int kUsbResponseAck = 0x00;
 const int kUsbResponseData = 0x01;
 
-// FRC Heartbeat
-/// Fixed arbitration ID for the FRC heartbeat frame.
-const int kHeartbeatArbId = 0x01011840;
-
-/// Heartbeat mode flag: Watchdog enabled (bit 4).
-const int kHeartbeatFlagWatchdog = 0x10;
-
-/// Heartbeat mode flag: Robot enabled (bit 0).
-const int kHeartbeatFlagEnabled = 0x01;
-
-/// Heartbeat mode flag: Autonomous (bit 1).
-const int kHeartbeatFlagAutonomous = 0x02;
+// Heartbeat — fw26 uses API Class=6, Index=0 with 8 zero bytes.
+// Send every ≤100ms (80ms recommended). No roboRIO required over USB.
 
 // ---------------------------------------------------------------------------
 // Parameter IDs — from REVLib 2026.0.4 CANSparkParameters.h
@@ -130,8 +158,12 @@ const int kHeartbeatFlagAutonomous = 0x02;
 const int kParamCanId = 0; // c_Spark_kCANID
 const int kParamMotorType = 2; // c_Spark_kMotorType
 const int kParamIdleMode = 6; // c_Spark_kIdleMode
-const int kParamOpenLoopRampRate = 56; // c_Spark_kOpenLoopRampRate
+const int kParamInputDeadband = 7; // c_Spark_kInputDeadband — PWM deadband (% of input)
+const int kParamPolePairs = 10; // c_Spark_kPolePairs — brushless pole pairs (NEO=7, NEO550=7, Vortex=11)
+const int kParamCurrentChop = 11; // c_Spark_kCurrentChop — h-bridge chop limit (amps, default 115; 0=disable)
+const int kParamCurrentChopCycles = 12; // c_Spark_kCurrentChopCycles — PWM cycles off after chop (×50µs)
 const int kParamMotorInverted = 45; // c_Spark_kInverted
+const int kParamOpenLoopRampRate = 56; // c_Spark_kOpenLoopRampRate
 const int kParamPositionConvFactor = 112; // c_Spark_kPositionConversionFactor
 const int kParamVelocityConvFactor = 113; // c_Spark_kVelocityConversionFactor
 
@@ -155,6 +187,26 @@ const int kParamSlot1DFilter = 26; // c_Spark_kDFilter_1
 const int kParamSlot1MinOutput = 27; // c_Spark_kOutputMin_1
 const int kParamSlot1MaxOutput = 28; // c_Spark_kOutputMax_1
 
+// PID Slot 2 (IDs 29–36)
+const int kParamSlot2P = 29; // c_Spark_kP_2
+const int kParamSlot2I = 30; // c_Spark_kI_2
+const int kParamSlot2D = 31; // c_Spark_kD_2
+const int kParamSlot2F = 32; // c_Spark_kV_2
+const int kParamSlot2IZone = 33; // c_Spark_kIZone_2
+const int kParamSlot2DFilter = 34; // c_Spark_kDFilter_2
+const int kParamSlot2MinOutput = 35; // c_Spark_kOutputMin_2
+const int kParamSlot2MaxOutput = 36; // c_Spark_kOutputMax_2
+
+// PID Slot 3 (IDs 37–44)
+const int kParamSlot3P = 37; // c_Spark_kP_3
+const int kParamSlot3I = 38; // c_Spark_kI_3
+const int kParamSlot3D = 39; // c_Spark_kD_3
+const int kParamSlot3F = 40; // c_Spark_kV_3
+const int kParamSlot3IZone = 41; // c_Spark_kIZone_3
+const int kParamSlot3DFilter = 42; // c_Spark_kDFilter_3
+const int kParamSlot3MinOutput = 43; // c_Spark_kOutputMin_3
+const int kParamSlot3MaxOutput = 44; // c_Spark_kOutputMax_3
+
 const int kParamSmartCurrentLimit = 59; // c_Spark_kSmartCurrentStallLimit
 const int kParamSmartCurrentFreeLimit = 60; // c_Spark_kSmartCurrentFreeLimit
 const int kParamSmartCurrentConfig = 61; // c_Spark_kSmartCurrentConfig
@@ -163,10 +215,44 @@ const int kParamSecondaryCurrentLimit = 60; // alias for free-limit
 const int kParamCompensatedNominalVoltage = 75; // c_Spark_kCompensatedNominalVoltage
 const int kParamClosedLoopRampRate = 114; // c_Spark_kClosedLoopRampRate
 
+// Primary quadrature encoder config
+const int kParamEncoderCountsPerRev = 69; // c_Spark_kEncoderCountsPerRev — default 4096 (= 4 × CPR)
+const int kParamEncoderAverageDepth = 70; // c_Spark_kEncoderAverageDepth — velocity averaging (1–64)
+const int kParamEncoderSampleDelta = 71; // c_Spark_kEncoderSampleDelta — delta time in ×500µs steps
+
+// Integrator accumulation caps (all PID slots)
+const int kParamIMaxAccum0 = 96; // c_Spark_kIMaxAccum_0
+const int kParamIMaxAccum1 = 100; // c_Spark_kIMaxAccum_1
+const int kParamIMaxAccum2 = 104; // c_Spark_kIMaxAccum_2
+const int kParamIMaxAccum3 = 108; // c_Spark_kIMaxAccum_3
+
+// Analog sensor
+const int kParamAnalogPositionConversion = 119; // c_Spark_kAnalogPositionConversion — rev/volt
+const int kParamAnalogVelocityConversion = 120; // c_Spark_kAnalogVelocityConversion — vel/v/s
+const int kParamAnalogAverageDepth = 121; // c_Spark_kAnalogAverageDepth
+const int kParamAnalogSensorMode = 122; // c_Spark_kAnalogSensorMode — 0=Absolute, 1=Relative
+const int kParamAnalogInverted = 123; // c_Spark_kAnalogInverted
+const int kParamAnalogSampleDelta = 124; // c_Spark_kAnalogSampleDelta
+
+// Data port / alternate encoder (kDataPortConfig=1 enables alt encoder, disables limit switches)
+const int kParamDataPortConfig = 127; // c_Spark_kDataPortConfig — 0=limit switches, 1=alt encoder
+const int kParamAltEncoderCountsPerRev = 128; // c_Spark_kAltEncoderCountsPerRev
+const int kParamAltEncoderAverageDepth = 129; // c_Spark_kAltEncoderAverageDepth
+const int kParamAltEncoderSampleDelta = 130; // c_Spark_kAltEncoderSampleDelta
+const int kParamAltEncoderInverted = 131; // c_Spark_kAltEncoderInverted
+const int kParamAltEncoderPositionFactor = 132; // c_Spark_kAltEncoderPositionFactor
+const int kParamAltEncoderVelocityFactor = 133; // c_Spark_kAltEncoderVelocityFactor
+
 const int kParamForwardSoftLimit = 115; // c_Spark_kSoftLimitForward
 const int kParamForwardSoftLimitEnabled = 54; // c_Spark_kSoftLimitFwdEn
 const int kParamReverseSoftLimit = 116; // c_Spark_kSoftLimitReverse
 const int kParamReverseSoftLimitEnabled = 55; // c_Spark_kSoftLimitRevEn
+
+// Limit switches
+const int kParamLimitSwitchFwdPolarity = 50; // c_Spark_kLimitSwitchFwdPolarity — 0=N.O., 1=N.C.
+const int kParamLimitSwitchRevPolarity = 51; // c_Spark_kLimitSwitchRevPolarity — 0=N.O., 1=N.C.
+const int kParamHardLimitFwdEn = 52; // c_Spark_kHardLimitFwdEn
+const int kParamHardLimitRevEn = 53; // c_Spark_kHardLimitRevEn
 
 const int kParamFollowerId = 194; // c_Spark_kFollowerModeLeaderId
 const int kParamFollowerConfig = 195; // c_Spark_kFollowerModeIsInverted
@@ -191,12 +277,49 @@ const int kParamSlot1FfKg = 211; // c_Spark_kG_1
 const int kParamSlot1FfKcos = 212; // c_Spark_kCos_1
 const int kParamSlot1FfKcosRatio = 213; // c_Spark_kCosRatio_1
 
+// FeedForward Slot 2
+const int kParamSlot2FfKs = 214; // c_Spark_kS_2
+const int kParamSlot2FfKv = 32; // c_Spark_kV_2 (same as kParamSlot2F)
+const int kParamSlot2FfKa = 215; // c_Spark_kA_2
+const int kParamSlot2FfKg = 216; // c_Spark_kG_2
+const int kParamSlot2FfKcos = 217; // c_Spark_kCos_2
+const int kParamSlot2FfKcosRatio = 218; // c_Spark_kCosRatio_2
+
+// FeedForward Slot 3
+const int kParamSlot3FfKs = 219; // c_Spark_kS_3
+const int kParamSlot3FfKv = 40; // c_Spark_kV_3 (same as kParamSlot3F)
+const int kParamSlot3FfKa = 220; // c_Spark_kA_3
+const int kParamSlot3FfKg = 221; // c_Spark_kG_3
+const int kParamSlot3FfKcos = 222; // c_Spark_kCos_3
+const int kParamSlot3FfKcosRatio = 223; // c_Spark_kCosRatio_3
+
 // MAXMotion Slot 0 (IDs 166–170)
 const int kParamMAXMotionCruiseVelocity0 = 166; // c_Spark_kMAXMotionCruiseVelocity_0
 const int kParamMAXMotionMaxAccel0 = 167;       // c_Spark_kMAXMotionMaxAccel_0
 const int kParamMAXMotionMaxJerk0 = 168;         // c_Spark_kMAXMotionMaxJerk_0
 const int kParamMAXMotionAllowedError0 = 169;    // c_Spark_kMAXMotionAllowedProfileError_0
 const int kParamMAXMotionPositionMode0 = 170;    // c_Spark_kMAXMotionPositionMode_0
+
+// MAXMotion Slot 1 (IDs 171–175)
+const int kParamMAXMotionCruiseVelocity1 = 171; // c_Spark_kMAXMotionCruiseVelocity_1
+const int kParamMAXMotionMaxAccel1 = 172;       // c_Spark_kMAXMotionMaxAccel_1
+const int kParamMAXMotionMaxJerk1 = 173;        // c_Spark_kMAXMotionMaxJerk_1
+const int kParamMAXMotionAllowedError1 = 174;   // c_Spark_kMAXMotionAllowedProfileError_1
+const int kParamMAXMotionPositionMode1 = 175;   // c_Spark_kMAXMotionPositionMode_1
+
+// MAXMotion Slot 2 (IDs 176–180)
+const int kParamMAXMotionCruiseVelocity2 = 176; // c_Spark_kMAXMotionCruiseVelocity_2
+const int kParamMAXMotionMaxAccel2 = 177;       // c_Spark_kMAXMotionMaxAccel_2
+const int kParamMAXMotionMaxJerk2 = 178;        // c_Spark_kMAXMotionMaxJerk_2
+const int kParamMAXMotionAllowedError2 = 179;   // c_Spark_kMAXMotionAllowedProfileError_2
+const int kParamMAXMotionPositionMode2 = 180;   // c_Spark_kMAXMotionPositionMode_2
+
+// MAXMotion Slot 3 (IDs 181–185)
+const int kParamMAXMotionCruiseVelocity3 = 181; // c_Spark_kMAXMotionCruiseVelocity_3
+const int kParamMAXMotionMaxAccel3 = 182;       // c_Spark_kMAXMotionMaxAccel_3
+const int kParamMAXMotionMaxJerk3 = 183;        // c_Spark_kMAXMotionMaxJerk_3
+const int kParamMAXMotionAllowedError3 = 184;   // c_Spark_kMAXMotionAllowedProfileError_3
+const int kParamMAXMotionPositionMode3 = 185;   // c_Spark_kMAXMotionPositionMode_3
 
 // MAXMotion position modes
 const int kMAXMotionPositionModeTrapezoidal = 0;
@@ -310,10 +433,10 @@ SparkResponse decodePacket(Uint8List packet) {
 
 /// Encode a CAN frame as an SLCAN extended-frame string.
 ///
-/// Format: `T<8-hex arb-ID><DLC><2*DLC hex data bytes>\r\n`
+/// Format: `T<8-hex arb-ID><DLC><2*DLC hex data bytes>\r`
 ///
 /// All hex digits are uppercase to match the SPARK MAX SLCAN protocol.
-/// Terminated with `\r\n` as required by firmware 26.x.
+/// Terminated with `\r` only — matching the Python reference and RHC2 log.
 String encodeSlcanFrame(int arbId, Uint8List payload) {
   final idHex =
       (arbId & kArbIdMask).toRadixString(16).padLeft(8, '0').toUpperCase();
@@ -322,7 +445,7 @@ String encodeSlcanFrame(int arbId, Uint8List payload) {
   for (var i = 0; i < dlc; i++) {
     buf.write(payload[i].toRadixString(16).padLeft(2, '0').toUpperCase());
   }
-  buf.write('\r\n');
+  buf.write('\r');
   return buf.toString();
 }
 
@@ -396,44 +519,77 @@ bool isSlcanData(Uint8List data) {
 // ---------------------------------------------------------------------------
 
 /// Build the 8-byte payload for a setpoint command.
-Uint8List buildSetpointPayload(
-  double value,
-  int controlType, {
-  int pidSlot = 0,
-}) {
+///
+/// Firmware 26.x: 4-byte float32 LE followed by 4 zero bytes.
+/// The control mode is selected by the API index in the arb ID,
+/// not by a byte in the payload.
+Uint8List buildSetpointPayload(double value) {
   final payload = Uint8List(8);
   final bd = ByteData.sublistView(payload);
   bd.setFloat32(0, value, Endian.little);
-  payload[4] = controlType & 0xFF;
-  payload[5] = pidSlot & 0xFF;
   return payload;
 }
 
-/// Build the 8-byte payload for a parameter set command.
-Uint8List buildParamSetPayload(double value, int paramId) {
-  final payload = Uint8List(8);
-  final bd = ByteData.sublistView(payload);
-  bd.setFloat32(0, value, Endian.little);
-  bd.setUint16(4, paramId, Endian.little);
+/// Build the 5-byte payload for a parameter write command (fw26).
+///
+/// Layout: [paramId, value(4 bytes LE)]
+///
+/// Confirmed from Python `spark_rw_verify.py`: cls=0x0E idx=0x00 uses
+/// a 5-byte payload with NO type tag.  The device echoes the type tag
+/// in its ACK response (cls=0x0E idx=0x01).
+Uint8List buildParamWritePayload(int paramId, List<int> valueBytes) {
+  final payload = Uint8List(5);
+  payload[0] = paramId & 0xFF;
+  for (var i = 0; i < 4 && i < valueBytes.length; i++) {
+    payload[1 + i] = valueBytes[i];
+  }
   return payload;
 }
 
-/// Build the 8-byte payload for a parameter get command.
-Uint8List buildParamGetPayload(int paramId) {
+/// Build the 8-byte payload for a parameter read command (fw26).
+///
+/// Layout: [paramId, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+Uint8List buildParamReadPayload(int paramId) {
   final payload = Uint8List(8);
-  final bd = ByteData.sublistView(payload);
-  bd.setUint16(0, paramId, Endian.little);
+  payload[0] = paramId & 0xFF;
   return payload;
 }
 
-/// Build the 8-byte heartbeat payload.
-Uint8List buildHeartbeatPayload(int timestampMs, {int modeFlags = 0x11}) {
+/// Build the 8-byte heartbeat payload (fw26).
+///
+/// Firmware 26.x heartbeat: 8 zero bytes sent at API Class=6, Index=0.
+Uint8List buildHeartbeatPayload() {
+  return Uint8List(8);
+}
+
+/// Build the 8-byte secondary heartbeat payload.
+///
+/// The payload is a 64-bit little-endian bitfield where bit N enables
+/// the SPARK with CAN device ID N.
+Uint8List buildSecondaryHeartbeatPayload(int deviceId) {
   final payload = Uint8List(8);
-  final bd = ByteData.sublistView(payload);
-  bd.setUint32(0, timestampMs & 0xFFFFFFFF, Endian.little);
-  payload[4] = 0; // match number
-  payload[5] = modeFlags & 0xFF;
+  if (deviceId >= 0 && deviceId < 64) {
+    // Set the bit corresponding to the target device ID.
+    final byteIndex = deviceId ~/ 8;
+    final bitIndex = deviceId % 8;
+    payload[byteIndex] = 1 << bitIndex;
+  }
   return payload;
+}
+
+/// Build the 1-byte universal heartbeat payload.
+///
+/// HC2 sends DLC=1 with `0x01` when enabled, `0x00` when disabled.
+Uint8List buildUniversalHeartbeatPayload(bool enabled) {
+  return Uint8List.fromList([enabled ? 0x01 : 0x00]);
+}
+
+/// Build the 2-byte persist parameters (burn flash) payload.
+///
+/// Contains the magic bytes [0xA3, 0x3A] — confirmed from Python.
+/// Sent with cls=0x3F idx=0x0F.  ACK arrives on cls=0x01 idx=0x04.
+Uint8List buildPersistParametersPayload() {
+  return Uint8List.fromList([0xA3, 0x3A]);
 }
 
 /// Build the 8-byte payload for setting frame rate.

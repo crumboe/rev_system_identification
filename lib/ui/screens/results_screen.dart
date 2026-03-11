@@ -8,6 +8,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+import '../../can/parameter_api.dart';
 import '../../data/test_data.dart';
 import '../../data/csv_exporter.dart';
 import '../../data/notebook_exporter.dart';
@@ -638,25 +639,35 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final vcf = config.velocityConversionFactor; // user_vel per RPM
     final pcf = config.positionConversionFactor; // user_pos per rotation
 
+    final errors = <String>[];
+
     try {
       if (writeMode == _WriteMode.velocity && _velPid != null) {
         // Write velocity PID gains (kP, kI, kD) to Slot 0, scaled to native
         // RPM units.  kP_native = kP_user × VCF (error in RPM → duty cycle).
-        await device.parameters.setPidSlot0(
-          p: _velPid!.kP * vcf,
-          i: _velPid!.kI * vcf,
-          d: _velPid!.kD * vcf,
-          f: 0.0,
-        );
+        try {
+          await device.parameters.setPidSlot0(
+            p: _velPid!.kP * vcf,
+            i: _velPid!.kI * vcf,
+            d: _velPid!.kD * vcf,
+            f: 0.0,
+          );
+        } on ParameterWriteException catch (e) {
+          errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
+        }
       } else if (writeMode == _WriteMode.position && _posPid != null) {
         // Write position PID gains to Slot 0, scaled to native rotation
         // units.  kP_native = kP_user × PCF (error in rotations → duty cycle).
-        await device.parameters.setPidSlot0(
-          p: _posPid!.kP * pcf,
-          i: _posPid!.kI * pcf,
-          d: _posPid!.kD * pcf,
-          f: 0.0,
-        );
+        try {
+          await device.parameters.setPidSlot0(
+            p: _posPid!.kP * pcf,
+            i: _posPid!.kI * pcf,
+            d: _posPid!.kD * pcf,
+            f: 0.0,
+          );
+        } on ParameterWriteException catch (e) {
+          errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
+        }
       } else {
         return;
       }
@@ -679,33 +690,53 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         kCosRatio = pcf / 360.0;
       }
 
-      await device.parameters.setFeedForwardSlot0(
-        kS: _ff!.kS,
-        kV: _ff!.kV * vcf,
-        kA: _ff!.kA * vcf,
-        kG: kG,
-        kCos: kCos,
-        kCosRatio: kCosRatio,
-      );
+      try {
+        await device.parameters.setFeedForwardSlot0(
+          kS: _ff!.kS,
+          kV: _ff!.kV * vcf,
+          kA: _ff!.kA * vcf,
+          kG: kG,
+          kCos: kCos,
+          kCosRatio: kCosRatio,
+        );
+      } on ParameterWriteException catch (e) {
+        errors.add('FF param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
+      }
 
-      await device.parameters.burnFlash();
+      await device.parameters.burnFlash(heartbeat: device.heartbeat);
 
       if (mounted) {
         final modeLabel = writeMode == _WriteMode.velocity
             ? 'Velocity' : 'Position';
-        await displayInfoBar(context, builder: (ctx, close) {
-          return InfoBar(
-            title: const Text('Success'),
-            content: Text(
-              '$modeLabel PID + FeedForward gains written to controller and saved to flash.',
-            ),
-            severity: InfoBarSeverity.success,
-            action: IconButton(
-              icon: const Icon(FluentIcons.clear),
-              onPressed: close,
-            ),
-          );
-        });
+        if (errors.isNotEmpty) {
+          await displayInfoBar(context, builder: (ctx, close) {
+            return InfoBar(
+              title: const Text('Write Error'),
+              content: Text(
+                '$modeLabel gains — some failed to write:\n${errors.join('\n')}',
+              ),
+              severity: InfoBarSeverity.error,
+              action: IconButton(
+                icon: const Icon(FluentIcons.clear),
+                onPressed: close,
+              ),
+            );
+          });
+        } else {
+          await displayInfoBar(context, builder: (ctx, close) {
+            return InfoBar(
+              title: const Text('Success'),
+              content: Text(
+                '$modeLabel PID + FeedForward gains written to controller and saved to flash.',
+              ),
+              severity: InfoBarSeverity.success,
+              action: IconButton(
+                icon: const Icon(FluentIcons.clear),
+                onPressed: close,
+              ),
+            );
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
