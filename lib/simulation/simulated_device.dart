@@ -230,6 +230,12 @@ class SimulatedPidFfController {
     kParamSlot2FfKv,
     kParamSlot3FfKv,
   ];
+  static const List<int> _ffKaBySlot = [
+    kParamSlot0FfKa,
+    kParamSlot1FfKa,
+    kParamSlot2FfKa,
+    kParamSlot3FfKa,
+  ];
   static const List<int> _ffKgBySlot = [
     kParamSlot0FfKg,
     kParamSlot1FfKg,
@@ -362,8 +368,11 @@ class SimulatedPidFfController {
       _integralAccum = 0.0;
     }
 
-    // Derivative
-    final derivative = _firstTick ? 0.0 : (error - _prevError) / dtSeconds;
+    // Derivative: SPARK position PID uses measured velocity in RPM for the D
+    // term (kD is in duty-cycle/RPM).  Using the physics velocity reading
+    // directly matches real hardware behavior and avoids noise amplification
+    // from numerically differentiating the position measurement.
+    final derivative = _firstTick ? 0.0 : -_physics.noisyVelocityRpm;
     _prevError = error;
     _firstTick = false;
 
