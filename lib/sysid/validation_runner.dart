@@ -596,6 +596,10 @@ class ValidationRunner {
         await _prepareMAXMotionProfileOnly(params.maxMotionConfig!);
       }
 
+      // Set fast frame rates so voltage, current, position, and velocity
+      // telemetry arrive at their highest rate during the test.
+      device.control.configureForSysId();
+
       // Start heartbeat with motor enabled.
       device.heartbeat.start(enabled: true);
 
@@ -699,6 +703,7 @@ class ValidationRunner {
 
       try {
         device.control.stop();
+        device.control.restoreDefaultFrameRates();
         device.heartbeat.disable();
       } catch (_) {}
 
