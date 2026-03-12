@@ -69,6 +69,62 @@ class ParameterApi implements IParameterApi {
 
   ParameterApi(this._conn, {int deviceId = 0}) : _deviceId = deviceId;
 
+  static const List<int> _pidPBySlot = [
+    kParamSlot0P,
+    kParamSlot1P,
+    kParamSlot2P,
+    kParamSlot3P,
+  ];
+  static const List<int> _pidIBySlot = [
+    kParamSlot0I,
+    kParamSlot1I,
+    kParamSlot2I,
+    kParamSlot3I,
+  ];
+  static const List<int> _pidDBySlot = [
+    kParamSlot0D,
+    kParamSlot1D,
+    kParamSlot2D,
+    kParamSlot3D,
+  ];
+  static const List<int> _pidFBySlot = [
+    kParamSlot0F,
+    kParamSlot1F,
+    kParamSlot2F,
+    kParamSlot3F,
+  ];
+  static const List<int> _pidIZoneBySlot = [
+    kParamSlot0IZone,
+    kParamSlot1IZone,
+    kParamSlot2IZone,
+    kParamSlot3IZone,
+  ];
+  static const List<int> _pidDFilterBySlot = [
+    kParamSlot0DFilter,
+    kParamSlot1DFilter,
+    kParamSlot2DFilter,
+    kParamSlot3DFilter,
+  ];
+  static const List<int> _pidMinOutBySlot = [
+    kParamSlot0MinOutput,
+    kParamSlot1MinOutput,
+    kParamSlot2MinOutput,
+    kParamSlot3MinOutput,
+  ];
+  static const List<int> _pidMaxOutBySlot = [
+    kParamSlot0MaxOutput,
+    kParamSlot1MaxOutput,
+    kParamSlot2MaxOutput,
+    kParamSlot3MaxOutput,
+  ];
+
+  static int _slotIndex(int slot) {
+    if (slot < 0 || slot > 3) {
+      throw ArgumentError('PID slot must be in range 0..3, got $slot');
+    }
+    return slot;
+  }
+
   // -----------------------------------------------------------------------
   // Known parameter type tags from the protocol specification.
   // Used as fallback when a read returns type 0x00 for a zero-valued float
@@ -462,6 +518,54 @@ class ParameterApi implements IParameterApi {
       iZone: await getParameter(kParamSlot0IZone),
       maxOutput: await getParameter(kParamSlot0MaxOutput),
       minOutput: await getParameter(kParamSlot0MinOutput),
+    );
+  }
+
+  @override
+  Future<void> setPidSlot(
+    int slot, {
+    required double p,
+    required double i,
+    required double d,
+    double f = 0.0,
+    double iZone = 0.0,
+    double dFilter = 0.0,
+    double maxOutput = 1.0,
+    double minOutput = -1.0,
+  }) async {
+    final s = _slotIndex(slot);
+    final writes = <Future<void> Function()>[
+      () => setParameter(_pidPBySlot[s], p),
+      () => setParameter(_pidIBySlot[s], i),
+      () => setParameter(_pidDBySlot[s], d),
+      () => setParameter(_pidFBySlot[s], f),
+      () => setParameter(_pidIZoneBySlot[s], iZone),
+      () => setParameter(_pidDFilterBySlot[s], dFilter),
+      () => setParameter(_pidMaxOutBySlot[s], maxOutput),
+      () => setParameter(_pidMinOutBySlot[s], minOutput),
+    ];
+    ParameterWriteException? firstError;
+    for (final w in writes) {
+      try {
+        await w();
+      } on ParameterWriteException catch (e) {
+        firstError ??= e;
+      }
+    }
+    if (firstError != null) throw firstError;
+  }
+
+  @override
+  Future<PidGains> getPidSlot(int slot) async {
+    final s = _slotIndex(slot);
+    return PidGains(
+      p: await getParameter(_pidPBySlot[s]),
+      i: await getParameter(_pidIBySlot[s]),
+      d: await getParameter(_pidDBySlot[s]),
+      f: await getParameter(_pidFBySlot[s]),
+      iZone: await getParameter(_pidIZoneBySlot[s]),
+      maxOutput: await getParameter(_pidMaxOutBySlot[s]),
+      minOutput: await getParameter(_pidMinOutBySlot[s]),
     );
   }
 

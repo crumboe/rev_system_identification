@@ -124,6 +124,18 @@ abstract class IParameterApi {
     double minOutput = -1.0,
   });
   Future<PidGains> getPidSlot0();
+  Future<void> setPidSlot(
+    int slot, {
+    required double p,
+    required double i,
+    required double d,
+    double f,
+    double iZone,
+    double dFilter,
+    double maxOutput,
+    double minOutput,
+  });
+  Future<PidGains> getPidSlot(int slot);
 
   // Current limits
   Future<void> setSmartCurrentLimit(double amps);

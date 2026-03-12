@@ -99,6 +99,39 @@ void main() {
       );
       expect(result.riseTime, isNull);
     });
+
+    test('computes rise time for a downward step response', () {
+      // Step from 100 down to 0 with first-order shape (tau=0.5).
+      // 10% step completion at ~0.053s, 90% at ~1.152s, rise time ~1.099s.
+      final data = <DataPoint>[];
+      final setpoints = <double>[];
+      const tau = 0.5;
+      const dt = 0.01;
+      for (var t = 0.0; t < 5.0; t += dt) {
+        final normalised = 1.0 - _exp(-t / tau);
+        final velocity = 100.0 - 100.0 * normalised;
+        data.add(DataPoint(
+          timestamp: t,
+          voltage: 0.0,
+          velocity: velocity,
+          position: 0.0,
+          current: 0.0,
+        ));
+        setpoints.add(0.0);
+      }
+
+      final result = ValidationResult(
+        data: data,
+        setpoints: setpoints,
+        durationSeconds: 5.0,
+        completed: true,
+        mode: ValidationMode.velocity,
+      );
+
+      final rt = result.riseTime;
+      expect(rt, isNotNull);
+      expect(rt!, closeTo(1.1, 0.2));
+    });
   });
 
   // =========================================================================
@@ -199,6 +232,92 @@ void main() {
       );
       expect(result.overshootPercent, isNull);
     });
+
+    test('computes downward-step overshoot from undershoot correctly', () {
+      // Step down from 100 -> 20, then undershoot to 10.
+      // Step amplitude = 80, overshoot amount = 10, expected = 12.5%.
+      final data = <DataPoint>[
+        const DataPoint(
+            timestamp: 0.0,
+            voltage: 0,
+            velocity: 100.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.1,
+            voltage: 0,
+            velocity: 60.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.2,
+            voltage: 0,
+            velocity: 30.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.3,
+            voltage: 0,
+            velocity: 10.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.4,
+            voltage: 0,
+            velocity: 20.0,
+            position: 0,
+            current: 0),
+      ];
+      final result = ValidationResult(
+        data: data,
+        setpoints: List<double>.filled(data.length, 20.0),
+        durationSeconds: 0.5,
+        completed: true,
+        mode: ValidationMode.velocity,
+      );
+
+      expect(result.overshootPercent, closeTo(12.5, 1e-6));
+    });
+
+    test('computes upward-step overshoot from peak correctly', () {
+      // Step up from 20 -> 100, peak to 110.
+      // Step amplitude = 80, overshoot amount = 10, expected = 12.5%.
+      final data = <DataPoint>[
+        const DataPoint(
+            timestamp: 0.0,
+            voltage: 0,
+            velocity: 20.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.1,
+            voltage: 0,
+            velocity: 60.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.2,
+            voltage: 0,
+            velocity: 110.0,
+            position: 0,
+            current: 0),
+        const DataPoint(
+            timestamp: 0.3,
+            voltage: 0,
+            velocity: 100.0,
+            position: 0,
+            current: 0),
+      ];
+      final result = ValidationResult(
+        data: data,
+        setpoints: List<double>.filled(data.length, 100.0),
+        durationSeconds: 0.4,
+        completed: true,
+        mode: ValidationMode.velocity,
+      );
+
+      expect(result.overshootPercent, closeTo(12.5, 1e-6));
+    });
   });
 
   // =========================================================================
@@ -208,7 +327,7 @@ void main() {
   group('ValidationParams', () {
     test('defaults are sensible', () {
       const params = ValidationParams();
-      expect(params.velocitySetpoint, equals(1000.0));
+      expect(params.velocitySetpoint, equals(500.0));
       expect(params.positionSetpoint, equals(0.5));
       expect(params.holdDuration, equals(3.0));
     });
@@ -218,7 +337,7 @@ void main() {
           ValidationParams.forMechanism(MechanismType.flywheel);
       final arm = ValidationParams.forMechanism(MechanismType.arm);
 
-      expect(flywheel.velocitySetpoint, equals(1000.0));
+      expect(flywheel.velocitySetpoint, equals(500.0));
       expect(arm.velocitySetpoint, equals(90.0));
     });
 

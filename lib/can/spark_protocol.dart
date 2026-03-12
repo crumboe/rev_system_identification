@@ -32,11 +32,14 @@ const int kApiClassStatus = 0x06;
 const int kApiClassFrameRate = 0x07;
 
 // Control API indices — fw26 uses distinct API indices per control mode.
-// All setpoint payloads are float32 LE + 4 zero bytes.
+// Setpoint payloads are float32 LE + pidSlot + 3 reserved bytes.
 const int kControlIndexDutyCycle = 0x02;
-const int kControlIndexPosition = 0x0A;
-const int kControlIndexVelocity = 0x0B;
+const int kControlIndexPosition = 0x04;
+const int kControlIndexVelocity = 0x00;
 const int kControlIndexVoltage = 0x05;
+// MAXMotion setpoints observed from REV Hardware Client 2 logs.
+const int kControlIndexMAXMotionPosition = 0x08;
+const int kControlIndexMAXMotionVelocity = 0x09;
 
 // Parameter API indices — fw26 uses API class 7 for read, 0x0E for write.
 //   Read:  apiClass=0x07, apiIndex=0x01
@@ -131,9 +134,9 @@ const int kNewStatusIndex8 = 0x08; // Setpoint + isAtSetpoint + pidSlot
 const int kNewStatusIndex9 = 0x09; // MAXMotion setpoint position/velocity
 
 // Control types for setpoint command — from REVLib 2026.0.4
-const int kControlTypeDutyCycle = 2;
+const int kControlTypeDutyCycle = 0;
 const int kControlTypeVelocity = 1;
-const int kControlTypeVoltage = 5;
+const int kControlTypeVoltage = 2;
 const int kControlTypePosition = 3;
 const int kControlTypeCurrent = 4;
 const int kControlTypeMAXMotionPosition = 5;
@@ -520,13 +523,13 @@ bool isSlcanData(Uint8List data) {
 
 /// Build the 8-byte payload for a setpoint command.
 ///
-/// Firmware 26.x: 4-byte float32 LE followed by 4 zero bytes.
-/// The control mode is selected by the API index in the arb ID,
-/// not by a byte in the payload.
-Uint8List buildSetpointPayload(double value) {
+/// Firmware 26.x: 4-byte float32 LE, pidSlot byte, then 3 reserved bytes.
+/// The control mode is selected by the API index in the arb ID.
+Uint8List buildSetpointPayload(double value, {int pidSlot = 0}) {
   final payload = Uint8List(8);
   final bd = ByteData.sublistView(payload);
   bd.setFloat32(0, value, Endian.little);
+  payload[4] = pidSlot & 0x03;
   return payload;
 }
 

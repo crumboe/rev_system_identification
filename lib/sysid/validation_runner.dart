@@ -64,8 +64,8 @@ class ValidationParams {
   }) {
     return switch (type) {
       MechanismType.flywheel => const ValidationParams(
-          velocitySetpoint: 1000.0, // RPM
-          positionSetpoint: 10.0,   // rotations
+          velocitySetpoint: 500.0, // RPM
+          positionSetpoint: 5.0,   // rotations
           holdDuration: 3.0,
           settleDuration: 2.0,
         ),
@@ -217,14 +217,20 @@ class ValidationResult {
     this.error,
   });
 
-  /// Rise time: time to first reach 90% of setpoint from 10%.
+  /// Rise time: time to first reach 90% of the commanded step from 10%,
+  /// handling both upward and downward moves.
   double? get riseTime {
     if (data.isEmpty || setpoints.isEmpty) return null;
-    final sp = setpoints.first != 0 ? setpoints.first : setpoints.last;
-    if (sp == 0) return null;
+    final target = setpoints.first != 0 ? setpoints.first : setpoints.last;
 
-    final threshold10 = 0.1 * sp;
-    final threshold90 = 0.9 * sp;
+    final initialMeasured =
+        mode == ValidationMode.velocity ? data.first.velocity : data.first.position;
+    final stepAmplitude = target - initialMeasured;
+    if (stepAmplitude.abs() < 1e-9) return null;
+
+    final threshold10 = initialMeasured + 0.1 * stepAmplitude;
+    final threshold90 = initialMeasured + 0.9 * stepAmplitude;
+    final rising = stepAmplitude > 0;
 
     double? t10;
     double? t90;
@@ -234,10 +240,12 @@ class ValidationResult {
           mode == ValidationMode.velocity
               ? data[i].velocity
               : data[i].position;
-      if (t10 == null && measured >= threshold10) {
+      if (t10 == null && (rising ? measured >= threshold10 : measured <= threshold10)) {
         t10 = data[i].timestamp;
       }
-      if (t10 != null && t90 == null && measured >= threshold90) {
+      if (t10 != null &&
+          t90 == null &&
+          (rising ? measured >= threshold90 : measured <= threshold90)) {
         t90 = data[i].timestamp;
         break;
       }
@@ -267,25 +275,31 @@ class ValidationResult {
     return count > 0 ? sumError / count : null;
   }
 
-  /// Overshoot: maximum measured value above the setpoint, as a percentage.
+  /// Overshoot: excursion past the target in the step direction, as a
+  /// percentage of step amplitude.
   double? get overshootPercent {
     if (data.isEmpty || setpoints.isEmpty) return null;
-    final sp = setpoints.first != 0 ? setpoints.first : setpoints.last;
-    if (sp == 0) return null;
+    final target = setpoints.first != 0 ? setpoints.first : setpoints.last;
 
-    double maxMeasured = 0;
+    final initialMeasured =
+        mode == ValidationMode.velocity ? data.first.velocity : data.first.position;
+    final stepAmplitude = target - initialMeasured;
+    if (stepAmplitude.abs() < 1e-9) return 0.0;
+
+    double peak = initialMeasured;
+    double valley = initialMeasured;
     for (final dp in data) {
       final measured =
-          mode == ValidationMode.velocity
-              ? dp.velocity
-              : dp.position;
-      if (measured > maxMeasured) maxMeasured = measured;
+          mode == ValidationMode.velocity ? dp.velocity : dp.position;
+      if (measured > peak) peak = measured;
+      if (measured < valley) valley = measured;
     }
 
-    if (maxMeasured > sp) {
-      return ((maxMeasured - sp) / sp) * 100.0;
-    }
-    return 0.0;
+    final overshootAmount = stepAmplitude > 0
+        ? (peak - target).clamp(0.0, double.infinity)
+        : (target - valley).clamp(0.0, double.infinity);
+
+    return (overshootAmount / stepAmplitude.abs()) * 100.0;
   }
 }
 
@@ -298,6 +312,10 @@ class ValidationResult {
 class ValidationRunner {
   final SparkDevice device;
   final MechanismConfig mechanismConfig;
+
+  /// If true, validation will use the controller's currently stored
+  /// PID/FF gains and skip rewriting them before each test.
+  final bool useStoredControllerGains;
 
   /// Feedforward gains (in user units) to write before each test.
   /// If null, gains are not re-written (they must already be on the controller).
@@ -320,6 +338,7 @@ class ValidationRunner {
     this.feedforwardGains,
     this.velocityPidGains,
     this.positionPidGains,
+    this.useStoredControllerGains = false,
   });
 
   void abort() {
@@ -455,6 +474,29 @@ class ValidationRunner {
     );
   }
 
+  /// Write only MAXMotion profile parameters to slot 0 while preserving the
+  /// controller's existing PID/FF gains.
+  Future<void> _prepareMAXMotionProfileOnly(MAXMotionConfig config) async {
+    final vcf = mechanismConfig.velocityConversionFactor;
+    final pcf = mechanismConfig.positionConversionFactor;
+
+    final nativeCruise =
+        vcf != 0 ? config.cruiseVelocity / vcf : config.cruiseVelocity;
+    final nativeAccel =
+        vcf != 0 ? config.maxAcceleration / vcf : config.maxAcceleration;
+    final nativeJerk = vcf != 0 ? config.maxJerk / vcf : config.maxJerk;
+    final nativeError =
+        pcf != 0 ? config.allowedError / pcf : config.allowedError;
+
+    await device.parameters.configureMAXMotionSlot0(
+      cruiseVelocity: nativeCruise,
+      maxAcceleration: nativeAccel,
+      maxJerk: nativeJerk,
+      allowedError: nativeError,
+      positionMode: config.positionMode,
+    );
+  }
+
   // -------------------------------------------------------------------------
   // Test methods
   // -------------------------------------------------------------------------
@@ -535,16 +577,23 @@ class ValidationRunner {
     final untimed = mode == ValidationMode.maxMotionPosition;
 
     try {
-      // Write the appropriate gains to the controller for this test type.
-      // This ensures the correct PID slot is active and gains are in native
-      // (RPM / rotations) units as required by the SPARK CAN protocol.
-      if (mode == ValidationMode.velocity) {
-        await _prepareForVelocityTest();
+      // Prepare controller settings for this test.
+      if (!useStoredControllerGains) {
+        // Write the appropriate gains to the controller for this test type.
+        // This ensures the correct PID slot is active and gains are in native
+        // (RPM / rotations) units as required by the SPARK CAN protocol.
+        if (mode == ValidationMode.velocity) {
+          await _prepareForVelocityTest();
+        } else if (mode == ValidationMode.maxMotionPosition &&
+            params.maxMotionConfig != null) {
+          await _prepareForMAXMotionTest(params.maxMotionConfig!);
+        } else {
+          await _prepareForPositionTest();
+        }
       } else if (mode == ValidationMode.maxMotionPosition &&
-                 params.maxMotionConfig != null) {
-        await _prepareForMAXMotionTest(params.maxMotionConfig!);
-      } else {
-        await _prepareForPositionTest();
+          params.maxMotionConfig != null) {
+        // In stored-gains mode, still apply MAXMotion profile knobs from UI.
+        await _prepareMAXMotionProfileOnly(params.maxMotionConfig!);
       }
 
       // Start heartbeat with motor enabled.

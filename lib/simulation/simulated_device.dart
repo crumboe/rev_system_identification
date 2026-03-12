@@ -182,8 +182,79 @@ class SimulatedPidFfController {
   final SimulatedParameterApi _params;
   final SimulatedPhysics _physics;
 
+  static const List<int> _pidPBySlot = [
+    kParamSlot0P,
+    kParamSlot1P,
+    kParamSlot2P,
+    kParamSlot3P,
+  ];
+  static const List<int> _pidIBySlot = [
+    kParamSlot0I,
+    kParamSlot1I,
+    kParamSlot2I,
+    kParamSlot3I,
+  ];
+  static const List<int> _pidDBySlot = [
+    kParamSlot0D,
+    kParamSlot1D,
+    kParamSlot2D,
+    kParamSlot3D,
+  ];
+  static const List<int> _pidIZoneBySlot = [
+    kParamSlot0IZone,
+    kParamSlot1IZone,
+    kParamSlot2IZone,
+    kParamSlot3IZone,
+  ];
+  static const List<int> _pidMaxOutBySlot = [
+    kParamSlot0MaxOutput,
+    kParamSlot1MaxOutput,
+    kParamSlot2MaxOutput,
+    kParamSlot3MaxOutput,
+  ];
+  static const List<int> _pidMinOutBySlot = [
+    kParamSlot0MinOutput,
+    kParamSlot1MinOutput,
+    kParamSlot2MinOutput,
+    kParamSlot3MinOutput,
+  ];
+  static const List<int> _ffKsBySlot = [
+    kParamSlot0FfKs,
+    kParamSlot1FfKs,
+    kParamSlot2FfKs,
+    kParamSlot3FfKs,
+  ];
+  static const List<int> _ffKvBySlot = [
+    kParamSlot0FfKv,
+    kParamSlot1FfKv,
+    kParamSlot2FfKv,
+    kParamSlot3FfKv,
+  ];
+  static const List<int> _ffKgBySlot = [
+    kParamSlot0FfKg,
+    kParamSlot1FfKg,
+    kParamSlot2FfKg,
+    kParamSlot3FfKg,
+  ];
+  static const List<int> _ffKcosBySlot = [
+    kParamSlot0FfKcos,
+    kParamSlot1FfKcos,
+    kParamSlot2FfKcos,
+    kParamSlot3FfKcos,
+  ];
+  static const List<int> _ffKcosRatioBySlot = [
+    kParamSlot0FfKcosRatio,
+    kParamSlot1FfKcosRatio,
+    kParamSlot2FfKcosRatio,
+    kParamSlot3FfKcosRatio,
+  ];
+
+  static int _slotIndex(int pidSlot) => pidSlot.clamp(0, 3).toInt();
+
   double _integralAccum = 0.0;
   double _prevError = 0.0;
+  double _prevVelocitySetpointRpm = 0.0;
+  bool _firstVelocityTick = true;
   bool _firstTick = true;
 
   SimulatedPidFfController(this._params, this._physics);
@@ -192,6 +263,8 @@ class SimulatedPidFfController {
   void reset() {
     _integralAccum = 0.0;
     _prevError = 0.0;
+    _prevVelocitySetpointRpm = 0.0;
+    _firstVelocityTick = true;
     _firstTick = true;
   }
 
@@ -201,19 +274,27 @@ class SimulatedPidFfController {
   ///   output = kP*error + kI*integral + kD*derivative
   ///          + kS*sign(setpoint) + kV*setpoint
   ///          + kG (elevator) or kCos*cos(pos) (arm)
-  double computeVelocity(double setpointRpm, double dtSeconds) {
-    final kP = _params.getParamSync(kParamSlot0P);
-    final kI = _params.getParamSync(kParamSlot0I);
-    final kD = _params.getParamSync(kParamSlot0D);
-    final iZone = _params.getParamSync(kParamSlot0IZone);
-    final maxOut = _params.getParamSync(kParamSlot0MaxOutput);
-    final minOut = _params.getParamSync(kParamSlot0MinOutput);
+  double computeVelocity(double setpointRpm, double dtSeconds, {int pidSlot = 0}) {
+    final s = _slotIndex(pidSlot);
+    final kP = _params.getParamSync(_pidPBySlot[s]);
+    final kI = _params.getParamSync(_pidIBySlot[s]);
+    final kD = _params.getParamSync(_pidDBySlot[s]);
+    final iZone = _params.getParamSync(_pidIZoneBySlot[s]);
+    final maxOut = _params.getParamSync(_pidMaxOutBySlot[s]);
+    final minOut = _params.getParamSync(_pidMinOutBySlot[s]);
 
-    final ffKs = _params.getParamSync(kParamSlot0FfKs);
-    final ffKv = _params.getParamSync(kParamSlot0FfKv);
-    final ffKg = _params.getParamSync(kParamSlot0FfKg);
-    final ffKcos = _params.getParamSync(kParamSlot0FfKcos);
-    final ffKcosRatio = _params.getParamSync(kParamSlot0FfKcosRatio);
+    final ffKs = _params.getParamSync(_ffKsBySlot[s]);
+    final ffKv = _params.getParamSync(_ffKvBySlot[s]);
+    final ffKa = _params.getParamSync(_ffKaBySlot[s]);
+    final ffKg = _params.getParamSync(_ffKgBySlot[s]);
+    final ffKcos = _params.getParamSync(_ffKcosBySlot[s]);
+    final ffKcosRatio = _params.getParamSync(_ffKcosRatioBySlot[s]);
+
+    final setpointAccelRpmPerS = _firstVelocityTick
+      ? 0.0
+      : (setpointRpm - _prevVelocitySetpointRpm) / dtSeconds;
+    _prevVelocitySetpointRpm = setpointRpm;
+    _firstVelocityTick = false;
 
     final measuredRpm = _physics.noisyVelocityRpm;
     final error = setpointRpm - measuredRpm;
@@ -237,7 +318,8 @@ class SimulatedPidFfController {
 
     // FeedForward: kS*sign(setpoint) + kV*setpoint + gravity compensation
     double ffOutput = ffKs * (setpointRpm > 0 ? 1.0 : (setpointRpm < 0 ? -1.0 : 0.0))
-        + ffKv * setpointRpm;
+      + ffKv * setpointRpm
+      + ffKa * setpointAccelRpmPerS;
     ffOutput += ffKg; // constant gravity (elevators); 0 for non-elevator
     if (ffKcos != 0.0) {
       // Arm gravity: kCos * cos(position * kCosRatio * 2π)
@@ -256,18 +338,19 @@ class SimulatedPidFfController {
   /// The SPARK's position PID computes:
   ///   output = kP*error + kI*integral + kD*derivative
   ///          + kS*sign(error) + kG (elevator) or kCos*cos(pos) (arm)
-  double computePosition(double setpointRotations, double dtSeconds) {
-    final kP = _params.getParamSync(kParamSlot0P);
-    final kI = _params.getParamSync(kParamSlot0I);
-    final kD = _params.getParamSync(kParamSlot0D);
-    final iZone = _params.getParamSync(kParamSlot0IZone);
-    final maxOut = _params.getParamSync(kParamSlot0MaxOutput);
-    final minOut = _params.getParamSync(kParamSlot0MinOutput);
+  double computePosition(double setpointRotations, double dtSeconds, {int pidSlot = 0}) {
+    final s = _slotIndex(pidSlot);
+    final kP = _params.getParamSync(_pidPBySlot[s]);
+    final kI = _params.getParamSync(_pidIBySlot[s]);
+    final kD = _params.getParamSync(_pidDBySlot[s]);
+    final iZone = _params.getParamSync(_pidIZoneBySlot[s]);
+    final maxOut = _params.getParamSync(_pidMaxOutBySlot[s]);
+    final minOut = _params.getParamSync(_pidMinOutBySlot[s]);
 
-    final ffKs = _params.getParamSync(kParamSlot0FfKs);
-    final ffKg = _params.getParamSync(kParamSlot0FfKg);
-    final ffKcos = _params.getParamSync(kParamSlot0FfKcos);
-    final ffKcosRatio = _params.getParamSync(kParamSlot0FfKcosRatio);
+    final ffKs = _params.getParamSync(_ffKsBySlot[s]);
+    final ffKg = _params.getParamSync(_ffKgBySlot[s]);
+    final ffKcos = _params.getParamSync(_ffKcosBySlot[s]);
+    final ffKcosRatio = _params.getParamSync(_ffKcosRatioBySlot[s]);
 
     final measuredPos = _physics.noisyPositionRotations;
     final error = setpointRotations - measuredPos;
@@ -338,6 +421,7 @@ class SimulatedControlApi implements IControlApi {
   /// The current control mode and setpoint for closed-loop ticking.
   int _activeControlType = kControlTypeVoltage;
   double _activeSetpoint = 0.0;
+  int _activePidSlot = 0;
 
   // MAXMotion profile state --------------------------------------------------
   /// Current profiled position setpoint (rotations) fed to the PID.
@@ -361,7 +445,7 @@ class SimulatedControlApi implements IControlApi {
     if (_pidFf == null) return;
     if (_activeControlType == kControlTypeVelocity) {
       _physics.commandedVoltage =
-          _pidFf!.computeVelocity(_activeSetpoint, dtSeconds);
+          _pidFf!.computeVelocity(_activeSetpoint, dtSeconds, pidSlot: _activePidSlot);
     } else if (_activeControlType == kControlTypeMAXMotionPosition) {
       // Run motion profile (trapezoidal or S-curve) to produce a setpoint.
       final posMode = _paramApi
@@ -373,10 +457,10 @@ class SimulatedControlApi implements IControlApi {
         _advanceTrapezoidalProfile(dtSeconds);
       }
       _physics.commandedVoltage =
-          _pidFf!.computePosition(_profiledSetpoint, dtSeconds);
+          _pidFf!.computePosition(_profiledSetpoint, dtSeconds, pidSlot: _activePidSlot);
     } else if (_activeControlType == kControlTypePosition) {
       _physics.commandedVoltage =
-          _pidFf!.computePosition(_activeSetpoint, dtSeconds);
+          _pidFf!.computePosition(_activeSetpoint, dtSeconds, pidSlot: _activePidSlot);
     }
   }
 
@@ -565,6 +649,7 @@ class SimulatedControlApi implements IControlApi {
     final previousControlType = _activeControlType;
     _activeControlType = controlType;
     _activeSetpoint = value;
+    _activePidSlot = pidSlot.clamp(0, 3).toInt();
 
     if (controlType == kControlTypeVoltage) {
       _pidFf?.reset();
@@ -675,6 +760,62 @@ class SimulatedControlApi implements IControlApi {
 
 /// A parameter API that stores values in memory.
 class SimulatedParameterApi implements IParameterApi {
+  static const List<int> _pidPBySlot = [
+    kParamSlot0P,
+    kParamSlot1P,
+    kParamSlot2P,
+    kParamSlot3P,
+  ];
+  static const List<int> _pidIBySlot = [
+    kParamSlot0I,
+    kParamSlot1I,
+    kParamSlot2I,
+    kParamSlot3I,
+  ];
+  static const List<int> _pidDBySlot = [
+    kParamSlot0D,
+    kParamSlot1D,
+    kParamSlot2D,
+    kParamSlot3D,
+  ];
+  static const List<int> _pidFBySlot = [
+    kParamSlot0F,
+    kParamSlot1F,
+    kParamSlot2F,
+    kParamSlot3F,
+  ];
+  static const List<int> _pidIZoneBySlot = [
+    kParamSlot0IZone,
+    kParamSlot1IZone,
+    kParamSlot2IZone,
+    kParamSlot3IZone,
+  ];
+  static const List<int> _pidDFilterBySlot = [
+    kParamSlot0DFilter,
+    kParamSlot1DFilter,
+    kParamSlot2DFilter,
+    kParamSlot3DFilter,
+  ];
+  static const List<int> _pidMinOutBySlot = [
+    kParamSlot0MinOutput,
+    kParamSlot1MinOutput,
+    kParamSlot2MinOutput,
+    kParamSlot3MinOutput,
+  ];
+  static const List<int> _pidMaxOutBySlot = [
+    kParamSlot0MaxOutput,
+    kParamSlot1MaxOutput,
+    kParamSlot2MaxOutput,
+    kParamSlot3MaxOutput,
+  ];
+
+  static int _slotIndex(int slot) {
+    if (slot < 0 || slot > 3) {
+      throw ArgumentError('PID slot must be in range 0..3, got $slot');
+    }
+    return slot;
+  }
+
   final Map<int, double> _params = {
     kParamCanId: 42.0,
     kParamMotorType: 1.0, // brushless
@@ -691,6 +832,30 @@ class SimulatedParameterApi implements IParameterApi {
     kParamSlot0DFilter: 0.0,
     kParamSlot0MaxOutput: 1.0,
     kParamSlot0MinOutput: -1.0,
+    kParamSlot1P: 0.0,
+    kParamSlot1I: 0.0,
+    kParamSlot1D: 0.0,
+    kParamSlot1F: 0.0,
+    kParamSlot1IZone: 0.0,
+    kParamSlot1DFilter: 0.0,
+    kParamSlot1MaxOutput: 1.0,
+    kParamSlot1MinOutput: -1.0,
+    kParamSlot2P: 0.0,
+    kParamSlot2I: 0.0,
+    kParamSlot2D: 0.0,
+    kParamSlot2F: 0.0,
+    kParamSlot2IZone: 0.0,
+    kParamSlot2DFilter: 0.0,
+    kParamSlot2MaxOutput: 1.0,
+    kParamSlot2MinOutput: -1.0,
+    kParamSlot3P: 0.0,
+    kParamSlot3I: 0.0,
+    kParamSlot3D: 0.0,
+    kParamSlot3F: 0.0,
+    kParamSlot3IZone: 0.0,
+    kParamSlot3DFilter: 0.0,
+    kParamSlot3MaxOutput: 1.0,
+    kParamSlot3MinOutput: -1.0,
     kParamSmartCurrentLimit: 40.0,
     kParamSecondaryCurrentLimit: 80.0,
     kParamClosedLoopRampRate: 0.0,
@@ -847,6 +1012,43 @@ class SimulatedParameterApi implements IParameterApi {
       iZone: await getParameter(kParamSlot0IZone),
       maxOutput: await getParameter(kParamSlot0MaxOutput),
       minOutput: await getParameter(kParamSlot0MinOutput),
+    );
+  }
+
+  @override
+  Future<void> setPidSlot(
+    int slot, {
+    required double p,
+    required double i,
+    required double d,
+    double f = 0.0,
+    double iZone = 0.0,
+    double dFilter = 0.0,
+    double maxOutput = 1.0,
+    double minOutput = -1.0,
+  }) async {
+    final s = _slotIndex(slot);
+    await setParameter(_pidPBySlot[s], p);
+    await setParameter(_pidIBySlot[s], i);
+    await setParameter(_pidDBySlot[s], d);
+    await setParameter(_pidFBySlot[s], f);
+    await setParameter(_pidIZoneBySlot[s], iZone);
+    await setParameter(_pidDFilterBySlot[s], dFilter);
+    await setParameter(_pidMaxOutBySlot[s], maxOutput);
+    await setParameter(_pidMinOutBySlot[s], minOutput);
+  }
+
+  @override
+  Future<PidGains> getPidSlot(int slot) async {
+    final s = _slotIndex(slot);
+    return PidGains(
+      p: await getParameter(_pidPBySlot[s]),
+      i: await getParameter(_pidIBySlot[s]),
+      d: await getParameter(_pidDBySlot[s]),
+      f: await getParameter(_pidFBySlot[s]),
+      iZone: await getParameter(_pidIZoneBySlot[s]),
+      maxOutput: await getParameter(_pidMaxOutBySlot[s]),
+      minOutput: await getParameter(_pidMinOutBySlot[s]),
     );
   }
 

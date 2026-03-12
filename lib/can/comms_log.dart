@@ -349,6 +349,10 @@ class CommsLog {
           modeName = 'Position';
         case kControlIndexVoltage:
           modeName = 'Voltage';
+        case kControlIndexMAXMotionPosition:
+          modeName = 'MAXMotionPosition';
+        case kControlIndexMAXMotionVelocity:
+          modeName = 'MAXMotionVelocity';
       }
       if (modeName != null && payload.length >= 4) {
         final bd = ByteData.sublistView(payload);

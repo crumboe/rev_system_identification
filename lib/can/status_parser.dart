@@ -140,7 +140,7 @@ StatusFrame0 parseStatusFrame0(Uint8List payload) {
 /// Byte  4:   temperature (uint8, °C)
 /// Bytes 5–7: packed 12-bit voltage and current
 ///   voltage = lower 12 bits of (bytes[5] | bytes[6]<<8) × (32/4096)
-///   current = ((bytes[6]>>4) | bytes[7]<<4) × (200/4096)
+///   current = ((bytes[6]>>4) | bytes[7]<<4) / 250
 StatusFrame1 parseStatusFrame1(Uint8List payload) {
   final bd = ByteData.sublistView(payload);
   final velocityRpm = bd.getFloat32(0, Endian.little);
@@ -155,7 +155,7 @@ StatusFrame1 parseStatusFrame1(Uint8List payload) {
   final rawCurrent = ((b6 >> 4) | (b7 << 4)) & 0x0FFF;
 
   final busVoltage = rawVoltage * (32.0 / 4096.0);
-  final outputCurrentAmps = rawCurrent * (200.0 / 4096.0);
+  final outputCurrentAmps = rawCurrent / 250.0;
 
   return StatusFrame1(
     velocityRpm: velocityRpm,
@@ -238,7 +238,7 @@ Object? parseStatusFrame(SparkResponse response) {
 /// Byte layout (from CANSparkFrames.h `spark_status_0_t`):
 ///   Bytes 0–1: int16_t applied_output (scale ≈ 3.082e−5 → [-1, +1])
 ///   Bytes 2–3: uint16_t voltage       (scale ≈ 0.00733 → Volts)
-///   Bytes 4–5: uint16_t current       (scale ≈ 0.03663 → Amps)
+///   Bytes 4–5: uint16_t current       (250 counts per amp)
 ///   Byte  6:   uint8_t  motor_temperature (°C)
 ///   Byte  7:   packed flags (limit switches, inverted, model, etc.)
 ///
@@ -272,7 +272,8 @@ StatusFrame1 parseNewStatusFrame0AsLegacy1(Uint8List payload) {
 
   // Scale factors from CANSparkFrames.h:
   final busVoltage = rawVoltage * 0.0073260073260073;
-  final outputCurrentAmps = rawCurrent * 0.0366300366300366;
+  // Empirical HC2/new-status decode: current is reported in 1/250 A counts.
+  final outputCurrentAmps = rawCurrent / 250.0;
 
   return StatusFrame1(
     velocityRpm: 0.0,  // Velocity is now in new Status 2

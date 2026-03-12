@@ -22,15 +22,17 @@ class ControlApi implements IControlApi {
   /// Map from control type constant to the fw26 API index.
   static const Map<int, int> _controlTypeToApiIndex = {
     kControlTypeDutyCycle: kControlIndexDutyCycle,       // index 2
-    kControlTypeVelocity: kControlIndexVelocity,         // index 11
-    kControlTypePosition: kControlIndexPosition,         // index 10
+    kControlTypeVelocity: kControlIndexVelocity,         // index 0
+    kControlTypePosition: kControlIndexPosition,         // index 4
     kControlTypeVoltage: kControlIndexVoltage,           // index 5
+    kControlTypeMAXMotionPosition: kControlIndexMAXMotionPosition, // index 8
+    kControlTypeMAXMotionVelocity: kControlIndexMAXMotionVelocity, // index 9
   };
 
   /// Send a setpoint command to the controller.
   ///
   /// Firmware 26.x uses distinct API indices per control mode.
-  /// Payload is float32 LE + 4 zero bytes.
+  /// Payload is float32 LE + pidSlot + reserved bytes.
   void setSetpoint(
     double value,
     int controlType, {
@@ -45,7 +47,7 @@ class ControlApi implements IControlApi {
       apiIndex: apiIndex,
       deviceId: _deviceId,
     );
-    final payload = buildSetpointPayload(value);
+    final payload = buildSetpointPayload(value, pidSlot: pidSlot);
     _conn.sendCommand(arbId, payload);
   }
 

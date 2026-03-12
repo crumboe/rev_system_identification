@@ -15,6 +15,7 @@ import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../simulation/simulated_device.dart';
+import '../../simulation/flywheel_physics.dart';
 import '../../state/app_state.dart';
 import '../../sysid/validation_runner.dart';
 import '../../can/spark_protocol.dart';
@@ -32,6 +33,7 @@ class ValidationScreen extends ConsumerStatefulWidget {
 class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   ValidationRunner? _runner;
   bool _isRunning = false;
+  bool _useStoredControllerGains = false;
   String _statusMessage = 'Ready — compute and write gains from the Results '
       'page before running a validation test.';
 
@@ -123,14 +125,15 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
     final hasGains = ff != null && velPid != null;
     final hasPositionGains = ff != null && posPid != null;
+    final usingStored = _useStoredControllerGains;
     final canRunVelocity = device != null &&
         device.isConnected &&
         !_isRunning &&
-        hasGains;
+      (usingStored || hasGains);
     final canRunPosition = device != null &&
         device.isConnected &&
         !_isRunning &&
-        hasPositionGains;
+      (usingStored || hasPositionGains);
     final canRunMAXMotion = canRunPosition;
 
     // Unit labels
@@ -166,6 +169,26 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   : _error != null
                       ? InfoBarSeverity.error
                       : InfoBarSeverity.info,
+            ),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                ToggleSwitch(
+                  checked: _useStoredControllerGains,
+                  onChanged: _isRunning
+                      ? null
+                      : (v) {
+                          setState(() => _useStoredControllerGains = v);
+                        },
+                  content: const Text('Use PID/FF currently stored on controller'),
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'When enabled, validation will not overwrite slot gains.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
 
@@ -249,7 +272,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   ),
                 ],
 
-                if (!hasGains) ...[
+                if (!usingStored && !hasGains) ...[
                   const SizedBox(width: 16),
                   const InfoBar(
                     title: Text('No gains'),
@@ -596,8 +619,29 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     PidResult? velPid,
     PidResult? posPid,
   }) async {
-    final velSp = double.tryParse(_velSpCtrl.text);
+    var velSp = double.tryParse(_velSpCtrl.text);
     final posSp = double.tryParse(_posSpCtrl.text);
+
+    String? simulationLimitMessage;
+    if (mode == ValidationMode.velocity &&
+        velSp != null &&
+        device.isSimulated &&
+        device.connection is SimulatedSparkConnection) {
+      final conn = device.connection as SimulatedSparkConnection;
+      final physics = conn.physics;
+      if (physics is FlywheelPhysics && physics.kV > 0) {
+        final maxRpm =
+            ((physics.nominalVoltage - physics.kS).clamp(0.0, double.infinity)) /
+                physics.kV;
+        if (velSp.abs() > maxRpm) {
+          final clamped = maxRpm * 0.95 * velSp.sign;
+          simulationLimitMessage =
+              'Sim flywheel max speed is about ${maxRpm.toStringAsFixed(0)} RPM; '
+              'clamped setpoint to ${clamped.toStringAsFixed(0)} RPM.';
+          velSp = clamped;
+        }
+      }
+    }
 
     if (mode == ValidationMode.velocity && (velSp == null || velSp == 0)) {
       setState(() => _error = 'Invalid velocity setpoint.');
@@ -653,6 +697,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...'
               : 'Running position step test — setpoint: '
                   '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...';
+      if (simulationLimitMessage != null) {
+        _statusMessage = simulationLimitMessage!;
+      }
     });
 
     _runner = ValidationRunner(
@@ -661,6 +708,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       feedforwardGains: ff,
       velocityPidGains: velPid,
       positionPidGains: posPid,
+      useStoredControllerGains: _useStoredControllerGains,
     );
 
     try {
@@ -880,6 +928,20 @@ class _ValidationLiveChart extends StatelessWidget {
         ),
     ];
 
+    final allSpots = <FlSpot>[
+      ...measuredSpots,
+      ...setpointSpots,
+    ];
+    final minX = allSpots.isEmpty
+        ? 0.0
+        : allSpots.map((s) => s.x).reduce((a, b) => a < b ? a : b);
+    var maxX = allSpots.isEmpty
+        ? 1.0
+        : allSpots.map((s) => s.x).reduce((a, b) => a > b ? a : b);
+    if ((maxX - minX).abs() < 1e-6) {
+      maxX = minX + 1.0;
+    }
+
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -911,7 +973,8 @@ class _ValidationLiveChart extends StatelessWidget {
                 ? const Center(child: Text('No data'))
                 : LineChart(
                     LineChartData(
-                      minX: 0,
+                      minX: minX,
+                      maxX: maxX,
                       lineTouchData: LineTouchData(
                         touchTooltipData: LineTouchTooltipData(
                           getTooltipItems: (touchedSpots) {

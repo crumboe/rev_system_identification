@@ -91,7 +91,7 @@ void main() {
     test('packed 12-bit voltage and current decode correctly', () {
       // Build known packed values
       // voltage raw 12-bit = 2048 → voltage = 2048 * 32/4096 = 16.0 V
-      // current raw 12-bit = 1024 → current = 1024 * 200/4096 = 50.0 A
+      // current raw 12-bit = 1024 → current = 1024 / 250 = 4.096 A
       final payload = Uint8List(8);
       // rawVoltage = (b5 | (b6 << 8)) & 0x0FFF = 2048 = 0x800
       // rawCurrent = ((b6 >> 4) | (b7 << 4)) & 0x0FFF = 1024 = 0x400
@@ -103,7 +103,7 @@ void main() {
 
       final sf = parseStatusFrame1(payload);
       expect(sf.busVoltage, closeTo(16.0, 0.1));
-      expect(sf.outputCurrentAmps, closeTo(50.0, 0.5));
+      expect(sf.outputCurrentAmps, closeTo(4.096, 0.01));
     });
 
     test('negative velocity float32 works', () {
@@ -311,12 +311,12 @@ void main() {
       final payload = Uint8List(8);
       final bd = ByteData.sublistView(payload);
       bd.setUint16(2, 1636, Endian.little);  // ~12V at scale 0.00733
-      bd.setUint16(4, 546, Endian.little);   // ~20A at scale 0.03663
+      bd.setUint16(4, 5000, Endian.little);  // 20A at 250 counts per amp
       payload[6] = 25;                         // 25°C
 
       final result = parseNewStatusFrame0(payload);
       expect(result.partialStatus1.busVoltage, closeTo(12.0, 0.2));
-      expect(result.partialStatus1.outputCurrentAmps, closeTo(20.0, 0.5));
+      expect(result.partialStatus1.outputCurrentAmps, closeTo(20.0, 0.05));
       expect(result.partialStatus1.temperatureC, equals(25));
     });
 

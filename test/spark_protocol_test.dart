@@ -193,7 +193,7 @@ void main() {
       final bd = ByteData.sublistView(payload);
       final readValue = bd.getFloat32(0, Endian.little);
       expect(readValue, closeTo(3.14, 1e-5));
-      // Bytes 4-7 should be zero (fw26: no controlType/pidSlot in payload)
+      // Bytes 4-7 should be zero by default (pidSlot defaults to 0).
       expect(payload[4], equals(0));
       expect(payload[5], equals(0));
       expect(payload[6], equals(0));
@@ -209,6 +209,14 @@ void main() {
     test('zero payload is all zeros', () {
       final payload = buildSetpointPayload(0.0);
       expect(payload.every((b) => b == 0), isTrue);
+    });
+
+    test('pidSlot is encoded in byte 4', () {
+      final payload = buildSetpointPayload(100.0, pidSlot: 3);
+      expect(payload[4], equals(3));
+      expect(payload[5], equals(0));
+      expect(payload[6], equals(0));
+      expect(payload[7], equals(0));
     });
   });
 
