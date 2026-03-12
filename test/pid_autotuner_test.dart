@@ -79,7 +79,7 @@ void main() {
   group('PidAutoTuner.tunePosition', () {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
 
-    test('kP is kA * omega^2 / nomV', () {
+    test('kP is 60 * kA * omega^2 / nomV', () {
       const bw = 5.0; // Hz
       final pid = PidAutoTuner.tunePosition(
         ff: ff,
@@ -87,7 +87,7 @@ void main() {
         desiredBandwidthHz: bw,
       );
       final omega = 2.0 * math.pi * bw;
-      final expected = ff.kA * omega * omega / 12.0;
+      final expected = 60.0 * ff.kA * omega * omega / 12.0;
       expect(pid.kP, closeTo(expected, 1e-9));
     });
 

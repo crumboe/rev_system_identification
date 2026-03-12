@@ -153,9 +153,12 @@ void main() {
       // gravity is compensated by kCos.  With error=0.125 rot and nomV=12:
       //   pidVoltage = kP * 0.125 * 12, so kP >= 0.20/(0.125*12) ~ 0.14.
       // Also include kS feedforward so the controller overcomes friction.
+      // kD is in duty-cycle/RPM (SPARK position PID uses velocity in RPM for
+      // the derivative term).  For the arm reaching ~117 RPM max, kD=0.0003
+      // gives a D contribution of ~0.035 duty-cycle (gentle damping).
       params.setParameter(kParamSlot0P, 1.0);
       params.setParameter(kParamSlot0I, 0.5);
-      params.setParameter(kParamSlot0D, 0.02);
+      params.setParameter(kParamSlot0D, 0.0003);
       params.setParameter(kParamSlot0FfKs, 0.20);
       params.setParameter(kParamSlot0FfKcos, 0.80);
       params.setParameter(kParamSlot0FfKcosRatio, 1.0);

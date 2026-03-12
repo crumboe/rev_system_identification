@@ -87,10 +87,19 @@ class PidAutoTuner {
 
     // For a second-order response with natural frequency ω_n and
     // damping ratio ζ (zeta):
-    //   kP_volts = kA · ω_n²
-    //   kD_volts = 2·ζ · kA · ω_n - kV  (minus the plant's inherent damping)
+    //
+    // The SPARK position PID uses velocity in RPM for the D term, while
+    // position error is in rotations.  The plant transfer function from
+    // voltage to position (rotations) is:
+    //   G(s) = 1 / (60 · kA · s² + 60 · kV · s)
+    // (the factor 60 converts RPM → rot/s via ω_rot_per_s = ω_RPM / 60).
+    //
+    // With PD control: C(s) = kP_spark + kD_spark·s (in duty-cycle/rot, dc/RPM)
+    // Pole placement yields:
+    //   kP_volts = 60 · kA · ω_n²   →  kP_spark = 60 · kA · ω_n² / nomV
+    //   kD_volts = 2·ζ · kA · ω_n - kV  →  kD_spark = kD_volts / nomV
 
-    final kPVolts = ff.kA * omega * omega;
+    final kPVolts = 60.0 * ff.kA * omega * omega;
     final kDVolts = (2.0 * zeta * ff.kA * omega - ff.kV);
 
     // Convert to SPARK PID units (duty cycle per rotation for P, per RPM for D).
