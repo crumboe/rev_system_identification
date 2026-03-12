@@ -323,6 +323,10 @@ class ParameterApi implements IParameterApi {
       );
     }
 
+    // Small delay between successive writes to prevent device timeouts
+    // when many parameters are written back-to-back.
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+
     return ack;
   }
 
@@ -431,6 +435,16 @@ class ParameterApi implements IParameterApi {
 
   Future<void> setOpenLoopRampRate(double seconds) =>
       setParameter(kParamOpenLoopRampRate, seconds);
+
+  // -----------------------------------------------------------------------
+  // Feedback sensor
+  // -----------------------------------------------------------------------
+
+  Future<void> setClosedLoopFeedbackSensor(int sensorType) =>
+      setParameter(kParamClosedLoopControlSensor, sensorType.toDouble());
+
+  Future<double> getClosedLoopFeedbackSensor() =>
+      getParameter(kParamClosedLoopControlSensor);
 
   // -----------------------------------------------------------------------
   // Conversion factors

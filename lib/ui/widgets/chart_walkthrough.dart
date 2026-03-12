@@ -90,10 +90,11 @@ class _ChartWalkthroughState extends State<ChartWalkthrough> {
           ),
         ),
 
-        // Explanation card
+        // Explanation card — sized to fill most of the chart area
         Positioned(
           left: 12,
           right: 12,
+          top: 24,
           bottom: 12,
           child: Container(
             padding: const EdgeInsets.all(16),
@@ -112,7 +113,6 @@ class _ChartWalkthroughState extends State<ChartWalkthrough> {
               ],
             ),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Step counter and title
@@ -143,7 +143,7 @@ class _ChartWalkthroughState extends State<ChartWalkthrough> {
                       child: Text(
                         step.title,
                         style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: 15,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -157,14 +157,18 @@ class _ChartWalkthroughState extends State<ChartWalkthrough> {
                 ),
                 const SizedBox(height: 8),
 
-                // Description
-                Text(
-                  step.description,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: theme.typography.body?.color
-                        ?.withValues(alpha: 0.85),
-                    height: 1.4,
+                // Description — scrollable for longer educational content
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Text(
+                      step.description,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.typography.body?.color
+                            ?.withValues(alpha: 0.85),
+                        height: 1.5,
+                      ),
+                    ),
                   ),
                 ),
 

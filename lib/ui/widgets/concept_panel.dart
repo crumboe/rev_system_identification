@@ -16,7 +16,11 @@ class ConceptEntry {
 }
 
 class ConceptPanel extends StatelessWidget {
-  const ConceptPanel({super.key});
+  /// When true, renders just the list (for use inside a dialog).
+  /// When false, wraps in an Expander.
+  final bool embedded;
+
+  const ConceptPanel({super.key, this.embedded = false});
 
   static const List<ConceptEntry> _concepts = [
     ConceptEntry(
@@ -124,6 +128,46 @@ class ConceptPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final list = SizedBox(
+      height: 400,
+      child: ListView.builder(
+        itemCount: _concepts.length,
+        itemBuilder: (context, index) {
+          final entry = _concepts[index];
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, right: 12),
+                  child: Icon(entry.icon, size: 18),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        entry.description,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    if (embedded) return list;
+
     return Expander(
       header: const Row(
         children: [
@@ -132,43 +176,7 @@ class ConceptPanel extends StatelessWidget {
           Text('Control Theory Concepts'),
         ],
       ),
-      content: SizedBox(
-        height: 360,
-        child: ListView.builder(
-          itemCount: _concepts.length,
-          itemBuilder: (context, index) {
-            final entry = _concepts[index];
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2, right: 12),
-                    child: Icon(entry.icon, size: 18),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          entry.title,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          entry.description,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
+      content: list,
     );
   }
 }

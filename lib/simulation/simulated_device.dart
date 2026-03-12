@@ -29,6 +29,9 @@ class SimulatedSparkConnection implements ISparkConnection {
   /// Reference to the control API for closed-loop tick updates.
   SimulatedControlApi? controlApi;
 
+  /// Reference to parameter API for reading onboard conversion factors.
+  SimulatedParameterApi? paramApi;
+
   @override
   bool get isOpen => _isOpen;
 
@@ -43,6 +46,9 @@ class SimulatedSparkConnection implements ISparkConnection {
 
   @override
   StatusFrame2? lastStatus2;
+
+  @override
+  StatusFrame5? lastStatus5;
 
   @override
   Stream<SparkResponse> get responses => const Stream<SparkResponse>.empty();
@@ -74,6 +80,10 @@ class SimulatedSparkConnection implements ISparkConnection {
         ? (physics.commandedVoltage / physics.nominalVoltage).clamp(-1.0, 1.0)
         : 0.0;
 
+    // Read onboard conversion factors (default to 1.0 if not set).
+    final vcf = paramApi?.getParamSync(kParamVelocityConvFactor) ?? 1.0;
+    final pcf = paramApi?.getParamSync(kParamPositionConvFactor) ?? 1.0;
+
     lastStatus0 = StatusFrame0(
       appliedOutput: appliedOutput,
       faults: 0,
@@ -81,15 +91,24 @@ class SimulatedSparkConnection implements ISparkConnection {
       flags: 0,
     );
 
+    // Apply conversion factors to match real hardware behavior:
+    // status frames report in user units when CFs are set.
     lastStatus1 = StatusFrame1(
-      velocityRpm: physics.noisyVelocityRpm,
+      velocityRpm: physics.noisyVelocityRpm * vcf,
       temperatureC: physics.temperatureC,
       busVoltage: physics.nominalVoltage,
       outputCurrentAmps: physics.outputCurrentAmps,
     );
 
+    final noisyPos = physics.noisyPositionRotations * pcf;
+
     lastStatus2 = StatusFrame2(
-      positionRotations: physics.noisyPositionRotations,
+      positionRotations: noisyPos,
+    );
+
+    // Simulate an absolute encoder reading the same position.
+    lastStatus5 = StatusFrame5(
+      absoluteEncoderPosition: noisyPos,
     );
   }
 
@@ -276,11 +295,10 @@ class SimulatedPidFfController {
 
   /// Compute voltage for velocity closed-loop control.
   ///
-  /// The SPARK's velocity PID computes:
-  ///   output = kP*error + kI*integral + kD*derivative
-  ///          + kS*sign(setpoint) + kV*setpoint
-  ///          + kG (elevator) or kCos*cos(pos) (arm)
-  double computeVelocity(double setpointRpm, double dtSeconds, {int pidSlot = 0}) {
+  /// With onboard conversion factors, the setpoint arrives in user units
+  /// and the PID error is computed in user units.  Raw physics measurements
+  /// are converted using the stored VCF before comparison.
+  double computeVelocity(double setpointUserUnits, double dtSeconds, {int pidSlot = 0}) {
     final s = _slotIndex(pidSlot);
     final kP = _params.getParamSync(_pidPBySlot[s]);
     final kI = _params.getParamSync(_pidIBySlot[s]);
@@ -296,14 +314,19 @@ class SimulatedPidFfController {
     final ffKcos = _params.getParamSync(_ffKcosBySlot[s]);
     final ffKcosRatio = _params.getParamSync(_ffKcosRatioBySlot[s]);
 
-    final setpointAccelRpmPerS = _firstVelocityTick
+    // Onboard conversion factors.
+    final vcf = _params.getParamSync(kParamVelocityConvFactor);
+    final pcf = _params.getParamSync(kParamPositionConvFactor);
+
+    final setpointAccel = _firstVelocityTick
       ? 0.0
-      : (setpointRpm - _prevVelocitySetpointRpm) / dtSeconds;
-    _prevVelocitySetpointRpm = setpointRpm;
+      : (setpointUserUnits - _prevVelocitySetpointRpm) / dtSeconds;
+    _prevVelocitySetpointRpm = setpointUserUnits;
     _firstVelocityTick = false;
 
-    final measuredRpm = _physics.noisyVelocityRpm;
-    final error = setpointRpm - measuredRpm;
+    // Convert raw measurement to user units via onboard CF.
+    final measuredUserUnits = _physics.noisyVelocityRpm * vcf;
+    final error = setpointUserUnits - measuredUserUnits;
 
     // Integral with anti-windup via IZone
     if (iZone <= 0 || error.abs() < iZone) {
@@ -323,13 +346,16 @@ class SimulatedPidFfController {
     final pidOutput = (kP * error + kI * _integralAccum + kD * derivative) * nomV;
 
     // FeedForward: kS*sign(setpoint) + kV*setpoint + gravity compensation
-    double ffOutput = ffKs * (setpointRpm > 0 ? 1.0 : (setpointRpm < 0 ? -1.0 : 0.0))
-      + ffKv * setpointRpm
-      + ffKa * setpointAccelRpmPerS;
+    // All in user units (onboard CFs handle the unit space).
+    double ffOutput = ffKs * (setpointUserUnits > 0 ? 1.0 : (setpointUserUnits < 0 ? -1.0 : 0.0))
+      + ffKv * setpointUserUnits
+      + ffKa * setpointAccel;
     ffOutput += ffKg; // constant gravity (elevators); 0 for non-elevator
     if (ffKcos != 0.0) {
       // Arm gravity: kCos * cos(position * kCosRatio * 2π)
-      final measuredPos = _physics.noisyPositionRotations;
+      // Position is in user units (e.g. degrees); kCosRatio converts to
+      // full rotations for the cos() computation.
+      final measuredPos = _physics.noisyPositionRotations * pcf;
       final absRotations = measuredPos * (ffKcosRatio != 0 ? ffKcosRatio : 1.0);
       ffOutput += ffKcos * _cos(absRotations * 2.0 * 3.14159265);
     }
@@ -341,10 +367,10 @@ class SimulatedPidFfController {
 
   /// Compute voltage for position closed-loop control.
   ///
-  /// The SPARK's position PID computes:
-  ///   output = kP*error + kI*integral + kD*derivative
-  ///          + kS*sign(error) + kG (elevator) or kCos*cos(pos) (arm)
-  double computePosition(double setpointRotations, double dtSeconds, {int pidSlot = 0}) {
+  /// With onboard conversion factors, the setpoint arrives in user units
+  /// and the PID error is computed in user units.  Raw physics measurements
+  /// are converted using the stored PCF before comparison.
+  double computePosition(double setpointUserUnits, double dtSeconds, {int pidSlot = 0}) {
     final s = _slotIndex(pidSlot);
     final kP = _params.getParamSync(_pidPBySlot[s]);
     final kI = _params.getParamSync(_pidIBySlot[s]);
@@ -358,8 +384,13 @@ class SimulatedPidFfController {
     final ffKcos = _params.getParamSync(_ffKcosBySlot[s]);
     final ffKcosRatio = _params.getParamSync(_ffKcosRatioBySlot[s]);
 
-    final measuredPos = _physics.noisyPositionRotations;
-    final error = setpointRotations - measuredPos;
+    // Onboard conversion factors.
+    final vcf = _params.getParamSync(kParamVelocityConvFactor);
+    final pcf = _params.getParamSync(kParamPositionConvFactor);
+
+    // Convert raw measurement to user units via onboard CF.
+    final measuredPos = _physics.noisyPositionRotations * pcf;
+    final error = setpointUserUnits - measuredPos;
 
     // Integral with anti-windup
     if (iZone <= 0 || error.abs() < iZone) {
@@ -368,11 +399,9 @@ class SimulatedPidFfController {
       _integralAccum = 0.0;
     }
 
-    // Derivative: SPARK position PID uses measured velocity in RPM for the D
-    // term (kD is in duty-cycle/RPM).  Using the physics velocity reading
-    // directly matches real hardware behavior and avoids noise amplification
-    // from numerically differentiating the position measurement.
-    final derivative = _firstTick ? 0.0 : -_physics.noisyVelocityRpm;
+    // Derivative: SPARK position PID uses measured velocity for the D term.
+    // Convert raw velocity to user units via VCF.
+    final derivative = _firstTick ? 0.0 : -_physics.noisyVelocityRpm * vcf;
     _prevError = error;
     _firstTick = false;
 
@@ -387,7 +416,7 @@ class SimulatedPidFfController {
     ffOutput += ffKg; // constant gravity (elevators); 0 for non-elevator
     if (ffKcos != 0.0) {
       // Arm gravity: kCos * cos(position * kCosRatio * 2π)
-      // kCosRatio converts user units → absolute rotations
+      // Position is in user units; kCosRatio converts to full rotations.
       final absRotations = measuredPos * (ffKcosRatio != 0 ? ffKcosRatio : 1.0);
       ffOutput += ffKcos * _cos(absRotations * 2.0 * 3.14159265);
     }
@@ -479,7 +508,9 @@ class SimulatedControlApi implements IControlApi {
 
   void _initProfileIfNeeded() {
     if (!_profileInitialised) {
-      _profiledSetpoint = _physics.noisyPositionRotations;
+      // Profile operates in user position units (onboard CFs).
+      final pcf = _paramApi.getParamSync(kParamPositionConvFactor);
+      _profiledSetpoint = _physics.noisyPositionRotations * pcf;
       _profiledVelocity = 0.0;
       _profiledAccel = 0.0;
       _profileInitialised = true;
@@ -488,19 +519,28 @@ class SimulatedControlApi implements IControlApi {
 
   ({double cruise, double maxAccel, double maxJerk, double allowedError})
       _readProfileParams() {
-    final cruiseRpm =
+    // MAXMotion params are stored in user velocity units.  To convert to
+    // user-position-units per second the correct factor is PCF/(60·VCF):
+    //   Flywheel (PCF=1, VCF=1)     → 1/60  (RPM → rot/s)
+    //   Arm      (PCF=360, VCF=6)   → 1     (deg/s already)
+    //   Elevator (PCF=p, VCF=p/60)  → 1     (in/s already)
+    final pcf = _paramApi.getParamSync(kParamPositionConvFactor);
+    final vcf = _paramApi.getParamSync(kParamVelocityConvFactor);
+    final scale = vcf != 0 ? pcf / (60.0 * vcf) : 1.0 / 60.0;
+
+    final cruiseUserVel =
         _paramApi.getParamSync(kParamMAXMotionCruiseVelocity0).abs();
-    final maxAccelRpmPerS =
+    final maxAccelUserVel =
         _paramApi.getParamSync(kParamMAXMotionMaxAccel0).abs();
-    final maxJerkRpmPerS2 =
+    final maxJerkUserVel =
         _paramApi.getParamSync(kParamMAXMotionMaxJerk0).abs();
-    final allowedErrorRot =
+    final allowedErrorUser =
         _paramApi.getParamSync(kParamMAXMotionAllowedError0).abs();
     return (
-      cruise: cruiseRpm / 60.0,           // rot/s
-      maxAccel: maxAccelRpmPerS / 60.0,   // rot/s²
-      maxJerk: maxJerkRpmPerS2 / 60.0,    // rot/s³
-      allowedError: allowedErrorRot,       // rot
+      cruise: cruiseUserVel * scale,       // user pos/s
+      maxAccel: maxAccelUserVel * scale,   // user pos/s²
+      maxJerk: maxJerkUserVel * scale,     // user pos/s³
+      allowedError: allowedErrorUser,       // user pos units
     );
   }
 
@@ -955,6 +995,16 @@ class SimulatedParameterApi implements IParameterApi {
   @override
   Future<double> getVelocityConversionFactor() =>
       getParameter(kParamVelocityConvFactor);
+
+  // -- Feedback sensor -------------------------------------------------------
+
+  @override
+  Future<void> setClosedLoopFeedbackSensor(int sensorType) =>
+      setParameter(kParamClosedLoopControlSensor, sensorType.toDouble());
+
+  @override
+  Future<double> getClosedLoopFeedbackSensor() =>
+      getParameter(kParamClosedLoopControlSensor);
 
   // -- PID Slot 0 -----------------------------------------------------------
 

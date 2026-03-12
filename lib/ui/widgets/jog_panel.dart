@@ -79,11 +79,15 @@ class _JogPanelState extends State<JogPanel> {
     if (!widget.device.isConnected) return;
     final status2 = widget.device.connection.lastStatus2;
     if (status2 == null) return;
-    final pos =
-        status2.positionRotations * widget.config.positionConversionFactor;
+    // Status frames already report in user units (onboard CFs).
+    final pos = status2.positionRotations;
     if ((pos - _position).abs() > 0.01) {
       setState(() => _position = pos);
-      widget.onPositionChanged?.call(pos);
+      // Only propagate position changes when the panel is active
+      // to avoid fighting with the test progress callback.
+      if (widget.enabled) {
+        widget.onPositionChanged?.call(pos);
+      }
     }
   }
 

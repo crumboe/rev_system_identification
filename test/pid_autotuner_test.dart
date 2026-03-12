@@ -79,7 +79,7 @@ void main() {
   group('PidAutoTuner.tunePosition', () {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
 
-    test('kP is 60 * kA * omega^2 / nomV', () {
+    test('kP includes velocity-to-position-rate factor (r=60 for flywheel)', () {
       const bw = 5.0; // Hz
       final pid = PidAutoTuner.tunePosition(
         ff: ff,
@@ -87,7 +87,22 @@ void main() {
         desiredBandwidthHz: bw,
       );
       final omega = 2.0 * math.pi * bw;
+      // For flywheel: kP = r * kA * omega^2 / nomV, where r=60
       final expected = 60.0 * ff.kA * omega * omega / 12.0;
+      expect(pid.kP, closeTo(expected, 1e-6));
+    });
+
+    test('kP has r=1 for arm (velocity is time derivative of position)', () {
+      const bw = 5.0;
+      const armFf = FeedforwardGains(kS: 0.20, kV: 0.018, kA: 0.002, kG: 0.80);
+      final pid = PidAutoTuner.tunePosition(
+        ff: armFf,
+        mechanismType: MechanismType.arm,
+        desiredBandwidthHz: bw,
+      );
+      final omega = 2.0 * math.pi * bw;
+      // For arm: r=1, so kP = kA * omega^2 / nomV
+      final expected = armFf.kA * omega * omega / 12.0;
       expect(pid.kP, closeTo(expected, 1e-9));
     });
 

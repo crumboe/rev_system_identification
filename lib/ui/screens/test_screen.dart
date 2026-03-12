@@ -65,8 +65,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
 
   /// Returns the segments to display in charts: preview data when idle,
   /// test data when running.
+  bool get _hasTestData =>
+      _isRunning || _liveSegments.any((s) => s.isNotEmpty);
+
   List<List<DataPoint>> get _chartSegments {
-    if (_isRunning || _liveSegments.any((s) => s.isNotEmpty)) {
+    if (_hasTestData) {
       return _liveSegments;
     }
     if (_previewData.isNotEmpty) {
@@ -104,19 +107,15 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     // a position frame (e.g. no motor connected, or Status 2 not yet received).
     if (status0 == null && status1 == null && status2 == null) return;
 
-    final config = ref.read(mechanismConfigProvider);
-    final userPos = status2 != null
-        ? status2.positionRotations * config.positionConversionFactor
-        : _currentPosition;
+    // Status frames already report in user units (onboard CFs).
+    final userPos = status2?.positionRotations ?? _currentPosition;
 
     // Build a preview data point from status frames.
     _previewStartTime ??= DateTime.now();
     final elapsed =
         DateTime.now().difference(_previewStartTime!).inMilliseconds / 1000.0;
 
-    final velocity = status1 != null
-        ? status1.velocityRpm * config.velocityConversionFactor
-        : 0.0;
+    final velocity = status1?.velocityRpm ?? 0.0;
     final voltage = status1 != null
         ? status1.busVoltage * (status0?.appliedOutput ?? 0.0)
         : 0.0;
@@ -151,6 +150,15 @@ class _TestScreenState extends ConsumerState<TestScreen> {
         device.isConnected &&
         !_isRunning &&
         config.validate().isEmpty;
+
+    // Disable forward tests when position is at/above the forward soft limit,
+    // and reverse tests when position is at/below the reverse soft limit.
+    final atForwardLimit = config.forwardSoftLimit != null &&
+        _currentPosition >= config.forwardSoftLimit!;
+    final atReverseLimit = config.reverseSoftLimit != null &&
+        _currentPosition <= config.reverseSoftLimit!;
+    final canRunForward = canRun && !atForwardLimit;
+    final canRunReverse = canRun && !atReverseLimit;
 
     return ScaffoldPage(
       header: PageHeader(
@@ -200,7 +208,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 _TestButton(
                   label: 'Quasistatic Forward',
                   icon: FluentIcons.forward,
-                  enabled: canRun,
+                  enabled: canRunForward,
                   completed: testRuns.any(
                       (r) => r.testType == TestType.quasistaticForward),
                   onPressed: () =>
@@ -209,7 +217,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 _TestButton(
                   label: 'Quasistatic Reverse',
                   icon: FluentIcons.back,
-                  enabled: canRun,
+                  enabled: canRunReverse,
                   completed: testRuns.any(
                       (r) => r.testType == TestType.quasistaticReverse),
                   onPressed: () =>
@@ -218,7 +226,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 _TestButton(
                   label: 'Dynamic Forward',
                   icon: FluentIcons.fast_forward,
-                  enabled: canRun,
+                  enabled: canRunForward,
                   completed: testRuns
                       .any((r) => r.testType == TestType.dynamicForward),
                   onPressed: () =>
@@ -227,7 +235,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 _TestButton(
                   label: 'Dynamic Reverse',
                   icon: FluentIcons.rewind,
-                  enabled: canRun,
+                  enabled: canRunReverse,
                   completed: testRuns
                       .any((r) => r.testType == TestType.dynamicReverse),
                   onPressed: () =>
@@ -235,7 +243,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 ),
                 const SizedBox(width: 16),
                 FilledButton(
-                  onPressed: canRun
+                  onPressed: canRunForward
                       ? () => _runFullCharacterization(device, config, testParams)
                       : null,
                   child: const Padding(
@@ -272,7 +280,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.velocity,
                                     yLabel: config.velocityUnit,
-                                    rollingWindow: _isRunning ? null : 10.0,
+                                    rollingWindow: _hasTestData ? null : 10.0,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -284,7 +292,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.voltage,
                                     yLabel: 'V',
-                                    rollingWindow: _isRunning ? null : 10.0,
+                                    rollingWindow: _hasTestData ? null : 10.0,
                                   ),
                                 ),
                               ],
@@ -302,7 +310,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.position,
                                     yLabel: config.positionUnit,
-                                    rollingWindow: _isRunning ? null : 10.0,
+                                    rollingWindow: _hasTestData ? null : 10.0,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -314,7 +322,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                                     segmentColors: _segmentColors,
                                     yExtractor: (dp) => dp.current,
                                     yLabel: 'A',
-                                    rollingWindow: _isRunning ? null : 10.0,
+                                    rollingWindow: _hasTestData ? null : 10.0,
                                   ),
                                 ),
                               ],
@@ -393,8 +401,9 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                       ),
                     ),
                   ],
-                  // Flywheel: no visual, but show jog panel
-                  if (config.type == MechanismType.flywheel &&
+                  // Flywheel / Simple: no visual, but show jog panel
+                  if ((config.type == MechanismType.flywheel ||
+                          config.type == MechanismType.simple) &&
                       device != null &&
                       device.isConnected) ...[
                     const SizedBox(width: 8),
@@ -559,9 +568,8 @@ class _TestScreenState extends ConsumerState<TestScreen> {
   ) async {
     final unit = config.positionUnit;
     final status2 = device.connection.lastStatus2;
-    final currentPos = status2 != null
-        ? (status2.positionRotations * config.positionConversionFactor)
-        : null;
+    // Status frames already report in user units (onboard CFs).
+    final currentPos = status2?.positionRotations;
 
     final result = await showDialog<bool>(
       context: context,

@@ -118,18 +118,24 @@ class TestRunner {
     // Clear any ramp rate (we want instant response for dynamic tests).
     await params.setOpenLoopRampRate(0.0);
 
-    // Set conversion factors to 1.0 on the controller — this app reads
-    // raw RPM/rotations from CAN status frames and converts client-side.
-    // Writing the actual user factors would risk double-conversion since
-    // the SPARK firmware does NOT apply them to CAN status frame values.
-    await params.setPositionConversionFactor(1.0);
-    await params.setVelocityConversionFactor(1.0);
+    // Write the user's conversion factors to the controller so the
+    // SPARK firmware applies them internally.  Status frames, PID error,
+    // and setpoints all operate in user units on-controller.
+    await params.setPositionConversionFactor(
+        mechanismConfig.positionConversionFactor);
+    await params.setVelocityConversionFactor(
+        mechanismConfig.velocityConversionFactor);
 
     // Set motor inversion.
     await params.setMotorInverted(mechanismConfig.motorInverted);
 
     // Set current limit.
     await params.setSmartCurrentLimit(mechanismConfig.currentLimitAmps);
+
+    // Set the closed-loop feedback sensor on the controller.
+    await params.setClosedLoopFeedbackSensor(
+      mechanismConfig.feedbackSensor.parameterValue,
+    );
 
     // Configure soft limits if applicable.
     if (mechanismConfig.hasSoftLimits) {
@@ -265,8 +271,9 @@ class TestRunner {
           final pos = device.connection.lastStatus2?.positionRotations;
           final vel = device.connection.lastStatus1?.velocityRpm;
           if (pos != null && vel != null) {
-            final userPos = pos * mechanismConfig.positionConversionFactor;
-            final userVel = vel * mechanismConfig.velocityConversionFactor;
+            // Status frames already report in user units (onboard CFs).
+            final userPos = pos;
+            final userVel = vel;
             final fwdLimit = mechanismConfig.forwardSoftLimit!;
             final revLimit = mechanismConfig.reverseSoftLimit!;
             final margin = (fwdLimit - revLimit).abs() * 0.05; // 5% margin
@@ -306,10 +313,9 @@ class TestRunner {
         final status2 = device.connection.lastStatus2;
 
         if (status1 != null) {
-          final velocity = status1.velocityRpm *
-              mechanismConfig.velocityConversionFactor;
-          final position = (status2?.positionRotations ?? 0.0) *
-              mechanismConfig.positionConversionFactor;
+          // Status frames already report in user units (onboard CFs).
+          final velocity = status1.velocityRpm;
+          final position = status2?.positionRotations ?? 0.0;
 
           final dp = DataPoint(
             timestamp: elapsedSeconds,

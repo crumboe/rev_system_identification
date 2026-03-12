@@ -67,7 +67,13 @@ class PidAutoTuner {
   ///
   /// Uses pole placement for a second-order system.
   /// The plant from voltage to position is:
-  ///   G(s) = 1 / (kA·s² + kV·s)
+  ///   G(s) = 1 / (r·kA·s² + r·kV·s)
+  ///
+  /// where `r` is the ratio between the velocity user unit and the position
+  /// rate (d(pos_user)/dt).  For mechanisms where velocity is already the
+  /// time-derivative of position (arm: deg/s↔deg, elevator: m/s↔m), r=1.
+  /// For flywheel/simple where velocity is RPM and position is rotations,
+  /// r=60 because RPM = 60 × rotations/s.
   ///
   /// We want critically-damped response with a specified bandwidth.
   ///
@@ -85,24 +91,33 @@ class PidAutoTuner {
     final omega = 2.0 * 3.14159265 * desiredBandwidthHz; // rad/s
     final zeta = dampingRatio;
 
-    // For a second-order response with natural frequency ω_n and
-    // damping ratio ζ (zeta):
+    // Velocity-to-position-rate factor.
     //
-    // The SPARK position PID uses velocity in RPM for the D term, while
-    // position error is in rotations.  The plant transfer function from
-    // voltage to position (rotations) is:
-    //   G(s) = 1 / (60 · kA · s² + 60 · kV · s)
-    // (the factor 60 converts RPM → rot/s via ω_rot_per_s = ω_RPM / 60).
-    //
-    // With PD control: C(s) = kP_spark + kD_spark·s (in duty-cycle/rot, dc/RPM)
-    // Pole placement yields:
-    //   kP_volts = 60 · kA · ω_n²   →  kP_spark = 60 · kA · ω_n² / nomV
-    //   kD_volts = 2·ζ · kA · ω_n - kV  →  kD_spark = kD_volts / nomV
+    // For flywheel/simple: velocity is RPM, position is rotations.
+    //   d(rotations)/dt = RPM / 60  →  r = 60
+    // For arm: velocity is deg/s, position is degrees.  r = 1
+    // For elevator: velocity is m/s (or in/s), position is m (or in).  r = 1
+    final double r = _velocityToPositionRateFactor(mechanismType);
 
-    final kPVolts = 60.0 * ff.kA * omega * omega;
+    // The plant transfer function from voltage to position (user units):
+    //   G(s) = 1 / (r·kA·s² + r·kV·s)
+    //
+    // The SPARK PID computes:
+    //   output_dc = kP·pos_error + kD·(-velocity_user)
+    //   V = output_dc × V_nom
+    //
+    // Closed-loop characteristic equation (dividing by r·kA):
+    //   s² + (kV + V_nom·kD)/kA · s + V_nom·kP/(r·kA) = 0
+    //
+    // Matching to desired poles s² + 2·ζ·ω_n·s + ω_n² = 0:
+    //   ω_n² = V_nom·kP / (r·kA)  →  kP = r·kA·ω_n² / V_nom
+    //   2·ζ·ω_n = (kV + V_nom·kD)/kA  →  kD = (2·ζ·kA·ω_n − kV) / V_nom
+
+    final kPVolts = r * ff.kA * omega * omega;
     final kDVolts = (2.0 * zeta * ff.kA * omega - ff.kV);
 
-    // Convert to SPARK PID units (duty cycle per rotation for P, per RPM for D).
+    // Convert to SPARK PID units (duty cycle per position-unit for P,
+    // per velocity-unit for D).
     final kP = kPVolts / nominalVoltage;
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
 
@@ -118,5 +133,17 @@ class PidAutoTuner {
       kD: kD,
       positionBandwidthHz: desiredBandwidthHz,
     );
+  }
+
+  /// Returns the ratio between the velocity user unit and the time derivative
+  /// of the position user unit.
+  ///
+  /// For flywheel/simple: RPM ÷ (rotations/s) = 60.
+  /// For arm/elevator: velocity unit = d(position unit)/dt, so ratio = 1.
+  static double _velocityToPositionRateFactor(MechanismType type) {
+    return switch (type) {
+      MechanismType.flywheel || MechanismType.simple => 60.0,
+      MechanismType.arm || MechanismType.elevator => 1.0,
+    };
   }
 }

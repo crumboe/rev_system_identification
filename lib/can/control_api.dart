@@ -218,7 +218,7 @@ class ControlApi implements IControlApi {
     setStatusFrameRate(2, 10); // Position — 10ms
     setStatusFrameRate(3, 500); // Analog — slow
     setStatusFrameRate(4, 500); // Alt encoder — slow
-    setStatusFrameRate(5, 500); // Abs encoder — slow
+    setStatusFrameRate(5, 10); // Abs encoder position — 10ms (for absolute encoder feedback)
     setStatusFrameRate(6, 500); // Abs encoder vel — slow
   }
 

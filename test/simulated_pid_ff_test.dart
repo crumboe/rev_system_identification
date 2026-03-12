@@ -175,6 +175,68 @@ void main() {
       expect(physics.noisyPositionRotations,
           closeTo(targetRot, 0.02));
     });
+
+    test('position control with non-trivial conversion factors (arm in degrees)', () {
+      final physics = ArmPhysics(noiseLevel: 0.0, randomSeed: 42);
+      final params = SimulatedParameterApi();
+      final control = SimulatedControlApi(physics, params);
+      final pidFf = SimulatedPidFfController(params, physics);
+      control.attachPidFfController(pidFf);
+
+      // Conversion factors: position in degrees, velocity in deg/s.
+      const pcf = 360.0; // deg per rotation
+      const vcf = 6.0; // deg/s per RPM
+      params.setParameter(kParamPositionConvFactor, pcf);
+      params.setParameter(kParamVelocityConvFactor, vcf);
+
+      // Gains in user units (deg, deg/s).  Equivalent to the raw-rotation
+      // gains above but scaled for degrees.
+      params.setParameter(kParamSlot0P, 1.0 / pcf); // dc per degree
+      params.setParameter(kParamSlot0I, 0.5 / pcf);
+      params.setParameter(kParamSlot0D, 0.0003 / vcf);
+      params.setParameter(kParamSlot0FfKs, 0.20);
+      params.setParameter(kParamSlot0FfKcos, 0.80);
+      params.setParameter(kParamSlot0FfKcosRatio, 1.0 / 360.0); // deg → full rotations
+
+      // Target: 45 degrees.  The PID + CFs should converge.
+      const targetDeg = 45.0;
+      control.setPosition(targetDeg);
+
+      for (var i = 0; i < 5000; i++) {
+        control.tick(0.01);
+        physics.step(physics.commandedVoltage, 0.01);
+      }
+
+      // Physics position is in raw rotations (45 deg = 0.125 rot).
+      expect(physics.noisyPositionRotations, closeTo(0.125, 0.02));
+    });
+
+    test('velocity control with non-trivial conversion factors', () {
+      final physics =
+          FlywheelPhysics(noiseLevel: 0.0, randomSeed: 42);
+      final params = SimulatedParameterApi();
+      final control = SimulatedControlApi(physics, params);
+      final pidFf = SimulatedPidFfController(params, physics);
+      control.attachPidFfController(pidFf);
+
+      // VCF = 0.5 (user units are "half-RPM").
+      const vcf = 0.5;
+      params.setParameter(kParamVelocityConvFactor, vcf);
+
+      // Gains in user velocity units.
+      // kP in dc/(user vel unit) = kP_rpm / vcf
+      params.setParameter(kParamSlot0P, (0.003 / 0.1 / 12.0) / vcf);
+      params.setParameter(kParamSlot0FfKs, 0.14);
+      params.setParameter(kParamSlot0FfKv, 0.0185 / vcf); // V per user-vel-unit
+
+      // Target: 250 user-vel-units = 500 RPM (since VCF=0.5).
+      const targetUserVel = 250.0;
+      control.setVelocity(targetUserVel);
+      _runTicks(control, physics, 2000);
+
+      // Physics velocity should be 500 RPM.
+      expect(physics.velocityRpm, closeTo(500.0, 50.0));
+    });
   });
 
   // =========================================================================

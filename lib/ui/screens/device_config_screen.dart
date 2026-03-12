@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../can/parameter_api.dart';
 import '../../can/spark_protocol.dart';
 import '../../devices/device_manager.dart';
+import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
 
 // ---------------------------------------------------------------------------
@@ -696,6 +697,27 @@ class _DeviceConfigScreenState extends ConsumerState<DeviceConfigScreen> {
     _loadedCategories.add(catIndex);
   }
 
+  /// When a device parameter that has a counterpart in MechanismConfig is
+  /// written, push the value to the Riverpod config provider so both screens
+  /// stay in sync.
+  void _syncToMechanismConfig(int paramId, double value) {
+    final notifier = ref.read(mechanismConfigProvider.notifier);
+    switch (paramId) {
+      case kParamMotorType:
+        notifier.setIsBrushless(value == 1.0);
+      case kParamMotorInverted:
+        notifier.setMotorInverted(value != 0.0);
+      case kParamSmartCurrentLimit:
+        notifier.setCurrentLimit(value);
+      case kParamClosedLoopControlSensor:
+        notifier.setFeedbackSensor(
+          value == FeedbackSensor.absoluteEncoder.parameterValue.toDouble()
+              ? FeedbackSensor.absoluteEncoder
+              : FeedbackSensor.primaryEncoder,
+        );
+    }
+  }
+
   Future<void> _writeParam(ParamDef def, double value) async {
     final device = _device;
     if (device == null || !device.isConnected) return;
@@ -710,6 +732,7 @@ class _DeviceConfigScreenState extends ConsumerState<DeviceConfigScreen> {
       await device.parameters.setParameter(def.id, value);
       if (mounted) {
         setState(() => _writing.remove(def.id));
+        _syncToMechanismConfig(def.id, value);
       }
     } catch (e) {
       if (mounted) {

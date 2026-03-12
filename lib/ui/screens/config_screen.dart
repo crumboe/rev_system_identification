@@ -1,20 +1,151 @@
-/// Configuration screen: mechanism type, gear ratio, units, soft limits,
+/// Configuration screen: mechanism type, units, soft limits,
 /// motor settings, and test parameters.
 library;
+
+import 'dart:async';
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../can/spark_protocol.dart';
+import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
+import '../widgets/arm_visual.dart';
 import '../widgets/concept_panel.dart';
+import '../widgets/elevator_visual.dart';
+import '../widgets/expression_field.dart';
 import '../widgets/jog_panel.dart';
 
-class ConfigScreen extends ConsumerWidget {
+class ConfigScreen extends ConsumerStatefulWidget {
   const ConfigScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ConfigScreen> createState() => _ConfigScreenState();
+}
+
+class _ConfigScreenState extends ConsumerState<ConfigScreen> {
+  double _currentPosition = 0.0;
+  Timer? _positionTimer;
+  bool _didLoadFromDevice = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _positionTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => _pollPosition(),
+    );
+    _maybeLoadConfigFromDevice();
+  }
+
+  @override
+  void dispose() {
+    _positionTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Attempt to load config from device once after the screen is shown.
+  void _maybeLoadConfigFromDevice() {
+    if (_didLoadFromDevice) return;
+    final device = ref.read(deviceManagerProvider).leader;
+    if (device != null && device.isConnected && !device.isSimulated) {
+      _didLoadFromDevice = true;
+      _loadConfigFromDevice(device);
+    }
+  }
+
+  /// Read motor/sensor configuration from the connected SPARK and
+  /// populate the mechanism config state so the UI matches the device.
+  Future<void> _loadConfigFromDevice(SparkDevice device) async {
+    final notifier = ref.read(mechanismConfigProvider.notifier);
+    try {
+      final results = await Future.wait<double>([
+        device.parameters.getParameter(kParamMotorType),
+        device.parameters.getParameter(kParamMotorInverted),
+        device.parameters.getParameter(kParamSmartCurrentLimit),
+        device.parameters.getParameter(kParamClosedLoopControlSensor),
+        device.parameters.getPositionConversionFactor(),
+        device.parameters.getVelocityConversionFactor(),
+      ]);
+
+      final motorType = results[0]; // 0 = brushed, 1 = brushless
+      final inverted = results[1]; // 0 = normal, 1 = inverted
+      final currentLimit = results[2];
+      final sensorVal = results[3]; // 0 = primary, 2 = absolute
+      final pcf = results[4];
+      final vcf = results[5];
+
+      notifier.setIsBrushless(motorType >= 0.5);
+      notifier.setMotorInverted(inverted >= 0.5);
+      if (currentLimit > 0) notifier.setCurrentLimit(currentLimit);
+      notifier.setFeedbackSensor(
+        sensorVal >= 1.5
+            ? FeedbackSensor.absoluteEncoder
+            : FeedbackSensor.primaryEncoder,
+      );
+      if (pcf != 0) notifier.setPositionConversionFactor(pcf);
+      if (vcf != 0) notifier.setVelocityConversionFactor(vcf);
+    } catch (_) {
+      // Device communication failed — leave defaults in place.
+    }
+  }
+
+  void _pollPosition() {
+    final device = ref.read(deviceManagerProvider).leader;
+    if (device == null || !device.isConnected) return;
+
+    // Load device config once when a real device connects.
+    _maybeLoadConfigFromDevice();
+
+    final config = ref.read(mechanismConfigProvider);
+
+    double rawPos;
+    if (config.feedbackSensor == FeedbackSensor.absoluteEncoder) {
+      rawPos = device.connection.lastStatus5?.absoluteEncoderPosition ??
+          (device.connection.lastStatus2?.positionRotations ?? 0.0);
+    } else {
+      rawPos = device.connection.lastStatus2?.positionRotations ?? 0.0;
+    }
+    // Status frames already report in user units (onboard CFs).
+    final pos = rawPos;
+    if ((pos - _currentPosition).abs() > 0.01) {
+      setState(() => _currentPosition = pos);
+    }
+  }
+
+  Future<void> _zeroAbsoluteEncoder() async {
+    final device = ref.read(deviceManagerProvider).leader;
+    if (device == null || !device.isConnected) return;
+
+    // Read the raw absolute encoder position and write it as the offset
+    // so the current position becomes zero.
+    final rawPos =
+        device.connection.lastStatus5?.absoluteEncoderPosition ?? 0.0;
+    await device.parameters.setParameter(kParamDutyCycleOffset, rawPos);
+    await device.parameters.burnFlash(heartbeat: device.heartbeat);
+
+    if (mounted) {
+      setState(() => _currentPosition = 0.0);
+      await displayInfoBar(context, builder: (ctx, close) {
+        return InfoBar(
+          title: const Text('Encoder Zeroed'),
+          content: Text(
+            'Absolute encoder offset set to ${rawPos.toStringAsFixed(4)}. '
+            'Current position is now 0.',
+          ),
+          severity: InfoBarSeverity.success,
+          action: IconButton(
+            icon: const Icon(FluentIcons.clear),
+            onPressed: close,
+          ),
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final config = ref.watch(mechanismConfigProvider);
     final configNotifier = ref.read(mechanismConfigProvider.notifier);
     final testParamsNotifier = ref.read(testParamsProvider.notifier);
@@ -36,7 +167,7 @@ class ConfigScreen extends ConsumerWidget {
               title: const Text('\u26A0 Hardware Damage Risk'),
               content: const Text(
                 'Arms and elevators can cause damage to your robot if '
-                'soft limits, gear ratios, or conversion factors are '
+                'soft limits or conversion factors are '
                 'incorrect. Always physically support the mechanism '
                 'before powering the motor. Use the Jog controls '
                 'below to verify motion direction and limits before '
@@ -125,7 +256,11 @@ class ConfigScreen extends ConsumerWidget {
           child: RadioGroup<bool>(
             groupValue: config.isBrushless,
             onChanged: (v) {
-              if (v != null) configNotifier.setIsBrushless(v);
+              if (v != null) {
+                configNotifier.setIsBrushless(v);
+                device?.parameters.setParameter(
+                    kParamMotorType, v ? 1.0 : 0.0);
+              }
             },
             child: Row(
               children: [
@@ -146,19 +281,11 @@ class ConfigScreen extends ConsumerWidget {
           label: 'Motor Inverted',
           child: ToggleSwitch(
             checked: config.motorInverted,
-            onChanged: (v) => configNotifier.setMotorInverted(v),
-          ),
-        ),
-        _ConfigRow(
-          label: 'Gear Ratio (output:input)',
-          child: SizedBox(
-            width: 180,
-            child: NumberBox<double>(
-              value: config.gearRatio,
-              min: 0.001,
-              max: 1000,
-              onChanged: (v) => configNotifier.setGearRatio(v ?? 1.0),
-            ),
+            onChanged: (v) {
+              configNotifier.setMotorInverted(v);
+              device?.parameters.setParameter(
+                  kParamMotorInverted, v ? 1.0 : 0.0);
+            },
           ),
         ),
         _ConfigRow(
@@ -169,8 +296,33 @@ class ConfigScreen extends ConsumerWidget {
               value: config.currentLimitAmps,
               min: 1,
               max: 80,
-              onChanged: (v) => configNotifier.setCurrentLimit(v ?? 40.0),
+              onChanged: (v) {
+                final amps = v ?? 40.0;
+                configNotifier.setCurrentLimit(amps);
+                device?.parameters.setParameter(
+                    kParamSmartCurrentLimit, amps);
+              },
             ),
+          ),
+        ),
+        _ConfigRow(
+          label: 'Feedback Sensor',
+          child: ComboBox<FeedbackSensor>(
+            value: config.feedbackSensor,
+            items: FeedbackSensor.values.map((s) {
+              return ComboBoxItem<FeedbackSensor>(
+                value: s,
+                child: Text(s.displayName),
+              );
+            }).toList(),
+            onChanged: (v) {
+              if (v != null) {
+                configNotifier.setFeedbackSensor(v);
+                device?.parameters.setParameter(
+                    kParamClosedLoopControlSensor,
+                    v.parameterValue.toDouble());
+              }
+            },
           ),
         ),
 
@@ -182,21 +334,10 @@ class ConfigScreen extends ConsumerWidget {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        const InfoBar(
-          title: Text('Conversion factors'),
+        InfoBar(
+          title: const Text('How to calculate'),
           content: Text(
-            'These convert raw encoder rotations/RPM to your preferred units. '
-            'The correct values depend on your encoder placement:\n\n'
-            'Motor built-in (relative) encoder:\n'
-            '  Position factor = (mechanism travel per motor rev) / gear_ratio\n'
-            '  Velocity factor = position_factor / 60\n'
-            '  Example arm with 100:1 total reduction:\n'
-            '    Position = 360 / 100 = 3.6 deg/rot\n'
-            '    Velocity = 3.6 / 60 = 0.06 deg/s per RPM\n\n'
-            'Remote absolute encoder (e.g. through-bore on output shaft):\n'
-            '  Position factor = full-scale travel (360 for arm, spool circumference for elevator)\n'
-            '  Velocity factor = position_factor / 60\n'
-            '  Gear ratio should be set to 1 since the encoder already reads output.',
+            _conversionFactorHelp(config),
           ),
           severity: InfoBarSeverity.info,
           isLong: true,
@@ -215,10 +356,13 @@ class ConfigScreen extends ConsumerWidget {
           label: 'Position (rot → ${config.positionUnit})',
           child: SizedBox(
             width: 210,
-            child: NumberBox<double>(
+            child: ExpressionField(
               value: config.positionConversionFactor,
-              onChanged: (v) =>
-                  configNotifier.setPositionConversionFactor(v ?? 1.0),
+              placeholder: _positionCfPlaceholder(config),
+              onChanged: (v) {
+                configNotifier.setPositionConversionFactor(v);
+                device?.parameters.setPositionConversionFactor(v);
+              },
             ),
           ),
         ),
@@ -226,10 +370,13 @@ class ConfigScreen extends ConsumerWidget {
           label: 'Velocity (RPM → ${config.velocityUnit})',
           child: SizedBox(
             width: 210,
-            child: NumberBox<double>(
+            child: ExpressionField(
               value: config.velocityConversionFactor,
-              onChanged: (v) =>
-                  configNotifier.setVelocityConversionFactor(v ?? 1.0),
+              placeholder: _velocityCfPlaceholder(config),
+              onChanged: (v) {
+                configNotifier.setVelocityConversionFactor(v);
+                device?.parameters.setVelocityConversionFactor(v);
+              },
             ),
           ),
         ),
@@ -292,7 +439,7 @@ class ConfigScreen extends ConsumerWidget {
                 _guideStep(2,
                     'Connect the device and open this Configuration page.'),
                 _guideStep(3,
-                    'Set Gear Ratio and Conversion Factors to match your '
+                    'Set Conversion Factors to match your '
                     'mechanical design.'),
                 _guideStep(4,
                     'Use Jog Forward at LOW voltage (≤1 V) to verify '
@@ -313,16 +460,64 @@ class ConfigScreen extends ConsumerWidget {
             ),
           ),
 
-          // Jog panel for mechanisms with soft limits
+          // Mechanism visual + jog panel for arms/elevators
           if (isConnected) ...[
             const SizedBox(height: 12),
-            JogPanel(
-              device: device,
-              config: config,
-              onSetForwardLimit: (pos) =>
-                  configNotifier.setForwardSoftLimit(pos),
-              onSetReverseLimit: (pos) =>
-                  configNotifier.setReverseSoftLimit(pos),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Mechanism visual (arm or elevator)
+                if (config.type == MechanismType.arm)
+                  SizedBox(
+                    width: 280,
+                    height: 320,
+                    child: ArmVisual(
+                      currentAngleDeg: _currentPosition,
+                      forwardLimitDeg: config.forwardSoftLimit,
+                      reverseLimitDeg: config.reverseSoftLimit,
+                    ),
+                  ),
+                if (config.type == MechanismType.elevator)
+                  SizedBox(
+                    width: 280,
+                    height: 320,
+                    child: ElevatorVisual(
+                      currentPosition: _currentPosition,
+                      forwardLimit: config.forwardSoftLimit,
+                      reverseLimit: config.reverseSoftLimit,
+                      unitLabel:
+                          config.useImperialUnits ? 'in' : 'm',
+                    ),
+                  ),
+                const SizedBox(width: 12),
+                // Jog + zero encoder
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      JogPanel(
+                        device: device,
+                        config: config,
+                        onSetForwardLimit: (pos) =>
+                            configNotifier.setForwardSoftLimit(pos),
+                        onSetReverseLimit: (pos) =>
+                            configNotifier.setReverseSoftLimit(pos),
+                        onPositionChanged: (pos) =>
+                            setState(() => _currentPosition = pos),
+                      ),
+                      if (config.feedbackSensor ==
+                          FeedbackSensor.absoluteEncoder) ...[
+                        const SizedBox(height: 12),
+                        _ZeroEncoderCard(
+                          currentPosition: _currentPosition,
+                          positionUnit: config.positionUnit,
+                          onZero: _zeroAbsoluteEncoder,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ],
@@ -479,6 +674,73 @@ class ConfigScreen extends ConsumerWidget {
   }
 }
 
+String _conversionFactorHelp(MechanismConfig config) {
+  final isFlywheel = config.type == MechanismType.flywheel ||
+      config.type == MechanismType.simple;
+  final isArm = config.type == MechanismType.arm;
+  final isElevator = config.type == MechanismType.elevator;
+  final posUnit = config.positionUnit;
+  final velUnit = config.velocityUnit;
+
+  if (isFlywheel) {
+    return 'Flywheel/Simple mechanisms typically stay in native encoder units.\n\n'
+        'Motor encoder (on motor shaft):\n'
+        '  Position factor = 1  (rotations \u2192 rotations)\n'
+        '  Velocity factor = 1  (RPM \u2192 RPM)\n\n'
+        'External encoder (on output shaft):\n'
+        '  Factors are still 1 since encoder reads output directly.\n\n'
+        'If you use a gear ratio and want output units, set:\n'
+        '  Position factor = 1 / gear_ratio\n'
+        '  Velocity factor = 1 / gear_ratio';
+  }
+
+  if (isArm) {
+    return 'Arm mechanisms convert to $posUnit and $velUnit.\n\n'
+        'Motor encoder (on motor shaft):\n'
+        '  Position factor = 360 / gear_ratio\n'
+        '  Velocity factor = 6 / gear_ratio\n'
+        '  Example \u2014 50:1 gearbox:\n'
+        '    Position = 360 / 50 = 7.2  (rot \u2192 deg)\n'
+        '    Velocity = 6 / 50 = 0.12  (RPM \u2192 deg/s)\n\n'
+        'Absolute encoder (on output shaft):\n'
+        '  Position factor = 360  (1 rotation = 360\u00b0)\n'
+        '  Velocity factor = 6  (1 RPM = 6 deg/s)';
+  }
+
+  if (isElevator) {
+    final unit = config.useImperialUnits ? 'inches' : 'meters';
+    return 'Elevator mechanisms convert to $unit.\n\n'
+        'Motor encoder (on motor shaft):\n'
+        '  Position factor = spool_circumference / gear_ratio\n'
+        '  Velocity factor = position_factor / 60\n'
+        '  Example \u2014 2" spool, 25:1 gearbox:\n'
+        '    Circumference = 2 \u00d7 \u03c0 \u2248 6.283 in\n'
+        '    Position = 6.283 / 25 = 0.2513  (rot \u2192 in)\n'
+        '    Velocity = 0.2513 / 60 = 0.00419  (RPM \u2192 in/s)\n\n'
+        'Absolute encoder (on output shaft):\n'
+        '  Position factor = spool_circumference\n'
+        '  Velocity factor = spool_circumference / 60';
+  }
+
+  return 'Set the conversion factors for your mechanism.';
+}
+
+String _positionCfPlaceholder(MechanismConfig config) {
+  return switch (config.type) {
+    MechanismType.flywheel || MechanismType.simple => '1  (rotations)',
+    MechanismType.arm => 'e.g. 360/50  (rot \u2192 deg)',
+    MechanismType.elevator => 'e.g. 6.283/25  (rot \u2192 ${config.positionUnit})',
+  };
+}
+
+String _velocityCfPlaceholder(MechanismConfig config) {
+  return switch (config.type) {
+    MechanismType.flywheel || MechanismType.simple => '1  (RPM)',
+    MechanismType.arm => 'e.g. 6/50  (RPM \u2192 deg/s)',
+    MechanismType.elevator => 'e.g. 6.283/25/60  (RPM \u2192 ${config.velocityUnit})',
+  };
+}
+
 class _ConfigRow extends StatelessWidget {
   final String label;
   final Widget child;
@@ -519,6 +781,75 @@ Widget _guideStep(int number, String text) {
       ],
     ),
   );
+}
+
+class _ZeroEncoderCard extends StatelessWidget {
+  final double currentPosition;
+  final String positionUnit;
+  final VoidCallback onZero;
+
+  const _ZeroEncoderCard({
+    required this.currentPosition,
+    required this.positionUnit,
+    required this.onZero,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(FluentIcons.location, size: 14),
+              const SizedBox(width: 6),
+              const Text(
+                'Zero Absolute Encoder',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Current position: '
+            '${currentPosition.toStringAsFixed(2)} $positionUnit',
+            style: TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 12,
+              color: theme.accentColor,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Jog the mechanism to its desired zero position, then press '
+            'the button below to set the absolute encoder offset so this '
+            'position reads as 0.',
+            style: TextStyle(
+              fontSize: 11,
+              color: theme.typography.body?.color?.withValues(alpha: 0.7),
+            ),
+          ),
+          const SizedBox(height: 10),
+          FilledButton(
+            onPressed: onZero,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(FluentIcons.reset, size: 14),
+                SizedBox(width: 6),
+                Text('Set Current Position as Zero'),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _SystemNameField extends StatefulWidget {

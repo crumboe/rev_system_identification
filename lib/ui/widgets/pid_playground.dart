@@ -14,14 +14,30 @@ class PidPlayground extends StatefulWidget {
   final FeedforwardGains ff;
   final PidResult? initialPid;
 
-  /// Called whenever the user adjusts PID gains in the playground.
+  /// Position-loop PID gains (used when [isPositionMode] is true).
+  final PidResult? initialPosPid;
+
+  /// Called whenever the user adjusts velocity PID gains.
   final ValueChanged<PidResult>? onPidChanged;
+
+  /// Called whenever the user adjusts position PID gains.
+  final ValueChanged<PidResult>? onPosPidChanged;
+
+  /// When true, show position step response instead of velocity.
+  final bool isPositionMode;
+
+  /// Called when the user toggles the mode selector.
+  final ValueChanged<bool>? onModeChanged;
 
   const PidPlayground({
     super.key,
     required this.ff,
     this.initialPid,
+    this.initialPosPid,
     this.onPidChanged,
+    this.onPosPidChanged,
+    this.isPositionMode = false,
+    this.onModeChanged,
   });
 
   @override
@@ -33,10 +49,29 @@ class _PidPlaygroundState extends State<PidPlayground>
   @override
   bool get wantKeepAlive => true;
 
-  // PID gains (controller)
-  late double _kP;
-  late double _kI;
-  late double _kD;
+  // --- Velocity PID gains (stored when switching modes) ---
+  late double _velKP;
+  late double _velKI;
+  late double _velKD;
+
+  // --- Position PID gains (stored when switching modes) ---
+  late double _posKP;
+  late double _posKI;
+  late double _posKD;
+
+  // Active PID gains (pointers into vel or pos depending on mode)
+  double get _kP => widget.isPositionMode ? _posKP : _velKP;
+  set _kP(double v) {
+    if (widget.isPositionMode) { _posKP = v; } else { _velKP = v; }
+  }
+  double get _kI => widget.isPositionMode ? _posKI : _velKI;
+  set _kI(double v) {
+    if (widget.isPositionMode) { _posKI = v; } else { _velKI = v; }
+  }
+  double get _kD => widget.isPositionMode ? _posKD : _velKD;
+  set _kD(double v) {
+    if (widget.isPositionMode) { _posKD = v; } else { _velKD = v; }
+  }
 
   // Feedforward gains (controller) — applied to the setpoint, like SPARK MAX.
   late double _kS;
@@ -60,18 +95,40 @@ class _PidPlaygroundState extends State<PidPlayground>
   double _overshoot = 0;
   double _steadyStateError = 0;
 
+  bool _prevIsPositionMode = false;
+
   @override
   void initState() {
     super.initState();
-    _kP = widget.initialPid?.kP ?? 1.0;
-    _kI = widget.initialPid?.kI ?? 0.0;
-    _kD = widget.initialPid?.kD ?? 0.0;
+    _velKP = widget.initialPid?.kP ?? 1.0;
+    _velKI = widget.initialPid?.kI ?? 0.0;
+    _velKD = widget.initialPid?.kD ?? 0.0;
+
+    _posKP = widget.initialPosPid?.kP ?? 1.0;
+    _posKI = widget.initialPosPid?.kI ?? 0.0;
+    _posKD = widget.initialPosPid?.kD ?? 0.0;
 
     _kS = widget.ff.kS;
     _kV = widget.ff.kV;
     _kA = widget.ff.kA;
     _kG = widget.ff.kG;
 
+    _prevIsPositionMode = widget.isPositionMode;
+    _updateSliderBounds();
+    _runSimulation();
+  }
+
+  @override
+  void didUpdateWidget(covariant PidPlayground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isPositionMode != _prevIsPositionMode) {
+      _prevIsPositionMode = widget.isPositionMode;
+      _updateSliderBounds();
+      _runSimulation();
+    }
+  }
+
+  void _updateSliderBounds() {
     _kPMax = _kP > 0 ? math.max(_kP * 5, 0.01) : 5.0;
     _kIMax = _kI > 0 ? math.max(_kI * 5, 0.01) : 1.0;
     _kDMax = _kD > 0 ? math.max(_kD * 5, 0.01) : 1.0;
@@ -79,12 +136,18 @@ class _PidPlaygroundState extends State<PidPlayground>
     _kVMax = _kV > 0 ? math.max(_kV * 3, 0.5) : 5.0;
     _kAMax = _kA > 0 ? math.max(_kA * 3, 0.5) : 2.0;
     _kGMax = _kG.abs() > 0 ? math.max(_kG.abs() * 3, 0.5) : 2.0;
-
-    _runSimulation();
   }
 
   void _runSimulation() {
-    final plant = widget.ff; // plant model uses identified gains
+    if (widget.isPositionMode) {
+      _runPositionSimulation();
+    } else {
+      _runVelocitySimulation();
+    }
+  }
+
+  void _runVelocitySimulation() {
+    final plant = widget.ff;
     if (plant.kA <= 0) {
       setState(() {
         _actualSpots = const [];
@@ -93,8 +156,8 @@ class _PidPlaygroundState extends State<PidPlayground>
       return;
     }
 
-    const dt = 0.001; // 1 ms time step
-    const steps = 2000; // 2 s total
+    const dt = 0.001;
+    const steps = 2000; // 2 s
     const setpoint = 1.0;
     const nominalVoltage = 12.0;
 
@@ -119,19 +182,11 @@ class _PidPlaygroundState extends State<PidPlayground>
       final derivative = (error - prevError) / dt;
       final pidOutput = _kP * error + _kI * integral + _kD * derivative;
 
-      // Controller feedforward: applied to the setpoint (like SPARK MAX),
-      // not the measured velocity.
-      // Note: kA is only used with MAXMotion (motion profiling) which provides
-      // a smooth acceleration setpoint. For a raw velocity step, the desired
-      // steady-state acceleration is 0, so kA doesn't contribute here.
       final setpointSign = setpoint >= 0 ? 1.0 : -1.0;
-      final ffOutput = _kS * setpointSign +
-          _kV * setpoint +
-          _kG;
+      final ffOutput = _kS * setpointSign + _kV * setpoint + _kG;
       final voltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
 
-      // Plant model: uses identified kS/kV/kA/kG to compute actual dynamics.
       final velSign = velocity >= 0 ? 1.0 : -1.0;
       final acceleration =
           (voltage - plant.kS * velSign - plant.kV * velocity - plant.kG) /
@@ -139,7 +194,6 @@ class _PidPlaygroundState extends State<PidPlayground>
       velocity += acceleration * dt;
       prevError = error;
 
-      // Downsample to every 10 ms to keep the chart efficient.
       if (i % 10 == 0) {
         actual.add(FlSpot(t, velocity));
         reference.add(FlSpot(t, setpoint));
@@ -163,19 +217,108 @@ class _PidPlaygroundState extends State<PidPlayground>
       _steadyStateError = (setpoint - velocity).abs();
     });
 
-    widget.onPidChanged?.call(PidResult(kP: _kP, kI: _kI, kD: _kD));
+    widget.onPidChanged?.call(PidResult(kP: _velKP, kI: _velKI, kD: _velKD));
   }
+
+  void _runPositionSimulation() {
+    final plant = widget.ff;
+    if (plant.kA <= 0) {
+      setState(() {
+        _actualSpots = const [];
+        _setpointSpots = const [];
+      });
+      return;
+    }
+
+    const dt = 0.001;
+    const steps = 4000; // 4 s (position response is slower)
+    const setpoint = 1.0;
+    const nominalVoltage = 12.0;
+
+    double integral = 0;
+    double prevError = setpoint;
+    double velocity = 0;
+    double position = 0;
+
+    final actual = <FlSpot>[];
+    final reference = <FlSpot>[];
+
+    actual.add(const FlSpot(0, 0));
+    reference.add(const FlSpot(0, setpoint));
+
+    double maxPos = 0;
+    double? riseTime10;
+    double? riseTime90;
+
+    for (int i = 1; i <= steps; i++) {
+      final t = i * dt;
+      final error = setpoint - position;
+      integral += error * dt;
+      // Position PID D-term uses negative measured velocity (like SPARK).
+      final derivative = _firstPositionTick ? 0.0 : -velocity;
+      _firstPositionTick = false;
+      final pidOutput = _kP * error + _kI * integral + _kD * derivative;
+
+      // Position FF: kS·sign(error) + kG (no kV in position mode per REV).
+      final ffOutput = _kS * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0))
+          + _kG;
+      final voltage =
+          (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
+
+      // Plant dynamics (velocity domain).
+      final velSign = velocity >= 0 ? 1.0 : -1.0;
+      final acceleration =
+          (voltage - plant.kS * velSign - plant.kV * velocity - plant.kG) /
+              plant.kA;
+      velocity += acceleration * dt;
+      position += velocity * dt;
+      prevError = error;
+
+      if (i % 10 == 0) {
+        actual.add(FlSpot(t, position));
+        reference.add(FlSpot(t, setpoint));
+      }
+
+      if (position > maxPos) maxPos = position;
+      if (riseTime10 == null && position >= 0.1 * setpoint) riseTime10 = t;
+      if (riseTime90 == null && position >= 0.9 * setpoint) riseTime90 = t;
+    }
+
+    final riseTime = (riseTime10 != null && riseTime90 != null)
+        ? riseTime90! - riseTime10!
+        : null;
+
+    setState(() {
+      _actualSpots = actual;
+      _setpointSpots = reference;
+      _riseTime = riseTime;
+      _overshoot =
+          maxPos > setpoint ? (maxPos - setpoint) / setpoint * 100.0 : 0.0;
+      _steadyStateError = (setpoint - position).abs();
+    });
+
+    widget.onPosPidChanged?.call(PidResult(kP: _posKP, kI: _posKI, kD: _posKD));
+  }
+
+  bool _firstPositionTick = true;
 
   void _resetToAutoTuned() {
     setState(() {
-      _kP = widget.initialPid?.kP ?? 1.0;
-      _kI = widget.initialPid?.kI ?? 0.0;
-      _kD = widget.initialPid?.kD ?? 0.0;
+      if (widget.isPositionMode) {
+        _posKP = widget.initialPosPid?.kP ?? 1.0;
+        _posKI = widget.initialPosPid?.kI ?? 0.0;
+        _posKD = widget.initialPosPid?.kD ?? 0.0;
+      } else {
+        _velKP = widget.initialPid?.kP ?? 1.0;
+        _velKI = widget.initialPid?.kI ?? 0.0;
+        _velKD = widget.initialPid?.kD ?? 0.0;
+      }
       _kS = widget.ff.kS;
       _kV = widget.ff.kV;
       _kA = widget.ff.kA;
       _kG = widget.ff.kG;
     });
+    _updateSliderBounds();
     _runSimulation();
   }
 
@@ -190,6 +333,37 @@ class _PidPlaygroundState extends State<PidPlayground>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Mode selector ──────────────────────────────────────────────
+          Row(
+            children: [
+              Text(
+                widget.isPositionMode ? 'Position Loop' : 'Velocity Loop',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              ComboBox<bool>(
+                value: widget.isPositionMode,
+                items: const [
+                  ComboBoxItem<bool>(
+                    value: false,
+                    child: Text('Velocity Loop'),
+                  ),
+                  ComboBoxItem<bool>(
+                    value: true,
+                    child: Text('Position Loop'),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v != null) widget.onModeChanged?.call(v);
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
           // ── Feedforward sliders ────────────────────────────────────────
           Text(
             'Feedforward (applied to setpoint, like SPARK MAX)',
@@ -370,8 +544,11 @@ class _PidPlaygroundState extends State<PidPlayground>
                           ),
                         ),
                         leftTitles: AxisTitles(
-                          axisNameWidget: const Text('Velocity (norm.)',
-                              style: TextStyle(fontSize: 10)),
+                          axisNameWidget: Text(
+                              widget.isPositionMode
+                                  ? 'Position (norm.)'
+                                  : 'Velocity (norm.)',
+                              style: const TextStyle(fontSize: 10)),
                           sideTitles: SideTitles(
                             showTitles: true,
                             reservedSize: 42,

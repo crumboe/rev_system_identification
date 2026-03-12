@@ -60,7 +60,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   late TextEditingController _mmJerkCtrl;
   late TextEditingController _mmErrorCtrl;
   int _mmPositionMode = kMAXMotionPositionModeTrapezoidal;
-  bool _mmExpanded = false;
+  final _mmFlyoutController = FlyoutController();
 
   @override
   void initState() {
@@ -98,6 +98,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _mmAccelCtrl.dispose();
     _mmJerkCtrl.dispose();
     _mmErrorCtrl.dispose();
+    _mmFlyoutController.dispose();
     super.dispose();
   }
 
@@ -105,10 +106,16 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     if (_isRunning) return;
     final device = ref.read(deviceManagerProvider).leader;
     if (device == null || !device.isConnected) return;
-    final status2 = device.connection.lastStatus2;
-    if (status2 == null) return;
     final config = ref.read(mechanismConfigProvider);
-    final userPos = status2.positionRotations * config.positionConversionFactor;
+    final double rawPos;
+    if (config.feedbackSensor == FeedbackSensor.absoluteEncoder) {
+      rawPos = device.connection.lastStatus5?.absoluteEncoderPosition ??
+          (device.connection.lastStatus2?.positionRotations ?? 0.0);
+    } else {
+      rawPos = device.connection.lastStatus2?.positionRotations ?? 0.0;
+    }
+    // Status frames already report in user units (onboard CFs).
+    final userPos = rawPos;
     if ((userPos - _currentPosition).abs() > 0.01) {
       setState(() => _currentPosition = userPos);
     }
@@ -188,6 +195,16 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   'When enabled, validation will not overwrite slot gains.',
                   style: TextStyle(fontSize: 12),
                 ),
+                if (!usingStored && !hasGains) ...[
+                  const SizedBox(width: 16),
+                  const InfoBar(
+                    title: Text('No gains'),
+                    content: Text(
+                      'Compute and write gains from the Results page first.',
+                    ),
+                    severity: InfoBarSeverity.info,
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 12),
@@ -272,143 +289,146 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   ),
                 ],
 
-                if (!usingStored && !hasGains) ...[
-                  const SizedBox(width: 16),
-                  const InfoBar(
-                    title: Text('No gains'),
-                    content: Text(
-                      'Compute and write gains from the Results page first.',
-                    ),
-                    severity: InfoBarSeverity.info,
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 8),
+                
 
-            // MAXMotion configuration panel
-            Expander(
-              header: Row(
-                children: [
-                  const Icon(FluentIcons.rocket, size: 14),
-                  const SizedBox(width: 8),
-                  const Text('MAXMotion Profile',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 12),
-                  FilledButton(
-                    onPressed: canRunMAXMotion
-                        ? () => _runTest(
-                            ValidationMode.maxMotionPosition,
-                            config,
-                            device!,
-                            ff: ff,
-                            velPid: velPid,
-                            posPid: posPid)
-                        : null,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_isRunning &&
-                            _lastMode == ValidationMode.maxMotionPosition)
-                          const Padding(
-                            padding: EdgeInsets.only(right: 6),
-                            child: SizedBox(
-                                width: 12,
-                                height: 12,
-                                child: ProgressRing(strokeWidth: 2)),
-                          ),
-                        const Text('Run MAXMotion Test'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              initiallyExpanded: _mmExpanded,
-              onStateChanged: (open) {
-                setState(() => _mmExpanded = open);
-              },
-              content: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
+                // MAXMotion run button + configuration flyout
+                const SizedBox(width: 24),
+                Column(
                   children: [
-                    SizedBox(
-                      width: 140,
-                      child: InfoLabel(
-                        label: 'Cruise vel ($velUnit)',
-                        child: TextBox(
-                          controller: _mmCruiseCtrl,
-                          enabled: !_isRunning,
-                          placeholder: velUnit,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 140,
-                      child: InfoLabel(
-                        label: 'Max accel ($velUnit/s)',
-                        child: TextBox(
-                          controller: _mmAccelCtrl,
-                          enabled: !_isRunning,
-                          placeholder: '$velUnit/s',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 140,
-                      child: InfoLabel(
-                        label: 'Max jerk ($velUnit/s\u00b2)',
-                        child: TextBox(
-                          controller: _mmJerkCtrl,
-                          enabled: !_isRunning,
-                          placeholder: '0 = trapezoidal',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 120,
-                      child: InfoLabel(
-                        label: 'Allowed error ($posUnit)',
-                        child: TextBox(
-                          controller: _mmErrorCtrl,
-                          enabled: !_isRunning,
-                          placeholder: posUnit,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 140,
-                      child: InfoLabel(
-                        label: 'Profile mode',
-                        child: ComboBox<int>(
-                          value: _mmPositionMode,
-                          items: const [
-                            ComboBoxItem(
-                              value: 0,
-                              child: Text('Trapezoidal'),
+                    FilledButton(
+                      onPressed: canRunMAXMotion
+                          ? () => _runTest(
+                              ValidationMode.maxMotionPosition,
+                              config,
+                              device!,
+                              ff: ff,
+                              velPid: velPid,
+                              posPid: posPid)
+                          : null,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(FluentIcons.rocket, size: 14),
+                          const SizedBox(width: 6),
+                          if (_isRunning &&
+                              _lastMode == ValidationMode.maxMotionPosition)
+                            const Padding(
+                              padding: EdgeInsets.only(right: 6),
+                              child: SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: ProgressRing(strokeWidth: 2)),
                             ),
-                            ComboBoxItem(
-                              value: 1,
-                              child: Text('S-Curve'),
-                            ),
+                          const Text('Run MAXMotion Test'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    FlyoutTarget(
+                      controller: _mmFlyoutController,
+                      child: Button(
+                        onPressed: _isRunning
+                            ? null
+                            : () {
+                                _mmFlyoutController.showFlyout(
+                                  placementMode: FlyoutPlacementMode.rightCenter,
+                                  barrierDismissible: true,
+                                  dismissOnPointerMoveAway: false,
+                                  builder: (context) {
+                                    return StatefulBuilder(
+                                      builder: (context, setFlyoutState) {
+                                        return FlyoutContent(
+                                          child: ConstrainedBox(
+                                            constraints: const BoxConstraints(maxWidth: 320),
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(16),
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  const Text('MAXMotion Profile',
+                                                      style: TextStyle(
+                                                          fontWeight: FontWeight.w600,
+                                                          fontSize: 14)),
+                                                  const SizedBox(height: 12),
+                                                  InfoLabel(
+                                                    label: 'Cruise velocity ($velUnit)',
+                                                    child: TextBox(
+                                                      controller: _mmCruiseCtrl,
+                                                      placeholder: velUnit,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  InfoLabel(
+                                                    label: 'Max acceleration ($velUnit/s)',
+                                                    child: TextBox(
+                                                      controller: _mmAccelCtrl,
+                                                      placeholder: '$velUnit/s',
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  InfoLabel(
+                                                    label: 'Max jerk ($velUnit/s\u00b2)',
+                                                    child: TextBox(
+                                                      controller: _mmJerkCtrl,
+                                                      placeholder: '0 = trapezoidal',
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  InfoLabel(
+                                                    label: 'Allowed error ($posUnit)',
+                                                    child: TextBox(
+                                                      controller: _mmErrorCtrl,
+                                                      placeholder: posUnit,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  InfoLabel(
+                                                    label: 'Profile mode',
+                                                    child: ComboBox<int>(
+                                                      value: _mmPositionMode,
+                                                      isExpanded: true,
+                                                      items: const [
+                                                        ComboBoxItem(
+                                                          value: 0,
+                                                          child: Text('Trapezoidal'),
+                                                        ),
+                                                        ComboBoxItem(
+                                                          value: 1,
+                                                          child: Text('S-Curve'),
+                                                        ),
+                                                      ],
+                                                      onChanged: (v) {
+                                                        if (v != null) {
+                                                          setState(() => _mmPositionMode = v);
+                                                          setFlyoutState(() {});
+                                                        }
+                                                      },
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                );
+                              },
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(FluentIcons.settings, size: 14),
+                            SizedBox(width: 6),
+                            Text('Profile Settings'),
                           ],
-                          onChanged: _isRunning
-                              ? null
-                              : (v) {
-                                  if (v != null) {
-                                    setState(
-                                        () => _mmPositionMode = v);
-                                  }
-                                },
                         ),
                       ),
                     ),
                   ],
                 ),
-              ),
+              ],
             ),
 
             // Live charts + mechanism visual
@@ -570,7 +590,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                       ),
                     ),
                   ],
-                  if (config.type == MechanismType.flywheel &&
+                  if ((config.type == MechanismType.flywheel ||
+                          config.type == MechanismType.simple) &&
                       device != null &&
                       device.isConnected) ...[
                     const SizedBox(width: 8),
@@ -765,10 +786,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
         current: p.current,
       ));
       _liveSetpoints.add(p.setpoint);
-      final isPositionMode = _lastMode == ValidationMode.position ||
-          _lastMode == ValidationMode.maxMotionPosition;
-      _currentPosition =
-          isPositionMode ? p.position : _currentPosition;
+      _currentPosition = p.position;
     });
   }
 

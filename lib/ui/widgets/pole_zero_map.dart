@@ -8,6 +8,7 @@ library;
 import 'dart:math' as math;
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart' show Material;
 
 import '../../data/test_data.dart';
 import 'chart_walkthrough.dart';
@@ -25,11 +26,19 @@ class PoleZeroMap extends StatefulWidget {
   final PidResult? velPid;
   final PidResult? posPid;
 
+  /// When non-null, overrides the internal mode state.
+  final PoleZeroMode? mode;
+
+  /// Called when the user changes the mode selector.
+  final ValueChanged<PoleZeroMode>? onModeChanged;
+
   const PoleZeroMap({
     super.key,
     required this.ff,
     this.velPid,
     this.posPid,
+    this.mode,
+    this.onModeChanged,
   });
 
   @override
@@ -41,8 +50,10 @@ class _PoleZeroMapState extends State<PoleZeroMap>
   @override
   bool get wantKeepAlive => true;
 
-  PoleZeroMode _mode = PoleZeroMode.velocity;
+  PoleZeroMode _localMode = PoleZeroMode.velocity;
   bool _walkthroughActive = false;
+
+  PoleZeroMode get _mode => widget.mode ?? _localMode;
 
   PidResult? get _activePid =>
       _mode == PoleZeroMode.velocity ? widget.velPid : widget.posPid;
@@ -90,7 +101,10 @@ class _PoleZeroMapState extends State<PoleZeroMap>
                       ),
                   ],
                   onChanged: (v) {
-                    if (v != null) setState(() => _mode = v);
+                    if (v != null) {
+                      setState(() => _localMode = v);
+                      widget.onModeChanged?.call(v);
+                    }
                   },
                 ),
             ],
@@ -367,7 +381,7 @@ const Color _gridColor = Color(0xFF555555);
 const Color _axisColor = Color(0xFFBBBBBB);
 const Color _labelColor = Color(0xFFDDDDDD);
 
-class _SPlaneCanvas extends StatelessWidget {
+class _SPlaneCanvas extends StatefulWidget {
   final List<_Complex> poles;
   final FeedforwardGains ff;
   final PidResult? pid;
@@ -381,17 +395,379 @@ class _SPlaneCanvas extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox.expand(
-      child: CustomPaint(
-        painter: _SPlanePainter(
-          poles: poles,
-          ff: ff,
-          pid: pid,
-          mode: mode,
+  State<_SPlaneCanvas> createState() => _SPlaneCanvasState();
+}
+
+/// Describes a hoverable element on the s-plane (pole or open-loop pole).
+class _HoverableElement {
+  final _Complex value;
+  final bool isClosedLoop;
+  final int multiplicity;
+  const _HoverableElement({
+    required this.value,
+    required this.isClosedLoop,
+    this.multiplicity = 1,
+  });
+}
+
+class _SPlaneCanvasState extends State<_SPlaneCanvas> {
+  Offset? _mousePosition;
+  _HoverableElement? _hoveredElement;
+  OverlayEntry? _overlayEntry;
+
+  @override
+  void dispose() {
+    _removeOverlay();
+    super.dispose();
+  }
+
+  void _removeOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
+
+  void _showOverlayTooltip(BuildContext context) {
+    _removeOverlay();
+    if (_hoveredElement == null || _mousePosition == null) return;
+
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final globalPos = renderBox.localToGlobal(_mousePosition!);
+    final screenSize = MediaQuery.of(context).size;
+    final theme = FluentTheme.of(context);
+
+    const tooltipWidth = 320.0;
+    const tooltipMaxHeight = 300.0;
+
+    // Position: to right of cursor, or left if near right edge
+    double left = globalPos.dx + 14;
+    if (left + tooltipWidth > screenSize.width - 8) {
+      left = globalPos.dx - tooltipWidth - 14;
+    }
+    // Above cursor if near bottom, else below
+    double top = globalPos.dy + 14;
+    if (top + tooltipMaxHeight > screenSize.height - 8) {
+      top = globalPos.dy - tooltipMaxHeight - 14;
+      if (top < 8) top = 8;
+    }
+
+    final element = _hoveredElement!;
+    final description = _describeElement(element);
+    final borderColor = element.isClosedLoop
+        ? (element.value.isStable ? _stablePoleColor : _unstablePoleColor)
+        : _openLoopPoleColor;
+
+    _overlayEntry = OverlayEntry(
+      builder: (_) => Positioned(
+        left: left,
+        top: top,
+        child: IgnorePointer(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              constraints: const BoxConstraints(
+                  maxWidth: tooltipWidth, maxHeight: tooltipMaxHeight),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.micaBackgroundColor,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: borderColor, width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                child: Text(
+                  description,
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1.4,
+                    color: theme.typography.body?.color,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  double _computeMaxAbs() {
+    double maxAbs = 50.0;
+    for (final p in widget.poles) {
+      final extent = math.max(p.re.abs(), p.im.abs());
+      if (extent > maxAbs) maxAbs = extent * 1.3;
+    }
+    return (maxAbs * 1.2).ceilToDouble();
+  }
+
+  _HoverableElement? _hitTest(Offset localPosition, Size size) {
+    final maxAbs = _computeMaxAbs();
+    final realMin = -maxAbs;
+    final realMax = maxAbs;
+    final imagMin = -maxAbs;
+    final imagMax = maxAbs;
+
+    double toX(double re) =>
+        (re - realMin) / (realMax - realMin) * size.width;
+    double toY(double im) =>
+        (1 - (im - imagMin) / (imagMax - imagMin)) * size.height;
+
+    const hitRadius = 12.0;
+
+    // Check closed-loop poles first (higher priority)
+    final clDrawn = <int>{};
+    for (int i = 0; i < widget.poles.length; i++) {
+      if (clDrawn.contains(i)) continue;
+      final pole = widget.poles[i];
+      int mult = 1;
+      for (int j = i + 1; j < widget.poles.length; j++) {
+        if (!clDrawn.contains(j) &&
+            (pole.re - widget.poles[j].re).abs() < 1e-3 &&
+            (pole.im - widget.poles[j].im).abs() < 1e-3) {
+          mult++;
+          clDrawn.add(j);
+        }
+      }
+      clDrawn.add(i);
+
+      final px = toX(pole.re);
+      final py = toY(pole.im);
+      if ((localPosition - Offset(px, py)).distance < hitRadius) {
+        return _HoverableElement(
+          value: pole,
+          isClosedLoop: true,
+          multiplicity: mult,
+        );
+      }
+    }
+
+    // Check open-loop poles
+    final olPoles = _computeOpenLoopPolesFor(widget.ff, widget.pid, widget.mode);
+    final olDrawn = <int>{};
+    for (int i = 0; i < olPoles.length; i++) {
+      if (olDrawn.contains(i)) continue;
+      final olp = olPoles[i];
+      int mult = 1;
+      for (int j = i + 1; j < olPoles.length; j++) {
+        if (!olDrawn.contains(j) &&
+            (olp.re - olPoles[j].re).abs() < 1e-3 &&
+            (olp.im - olPoles[j].im).abs() < 1e-3) {
+          mult++;
+          olDrawn.add(j);
+        }
+      }
+      olDrawn.add(i);
+
+      final px = toX(olp.re);
+      final py = toY(olp.im);
+      if ((localPosition - Offset(px, py)).distance < hitRadius) {
+        return _HoverableElement(
+          value: olp,
+          isClosedLoop: false,
+          multiplicity: mult,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  String _describeElement(_HoverableElement el) {
+    final p = el.value;
+    final multStr = el.multiplicity > 1 ? ' (×${el.multiplicity})' : '';
+    final buf = StringBuffer();
+
+    if (el.isClosedLoop) {
+      buf.writeln('Closed-Loop Pole$multStr');
+      buf.writeln('s = $p');
+      buf.writeln('');
+
+      if (!p.isStable) {
+        buf.writeln('This pole is in the RIGHT half-plane (Re > 0), '
+            'meaning it causes the output to GROW exponentially. '
+            'Your system is UNSTABLE. Reduce kP or kI to pull '
+            'this pole back into the stable region.');
+      } else if (p.im.abs() < 1e-6) {
+        // Real stable pole
+        final timeConst = p.re != 0 ? (-1.0 / p.re) : double.infinity;
+        buf.writeln('Real pole at ${p.re.toStringAsFixed(2)}.');
+        buf.writeln('');
+        buf.writeln('Time constant: ${timeConst.toStringAsFixed(3)} s');
+        buf.writeln('This pole contributes a pure exponential decay '
+            'with no oscillation. It takes about ${(3 * timeConst).toStringAsFixed(2)}s '
+            '(3τ) to mostly settle and ${(5 * timeConst).toStringAsFixed(2)}s '
+            '(5τ) to fully settle.');
+        if (p.re > -5) {
+          buf.writeln('');
+          buf.writeln('This is a relatively slow pole — it will make '
+              'the system sluggish. Increasing kP moves it further left '
+              '(faster response).');
+        } else if (p.re < -100) {
+          buf.writeln('');
+          buf.writeln('This is a fast pole — it settles almost instantly '
+              'and has little effect on the visible response. The slower '
+              'poles dominate behavior.');
+        }
+      } else if (p.im > 0) {
+        // Complex conjugate pair (show info for upper one)
+        final wn = p.wn;
+        final zeta = p.zeta;
+        final dampedFreq = wn * math.sqrt(1 - zeta * zeta);
+        final oscPeriod = dampedFreq > 0 ? 2 * math.pi / dampedFreq : double.infinity;
+        final envelope = p.re != 0 ? (-1.0 / p.re) : double.infinity;
+
+        buf.writeln('Complex conjugate pair:');
+        buf.writeln('  ωn = ${wn.toStringAsFixed(2)} rad/s (natural frequency)');
+        buf.writeln('  ζ = ${zeta.toStringAsFixed(3)} (damping ratio)');
+        buf.writeln('');
+
+        if (zeta < 0.3) {
+          buf.writeln('Very underdamped — this pole pair causes significant '
+              'oscillation (ringing) at ${dampedFreq.toStringAsFixed(1)} rad/s '
+              '(period ≈ ${oscPeriod.toStringAsFixed(3)}s). '
+              'You will see large overshoot and many cycles before settling. '
+              'Increase kD or reduce kP to add damping.');
+        } else if (zeta < 0.5) {
+          buf.writeln('Underdamped — the response oscillates at '
+              '${dampedFreq.toStringAsFixed(1)} rad/s with moderate ringing. '
+              'Expect noticeable overshoot (roughly '
+              '${(100 * math.exp(-math.pi * zeta / math.sqrt(1 - zeta * zeta))).toStringAsFixed(0)}%). '
+              'Adding more kD can reduce this.');
+        } else if (zeta < 0.8) {
+          buf.writeln('Well-damped — good balance of speed and stability. '
+              'Oscillation at ${dampedFreq.toStringAsFixed(1)} rad/s damps out '
+              'quickly (envelope τ ≈ ${envelope.toStringAsFixed(3)}s). '
+              'Overshoot ≈ '
+              '${(100 * math.exp(-math.pi * zeta / math.sqrt(1 - zeta * zeta))).toStringAsFixed(0)}%. '
+              'ζ ≈ 0.707 is often considered optimal.');
+        } else {
+          buf.writeln('Heavily damped — minimal oscillation, almost no '
+              'overshoot (~${(100 * math.exp(-math.pi * zeta / math.sqrt(1 - zeta * zeta))).toStringAsFixed(0)}%), '
+              'but the response is slower than optimal. '
+              'Settling in ≈ ${(3 * envelope).toStringAsFixed(2)}s.');
+        }
+      }
+    } else {
+      // Open-loop pole
+      buf.writeln('Open-Loop Pole$multStr');
+      buf.writeln('s = $p');
+      buf.writeln('');
+
+      if (p.re.abs() < 1e-6 && p.im.abs() < 1e-6) {
+        if (el.multiplicity >= 2) {
+          buf.writeln('Double integrator at the origin — the plant has two '
+              'free integrators (position = ∫∫acceleration). This makes '
+              'the system inherently harder to stabilize. The PID controller '
+              'must provide enough damping (kD) to keep the closed-loop '
+              'poles stable.');
+        } else {
+          buf.writeln('Integrator at the origin — this means the plant '
+              'accumulates its input over time (e.g., velocity integrates '
+              'to position). Without a controller, the output drifts '
+              'indefinitely. The PID controller reshapes this into a '
+              'stable closed-loop pole.');
+        }
+      } else if (p.im.abs() < 1e-6) {
+        final timeConst = p.re != 0 ? (-1.0 / p.re) : double.infinity;
+        buf.writeln('Plant pole at ${p.re.toStringAsFixed(2)} (τ = '
+            '${timeConst.toStringAsFixed(3)}s).');
+        buf.writeln('');
+        buf.writeln('This represents the motor\'s natural time constant '
+            '(τ = kA/kV). It determines how quickly the motor responds '
+            'to voltage changes WITHOUT any controller. The PID '
+            'controller moves this pole to achieve the desired '
+            'closed-loop speed.');
+      }
+
+      buf.writeln('');
+      buf.writeln('The root locus (orange) shows where this pole '
+          'migrates as controller gain increases.');
+    }
+
+    return buf.toString().trimRight();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.expand(
+      child: MouseRegion(
+        onHover: (event) {
+          setState(() {
+            _mousePosition = event.localPosition;
+          });
+          // Refresh overlay on next frame after setState hit-tests
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showOverlayTooltip(context);
+          });
+        },
+        onExit: (_) {
+          setState(() {
+            _mousePosition = null;
+            _hoveredElement = null;
+          });
+          _removeOverlay();
+        },
+        cursor: _hoveredElement != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final size = Size(constraints.maxWidth, constraints.maxHeight);
+
+            // Update hovered element based on current mouse position
+            if (_mousePosition != null) {
+              _hoveredElement = _hitTest(_mousePosition!, size);
+            } else {
+              _hoveredElement = null;
+            }
+
+            return CustomPaint(
+              size: size,
+              painter: _SPlanePainter(
+                poles: widget.poles,
+                ff: widget.ff,
+                pid: widget.pid,
+                mode: widget.mode,
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Compute open-loop poles (shared between painter and hit-test).
+List<_Complex> _computeOpenLoopPolesFor(
+    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode) {
+  final kA = ff.kA;
+  final kV = ff.kV;
+  if (kA <= 0) return [];
+
+  final hasIntegrator = (pid?.kI ?? 0.0).abs() > 1e-12;
+
+  switch (mode) {
+    case PoleZeroMode.velocity:
+      if (hasIntegrator) {
+        return [const _Complex(0, 0), _Complex(-kV / kA, 0)];
+      }
+      return [_Complex(-kV / kA, 0)];
+    case PoleZeroMode.position:
+      if (hasIntegrator) {
+        return [
+          const _Complex(0, 0),
+          const _Complex(0, 0),
+          _Complex(-kV / kA, 0),
+        ];
+      }
+      return [const _Complex(0, 0), _Complex(-kV / kA, 0)];
   }
 }
 
@@ -557,7 +933,7 @@ class _SPlanePainter extends CustomPainter {
     _drawRootLocus(canvas, size, toX, toY);
 
     // ── Open-loop poles ───────────────────────────────────────────────
-    final olPoles = _computeOpenLoopPoles();
+    final olPoles = _computeOpenLoopPolesFor(ff, pid, mode);
     // ── Open-loop poles (with multiplicity) ─────────────────────────
     final olDrawn = <int>{};
     for (int i = 0; i < olPoles.length; i++) {
@@ -675,33 +1051,7 @@ class _SPlanePainter extends CustomPainter {
     return (maxAbs / 4).roundToDouble();
   }
 
-  /// Compute open-loop poles (plant + controller integrators).
-  List<_Complex> _computeOpenLoopPoles() {
-    final kA = ff.kA;
-    final kV = ff.kV;
-    if (kA <= 0) return [];
-
-    final hasIntegrator = (pid?.kI ?? 0.0).abs() > 1e-12;
-
-    switch (mode) {
-      case PoleZeroMode.velocity:
-        // Plant pole at -kV/kA. PI adds integrator pole at 0.
-        if (hasIntegrator) {
-          return [const _Complex(0, 0), _Complex(-kV / kA, 0)];
-        }
-        return [_Complex(-kV / kA, 0)];
-      case PoleZeroMode.position:
-        // Plant poles at 0, -kV/kA. PID adds integrator → double pole at 0.
-        if (hasIntegrator) {
-          return [
-            const _Complex(0, 0),
-            const _Complex(0, 0),
-            _Complex(-kV / kA, 0),
-          ];
-        }
-        return [const _Complex(0, 0), _Complex(-kV / kA, 0)];
-    }
-  }
+  // Uses shared _computeOpenLoopPolesFor() top-level function.
 
   /// Draw root locus: sweep an overall gain K and trace pole movement.
   void _drawRootLocus(

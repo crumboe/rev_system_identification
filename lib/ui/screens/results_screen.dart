@@ -26,6 +26,7 @@ import '../widgets/concept_panel.dart';
 import '../widgets/control_block_diagram.dart';
 import '../widgets/pid_playground.dart';
 import '../widgets/pole_zero_map.dart';
+import '../widgets/matrix_equation_visual.dart';
 
 class ResultsScreen extends ConsumerStatefulWidget {
   const ResultsScreen({super.key});
@@ -40,6 +41,13 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   PidResult? _posPid;
   String? _analysisError;
   bool _analyzed = false;
+  bool _isPositionMode = false;
+
+  void _setLoopMode(bool isPosition) {
+    if (isPosition != _isPositionMode) {
+      setState(() => _isPositionMode = isPosition);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,7 +63,14 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         title: const Text('Results'),
         commandBar: CommandBar(
           mainAxisAlignment: MainAxisAlignment.end,
+          overflowBehavior: CommandBarOverflowBehavior.dynamicOverflow,
           primaryItems: [
+            CommandBarButton(
+              icon: const Icon(FluentIcons.education),
+              label: const Text('Control Theory Concepts'),
+              onPressed: () => _showConceptsDialog(context),
+            ),
+            const CommandBarSeparator(),
             CommandBarButton(
               icon: const Icon(FluentIcons.download),
               label: const Text('Export CSV'),
@@ -251,8 +266,14 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             content: PidPlayground(
               ff: _ff!,
               initialPid: _velPid,
+              initialPosPid: _posPid,
+              isPositionMode: _isPositionMode,
+              onModeChanged: _setLoopMode,
               onPidChanged: (pid) {
                 setState(() => _velPid = pid);
+              },
+              onPosPidChanged: (pid) {
+                setState(() => _posPid = pid);
               },
             ),
           ),
@@ -297,6 +318,11 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               ff: _ff!,
               velPid: _velPid,
               posPid: _posPid,
+              mode: _isPositionMode
+                  ? BodePlotMode.position
+                  : BodePlotMode.velocity,
+              onModeChanged: (m) =>
+                  _setLoopMode(m == BodePlotMode.position),
             ),
           ),
 
@@ -313,6 +339,11 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               ff: _ff!,
               velPid: _velPid,
               posPid: _posPid,
+              mode: _isPositionMode
+                  ? PoleZeroMode.position
+                  : PoleZeroMode.velocity,
+              onModeChanged: (m) =>
+                  _setLoopMode(m == PoleZeroMode.position),
             ),
           ),
         ],
@@ -350,9 +381,30 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               )),
         ],
 
-        const SizedBox(height: 16),
-        const ConceptPanel(),
       ],
+    );
+  }
+
+  void _showConceptsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => ContentDialog(
+        title: const Row(
+          children: [
+            Icon(FluentIcons.education, size: 20),
+            SizedBox(width: 8),
+            Text('Control Theory Concepts'),
+          ],
+        ),
+        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 520),
+        content: const ConceptPanel(embedded: true),
+        actions: [
+          FilledButton(
+            child: const Text('Close'),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
     );
   }
 
@@ -434,14 +486,6 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             ? '\n• kG — constant gravity compensation (elevator)'
             : '';
 
-    final gravityColLabel = mechType == MechanismType.arm
-        ? '\n  Col 4: cos(θ)   — gravity term for arm'
-        : mechType == MechanismType.elevator
-            ? '\n  Col 4: 1.0      — constant gravity term'
-            : '';
-
-    final betaLabel = hasGravity ? '[kS, kV, kA, kG]ᵀ' : '[kS, kV, kA]ᵀ';
-
     return Expander(
       header: const Row(
         children: [
@@ -484,28 +528,13 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             ),
           ]),
 
-          // Step 3 — Matrix equation
+          // Step 3 — Matrix equation (interactive visual)
           stepCard(3, 'Build the Matrix Equation', [
-            Text(
-              'We arrange $totalSamples data points into a matrix equation:',
-              style: captionStyle,
-            ),
-            const SizedBox(height: 8),
-            Text('  V  =  X · β', style: monoStyle.copyWith(fontSize: 14)),
-            const SizedBox(height: 8),
-            Text(
-              'The design matrix X has one row per sample and columns for:\n'
-              '  Col 1: sign(ω)  — sign of velocity\n'
-              '  Col 2: ω        — velocity\n'
-              '  Col 3: α        — acceleration (Δω/Δt)'
-              '$gravityColLabel',
-              style: monoStyle.copyWith(fontSize: 11),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'The coefficient vector β = $betaLabel holds the unknown gains. '
-              'This puts the regression in the standard linear form.',
-              style: captionStyle,
+            MatrixEquationVisualizer(
+              mechanismType: mechType,
+              gains: ff,
+              sampleRows: _gatherSampleRows(qsRuns, dynRuns),
+              totalSamples: totalSamples,
             ),
           ]),
 
@@ -589,6 +618,27 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     );
   }
 
+  /// Pick a few representative data points from the test runs for the
+  /// matrix equation visualizer.
+  List<DataPoint>? _gatherSampleRows(
+    List<TestRun> qsRuns,
+    List<TestRun> dynRuns,
+  ) {
+    final all = <DataPoint>[];
+    for (final run in [...qsRuns, ...dynRuns]) {
+      for (final p in run.data) {
+        if (p.velocity.abs() > 1e-4) all.add(p);
+      }
+    }
+    if (all.length < 3) return null;
+    // Spread the selection evenly across the data.
+    final step = all.length ~/ 5;
+    if (step < 1) return all.take(5).toList();
+    return [
+      for (var i = 0; i < all.length && i ~/ step < 5; i += step) all[i],
+    ];
+  }
+
   void _runAnalysis(
     List<TestRun> qsRuns,
     List<TestRun> dynRuns,
@@ -641,37 +691,37 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final config = ref.read(mechanismConfigProvider);
     if (device == null || _ff == null) return;
 
-    // Conversion factors scale user-unit gains → native controller units.
-    // The SPARK CAN protocol always uses RPM for velocity setpoints and
-    // rotations for position setpoints.  All stored gains from the regression
-    // are in user units, so they must be scaled before being written.
-    final vcf = config.velocityConversionFactor; // user_vel per RPM
-    final pcf = config.positionConversionFactor; // user_pos per rotation
+    // Write the user's conversion factors to the controller so the
+    // SPARK firmware handles unit conversion internally.
+    final pcf = config.positionConversionFactor;
 
     final errors = <String>[];
 
     try {
+      // Write conversion factors first.
+      await device.parameters.setPositionConversionFactor(pcf);
+      await device.parameters.setVelocityConversionFactor(
+          config.velocityConversionFactor);
+
       if (writeMode == _WriteMode.velocity && _velPid != null) {
-        // Write velocity PID gains (kP, kI, kD) to Slot 0, scaled to native
-        // RPM units.  kP_native = kP_user × VCF (error in RPM → duty cycle).
+        // Write velocity PID gains in user units (onboard CFs handle scaling).
         try {
           await device.parameters.setPidSlot0(
-            p: _velPid!.kP * vcf,
-            i: _velPid!.kI * vcf,
-            d: _velPid!.kD * vcf,
+            p: _velPid!.kP,
+            i: _velPid!.kI,
+            d: _velPid!.kD,
             f: 0.0,
           );
         } on ParameterWriteException catch (e) {
           errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
         }
       } else if (writeMode == _WriteMode.position && _posPid != null) {
-        // Write position PID gains to Slot 0, scaled to native rotation
-        // units.  kP_native = kP_user × PCF (error in rotations → duty cycle).
+        // Write position PID gains in user units (onboard CFs handle scaling).
         try {
           await device.parameters.setPidSlot0(
-            p: _posPid!.kP * pcf,
-            i: _posPid!.kI * pcf,
-            d: _posPid!.kD * pcf,
+            p: _posPid!.kP,
+            i: _posPid!.kI,
+            d: _posPid!.kD,
             f: 0.0,
           );
         } on ParameterWriteException catch (e) {
@@ -681,29 +731,27 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         return;
       }
 
-      // Write feedforward gains to Slot 0 FeedForwardConfig.
-      // kV and kA are scaled by VCF to convert V/(user_vel) → V/RPM.
+      // Write feedforward gains in user units (onboard CFs handle scaling).
       // kS, kG, kCos are in Volts — no scaling needed.
       double kG = 0.0;
       double kCos = 0.0;
-      // kCosRatio converts encoder rotations to the correct angle for the
-      // cosine gravity term: cos(posRot × kCosRatio × 2π).
-      // We need kCosRatio such that posRot × kCosRatio × 2π = angleDeg × π/180,
-      // i.e. kCosRatio = PCF / 360.
+      // kCosRatio converts user-unit position (degrees) to the angle for
+      // the cosine gravity term: cos(posDeg * kCosRatio * 2π).
+      // With position in degrees: kCosRatio = 1/360.
       double kCosRatio = 0.0;
 
       if (mechType == MechanismType.elevator) {
         kG = _ff!.kG;
       } else if (mechType == MechanismType.arm) {
         kCos = _ff!.kG; // sysid kG maps to kCos for arms
-        kCosRatio = pcf / 360.0;
+        kCosRatio = 1.0 / 360.0;
       }
 
       try {
         await device.parameters.setFeedForwardSlot0(
           kS: _ff!.kS,
-          kV: _ff!.kV * vcf,
-          kA: _ff!.kA * vcf,
+          kV: _ff!.kV,
+          kA: _ff!.kA,
           kG: kG,
           kCos: kCos,
           kCosRatio: kCosRatio,

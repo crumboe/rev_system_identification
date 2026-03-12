@@ -35,6 +35,9 @@ abstract class ISparkConnection {
   /// The latest parsed Status Frame 2 (position).
   StatusFrame2? get lastStatus2;
 
+  /// The latest parsed Status Frame 5 (absolute encoder position).
+  StatusFrame5? get lastStatus5;
+
   /// Stream of all decoded inbound frames.
   Stream<SparkResponse> get responses;
 
@@ -103,6 +106,10 @@ abstract class IParameterApi {
   Future<void> setVelocityConversionFactor(double factor);
   Future<double> getPositionConversionFactor();
   Future<double> getVelocityConversionFactor();
+
+  // Feedback sensor
+  Future<void> setClosedLoopFeedbackSensor(int sensorType);
+  Future<double> getClosedLoopFeedbackSensor();
 
   // PID Slot 0
   Future<void> setSlot0P(double value);

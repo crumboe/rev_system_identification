@@ -140,7 +140,7 @@ StatusFrame0 parseStatusFrame0(Uint8List payload) {
 /// Byte  4:   temperature (uint8, °C)
 /// Bytes 5–7: packed 12-bit voltage and current
 ///   voltage = lower 12 bits of (bytes[5] | bytes[6]<<8) × (32/4096)
-///   current = ((bytes[6]>>4) | bytes[7]<<4) / 250
+///   current = ((bytes[6]>>4) | bytes[7]<<4) 
 StatusFrame1 parseStatusFrame1(Uint8List payload) {
   final bd = ByteData.sublistView(payload);
   final velocityRpm = bd.getFloat32(0, Endian.little);
@@ -155,7 +155,7 @@ StatusFrame1 parseStatusFrame1(Uint8List payload) {
   final rawCurrent = ((b6 >> 4) | (b7 << 4)) & 0x0FFF;
 
   final busVoltage = rawVoltage * (32.0 / 4096.0);
-  final outputCurrentAmps = rawCurrent / 250.0;
+  final outputCurrentAmps = rawCurrent * (32.0 / 4096.0);
 
   return StatusFrame1(
     velocityRpm: velocityRpm,

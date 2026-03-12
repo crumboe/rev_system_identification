@@ -1,9 +1,10 @@
-/// Unit tests for the validation-mode gain conversion logic.
+/// Unit tests for the validation-mode gain handling with onboard conversion
+/// factors.
 ///
-/// The core issue being fixed: gains computed from user-unit data (e.g. deg/s
-/// for an arm) must be scaled to native controller units (RPM / rotations)
-/// before being written to the SPARK.  The SPARK CAN protocol always uses
-/// RPM for velocity setpoints and rotations for position setpoints.
+/// With onboard CFs the SPARK firmware handles unit conversion internally.
+/// Gains computed from user-unit data are written to the controller WITHOUT
+/// pre-scaling.  These tests verify that gains pass through unmodified and
+/// that kCosRatio is always 1/360.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -13,47 +14,27 @@ import 'package:rev_system_identification/mechanisms/mechanism.dart';
 import 'package:rev_system_identification/sysid/pid_autotuner.dart';
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Converts user-unit velocity PID gains to native (RPM) units.
-PidResult toNativeVelPid(PidResult pid, double vcf) => PidResult(
-      kP: pid.kP * vcf,
-      kI: pid.kI * vcf,
-      kD: pid.kD * vcf,
-    );
-
-/// Converts user-unit position PID gains to native (rotations) units.
-PidResult toNativePosPid(PidResult pid, double pcf) => PidResult(
-      kP: pid.kP * pcf,
-      kI: pid.kI * pcf,
-      kD: pid.kD * pcf,
-    );
-
-// ---------------------------------------------------------------------------
-// Flywheel (VCF = 1.0, PCF = 1.0)
+// With onboard CFs, no gain pre-scaling is needed.
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('Flywheel (VCF=1, PCF=1) — no scaling needed', () {
+  group('Flywheel (VCF=1, PCF=1) — gains pass through unchanged', () {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
 
-    test('velocity PID conversion is identity when VCF=1', () {
+    test('velocity PID gains are written in user units (no scaling)', () {
       final velPid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
       );
-      const vcf = 1.0;
-      final native = toNativeVelPid(velPid, vcf);
-      expect(native.kP, closeTo(velPid.kP, 1e-9));
-      expect(native.kI, closeTo(velPid.kI, 1e-9));
-      expect(native.kD, closeTo(velPid.kD, 1e-9));
+      // With onboard CFs, gains go to the controller as-is.
+      expect(velPid.kP, isPositive);
+      expect(velPid.kI, isZero);
+      expect(velPid.kD, equals(0.0));
     });
 
-    test('FF kV conversion is identity when VCF=1', () {
-      const vcf = 1.0;
-      final kVNative = ff.kV * vcf;
-      expect(kVNative, closeTo(ff.kV, 1e-9));
+    test('FF kV passes through unchanged', () {
+      // kV is in V/(user vel unit) — written directly.
+      expect(ff.kV, closeTo(0.0185, 1e-9));
     });
   });
 
@@ -61,130 +42,96 @@ void main() {
   // Arm (VCF = 6.0 deg·s⁻¹/RPM, PCF = 360 deg/rotation — gear ratio = 1)
   // ---------------------------------------------------------------------------
 
-  group('Arm with no gear reduction (VCF=6, PCF=360)', () {
-    // kA is in V·s²/deg for an arm characterised in deg/s.
+  group('Arm with no gear reduction (VCF=6, PCF=360) — gains unscaled', () {
     const ff = FeedforwardGains(kS: 0.20, kV: 0.018, kA: 0.002, kG: 0.80);
-    const vcf = 6.0; // deg/s per RPM
-    const pcf = 360.0; // deg per rotation
 
-    test('velocity PID kP is scaled by VCF', () {
+    test('velocity PID gains pass through in user units', () {
       final velPid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.arm,
       );
-      final native = toNativeVelPid(velPid, vcf);
-      // kP_user is in dc/(deg/s); multiplied by VCF gives dc/RPM.
-      expect(native.kP, closeTo(velPid.kP * vcf, 1e-9));
-      // Sanity: native kP should be larger than user kP when VCF > 1.
-      expect(native.kP, greaterThan(velPid.kP));
+      // Gains are in user units (dc/deg·s⁻¹) — no VCF multiplication.
+      expect(velPid.kP, isPositive);
     });
 
-    test('FF kV is scaled by VCF (V/RPM)', () {
-      final kVNative = ff.kV * vcf;
-      // At 15 RPM (≡ 90 deg/s for VCF=6), native FF output should equal
-      // user-unit FF output at 90 deg/s.
-      const setpointRpm = 90.0 / vcf; // 15 RPM
-      final ffOutputNative = kVNative * setpointRpm;
-      final ffOutputUser = ff.kV * 90.0; // user-unit computation
-      expect(ffOutputNative, closeTo(ffOutputUser, 1e-9));
+    test('FF kV passes through in user units', () {
+      // kV is V/(deg/s) — written directly to the controller.
+      expect(ff.kV, closeTo(0.018, 1e-9));
     });
 
-    test('position PID kP is scaled by PCF', () {
+    test('position PID gains pass through in user units', () {
       final posPid = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.arm,
       );
-      final native = toNativePosPid(posPid, pcf);
-      // kP_user is in dc/deg; multiplied by PCF gives dc/rotation.
-      expect(native.kP, closeTo(posPid.kP * pcf, 1e-9));
-      expect(native.kP, greaterThan(posPid.kP));
+      // Gains are in user units (dc/deg) — no PCF multiplication.
+      expect(posPid.kP, isPositive);
     });
 
-    test('kCosRatio = PCF / 360 for arms', () {
-      // kCosRatio converts encoder rotations so that
-      //   cos(posRotations × kCosRatio × 2π) = cos(angleDeg × π/180).
-      final kCosRatio = pcf / 360.0;
-      expect(kCosRatio, closeTo(1.0, 1e-9)); // PCF=360 → kCosRatio=1
+    test('kCosRatio = 1/360 for arms (converts user position to rotations for cos)', () {
+      // With onboard CFs, position is already in user units (e.g. degrees).
+      // kCosRatio converts user-unit position to full rotations so that
+      //   cos(pos_user × kCosRatio × 2π) = cos(angleDeg × π/180).
+      const kCosRatio = 1.0 / 360.0;
+      expect(kCosRatio, closeTo(1.0 / 360.0, 1e-9));
 
-      // Verify for 45 degrees.
+      // Verify for 45 degrees with PCF=360 (position in degrees).
       const angleDeg = 45.0;
-      final posRot = angleDeg / pcf; // 0.125 rotations
-      final cosFromSim = _cos2pi(posRot * kCosRatio);
+      // Position in user units IS the angle in degrees.
+      final cosFromSim = _cos2pi(angleDeg * kCosRatio);
       final cosExpected = _cosRad(angleDeg * 3.14159265358979 / 180.0);
       expect(cosFromSim, closeTo(cosExpected, 1e-4));
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Arm with gear reduction (gear ratio = 20, VCF = 0.3, PCF = 18)
-  // ---------------------------------------------------------------------------
-
-  group('Arm with gear ratio 20 (VCF=0.3, PCF=18)', () {
+  group('Arm with gear ratio 20 (VCF=0.3, PCF=18) — gains unscaled', () {
     const ff = FeedforwardGains(kS: 0.20, kV: 0.018, kA: 0.002, kG: 0.80);
-    const vcf = 0.3; // deg/s per RPM (= 6 / 20)
-    const pcf = 18.0; // deg per rotation (= 360 / 20)
 
-    test('velocity PID kP is scaled down by VCF < 1', () {
+    test('velocity PID gains pass through regardless of VCF', () {
       final velPid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.arm,
       );
-      final native = toNativeVelPid(velPid, vcf);
-      expect(native.kP, closeTo(velPid.kP * vcf, 1e-9));
-      // When VCF < 1, native kP < user kP.
-      expect(native.kP, lessThan(velPid.kP));
+      // Gains are in user units — no VCF multiplication.
+      expect(velPid.kP, isPositive);
     });
 
-    test('FF kV round-trip: native output = user output', () {
-      final kVNative = ff.kV * vcf;
+    test('FF kV round-trip: user-unit output is self-consistent', () {
+      // With onboard CFs, the controller sees user-unit setpoints and
+      // applies user-unit kV.  No round-trip scaling is needed.
       const setpointDegPerS = 90.0;
-      final setpointRpm = setpointDegPerS / vcf; // = 300 RPM
-      final ffNative = kVNative * setpointRpm;
-      final ffUser = ff.kV * setpointDegPerS;
-      expect(ffNative, closeTo(ffUser, 1e-9));
+      final ffOutput = ff.kV * setpointDegPerS;
+      expect(ffOutput, closeTo(0.018 * 90.0, 1e-9));
     });
 
-    test('kCosRatio = PCF / 360 maps encoder rotations to correct angle', () {
-      final kCosRatio = pcf / 360.0; // = 0.05
-      expect(kCosRatio, closeTo(0.05, 1e-9));
+    test('kCosRatio = 1/360 maps user-unit degrees to cos angle', () {
+      // Regardless of gear ratio, position in user units is always degrees
+      // for an arm.  kCosRatio = 1/360 converts degrees to full rotations.
+      const kCosRatio = 1.0 / 360.0;
 
-      // For 45 degrees with gear ratio 20:
-      // encoder reads 45 / 18 = 2.5 rotations.
+      // For 45 degrees (regardless of PCF or gear ratio).
       const angleDeg = 45.0;
-      final posRot = angleDeg / pcf; // 2.5 rotations
-      final cosFromSim = _cos2pi(posRot * kCosRatio);
+      final cosFromSim = _cos2pi(angleDeg * kCosRatio);
       final cosExpected = _cosRad(angleDeg * 3.14159265358979 / 180.0);
       expect(cosFromSim, closeTo(cosExpected, 1e-4));
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Elevator (VCF = 0.01 m/s per RPM, PCF = 0.006 m per rotation)
-  // ---------------------------------------------------------------------------
-
-  group('Elevator (VCF=0.01, PCF=0.006)', () {
+  group('Elevator (VCF=0.01, PCF=0.006) — gains unscaled', () {
     const ff = FeedforwardGains(kS: 0.10, kV: 2.0, kA: 0.5, kG: 0.60);
-    const vcf = 0.01; // m/s per RPM
-    const pcf = 0.006; // m per rotation
 
-    test('velocity PID kP round-trip: native error = user error', () {
+    test('velocity PID gains pass through in user units', () {
       final velPid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.elevator,
       );
-      final native = toNativeVelPid(velPid, vcf);
-      const setpointMperS = 0.15;
-      final setpointRpm = setpointMperS / vcf; // 15 RPM
-      final errorRpm = setpointRpm * 0.5; // assume 50% error
-      final errorUser = errorRpm * vcf; // in m/s
-      expect(native.kP * errorRpm, closeTo(velPid.kP * errorUser, 1e-9));
+      // Gains are in user units (dc/(m/s)) — no VCF multiplication.
+      expect(velPid.kP, isPositive);
     });
 
-    test('kG is not scaled for elevator (gravity is in Volts)', () {
+    test('kG passes through unchanged for elevator', () {
       // kG for elevator is a constant voltage — no unit conversion needed.
-      // Just verify it passes through unchanged.
-      final kGNative = ff.kG; // no multiplication needed
-      expect(kGNative, closeTo(ff.kG, 1e-9));
+      expect(ff.kG, closeTo(0.60, 1e-9));
     });
   });
   // ---------------------------------------------------------------------------
@@ -245,10 +192,10 @@ void main() {
       expect(pidFast.kP, greaterThan(pidDefault.kP));
       expect(pidSlow.kP, lessThan(pidDefault.kP));
 
-      // Verify exact kP = kA * ω² / 12.
+      // Verify exact kP = r * kA * ω² / 12     (r=60 for flywheel).
       const pi = 3.14159265;
       final omega10 = 2.0 * pi * 10.0;
-      expect(pidFast.kP, closeTo(ff.kA * omega10 * omega10 / 12.0, 1e-6));
+      expect(pidFast.kP, closeTo(60.0 * ff.kA * omega10 * omega10 / 12.0, 1e-4));
 
       // Tuning parameter is stored in result.
       expect(pidFast.positionBandwidthHz, equals(10.0));

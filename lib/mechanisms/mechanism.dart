@@ -4,6 +4,47 @@
 /// how feedforward constants are computed and what safety constraints apply.
 library;
 
+/// Which feedback sensor the closed-loop controller reads from.
+enum FeedbackSensor {
+  /// Built-in primary encoder (Hall-effect / quadrature on the motor shaft).
+  primaryEncoder,
+
+  /// Absolute encoder (e.g. REV Through Bore Encoder in absolute mode).
+  absoluteEncoder,
+}
+
+/// Human-readable labels for [FeedbackSensor].
+extension FeedbackSensorX on FeedbackSensor {
+  String get displayName => switch (this) {
+        FeedbackSensor.primaryEncoder => 'Primary Encoder',
+        FeedbackSensor.absoluteEncoder => 'Absolute Encoder',
+      };
+
+  /// Integer value written to SPARK parameter 9.
+  int get parameterValue => switch (this) {
+        FeedbackSensor.primaryEncoder => 0,
+        FeedbackSensor.absoluteEncoder => 2,
+      };
+
+  /// Java REVLib enum name.
+  String get javaName => switch (this) {
+        FeedbackSensor.primaryEncoder => 'kPrimaryEncoder',
+        FeedbackSensor.absoluteEncoder => 'kAbsoluteEncoder',
+      };
+
+  /// Python REVLib enum name.
+  String get pythonName => switch (this) {
+        FeedbackSensor.primaryEncoder => 'kPrimaryEncoder',
+        FeedbackSensor.absoluteEncoder => 'kAbsoluteEncoder',
+      };
+
+  /// C++ REVLib enum name.
+  String get cppName => switch (this) {
+        FeedbackSensor.primaryEncoder => 'kPrimaryEncoder',
+        FeedbackSensor.absoluteEncoder => 'kAbsoluteEncoder',
+      };
+}
+
 /// The type of mechanism being characterized.
 enum MechanismType {
   /// Rotating arm (pivots around a fixed point).
@@ -87,14 +128,11 @@ class MechanismConfig {
   /// The type of mechanism.
   final MechanismType type;
 
-  /// Gear ratio (output/input). > 1 means reduction.
-  final double gearRatio;
-
   /// Position conversion factor (encoder rotations → user units).
   ///
-  /// For arms: rotations → degrees (e.g., 360.0 / gearRatio).
-  /// For elevators: rotations → inches (e.g., sprocketCircumference / gearRatio).
-  /// For flywheels: typically 1.0 (stay in rotations or RPM).
+  /// For arms: rotations → degrees (e.g., 360 / gear_ratio).
+  /// For elevators: rotations → meters or inches (e.g., spool_circumference / gear_ratio).
+  /// For flywheels/simple: typically 1.0 (stay in rotations).
   final double positionConversionFactor;
 
   /// Velocity conversion factor (encoder RPM → user units/sec).
@@ -122,6 +160,9 @@ class MechanismConfig {
   /// Smart current limit in amps.
   final double currentLimitAmps;
 
+  /// Which feedback sensor the closed-loop controller uses.
+  final FeedbackSensor feedbackSensor;
+
   /// Position unit for the current config (respects [useImperialUnits]).
   String get positionUnit => useImperialUnits
       ? type.positionUnitImperial
@@ -135,7 +176,6 @@ class MechanismConfig {
   const MechanismConfig({
     required this.type,
     this.systemName = '',
-    this.gearRatio = 1.0,
     this.positionConversionFactor = 1.0,
     this.velocityConversionFactor = 1.0,
     this.forwardSoftLimit,
@@ -144,6 +184,7 @@ class MechanismConfig {
     this.motorInverted = false,
     this.isBrushless = true,
     this.currentLimitAmps = 40.0,
+    this.feedbackSensor = FeedbackSensor.primaryEncoder,
   });
 
   /// Whether soft limits are fully configured.
@@ -167,10 +208,6 @@ class MechanismConfig {
       errors.add('Forward limit must be greater than reverse limit.');
     }
 
-    if (gearRatio <= 0) {
-      errors.add('Gear ratio must be positive.');
-    }
-
     if (currentLimitAmps <= 0 || currentLimitAmps > 80) {
       errors.add('Current limit must be between 0 and 80 amps.');
     }
@@ -182,7 +219,6 @@ class MechanismConfig {
   MechanismConfig copyWith({
     MechanismType? type,
     String? systemName,
-    double? gearRatio,
     double? positionConversionFactor,
     double? velocityConversionFactor,
     double? forwardSoftLimit,
@@ -191,11 +227,11 @@ class MechanismConfig {
     bool? motorInverted,
     bool? isBrushless,
     double? currentLimitAmps,
+    FeedbackSensor? feedbackSensor,
   }) {
     return MechanismConfig(
       type: type ?? this.type,
       systemName: systemName ?? this.systemName,
-      gearRatio: gearRatio ?? this.gearRatio,
       positionConversionFactor:
           positionConversionFactor ?? this.positionConversionFactor,
       velocityConversionFactor:
@@ -206,6 +242,7 @@ class MechanismConfig {
       motorInverted: motorInverted ?? this.motorInverted,
       isBrushless: isBrushless ?? this.isBrushless,
       currentLimitAmps: currentLimitAmps ?? this.currentLimitAmps,
+      feedbackSensor: feedbackSensor ?? this.feedbackSensor,
     );
   }
 }

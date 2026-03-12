@@ -61,10 +61,6 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
     state = state.copyWith(systemName: name);
   }
 
-  void setGearRatio(double ratio) {
-    state = state.copyWith(gearRatio: ratio);
-  }
-
   void setPositionConversionFactor(double factor) {
     state = state.copyWith(positionConversionFactor: factor);
   }
@@ -95,6 +91,10 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
 
   void setCurrentLimit(double amps) {
     state = state.copyWith(currentLimitAmps: amps);
+  }
+
+  void setFeedbackSensor(FeedbackSensor sensor) {
+    state = state.copyWith(feedbackSensor: sensor);
   }
 
   void setConfig(MechanismConfig config) {
@@ -184,7 +184,7 @@ final sysIdResultsProvider = StateProvider<SysIdResults?>((ref) => null);
 // ---------------------------------------------------------------------------
 
 /// Currently selected navigation page index.
-final selectedPageProvider = StateProvider<int>((ref) => 0);
+final selectedPageProvider = StateProvider<int>((ref) => 1);
 
 /// Whether a test is currently running.
 final testRunningProvider = StateProvider<bool>((ref) => false);

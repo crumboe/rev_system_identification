@@ -36,9 +36,19 @@ class ArmVisual extends StatelessWidget {
     this.onAngleChanged,
   });
 
+  /// Normalize an angle to the (−180, 180] range so the text readout
+  /// matches the visual position after many full rotations.
+  static double _normalizeAngle(double deg) {
+    var n = deg % 360;
+    if (n > 180) n -= 360;
+    if (n <= -180) n += 360;
+    return n;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
+    final normalizedDeg = _normalizeAngle(currentAngleDeg);
 
     return Card(
       child: Column(
@@ -82,7 +92,7 @@ class ArmVisual extends StatelessWidget {
               ],
               const Spacer(),
               Text(
-                '${currentAngleDeg.toStringAsFixed(1)}°',
+                '${normalizedDeg.toStringAsFixed(1)}°',
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
@@ -97,7 +107,7 @@ class ArmVisual extends StatelessWidget {
               builder: (context, constraints) {
                 final size = Size(constraints.maxWidth, constraints.maxHeight);
                 final painter = _ArmPainter(
-                  angleDeg: currentAngleDeg,
+                  angleDeg: normalizedDeg,
                   forwardLimitDeg: forwardLimitDeg,
                   reverseLimitDeg: reverseLimitDeg,
                   accentColor: theme.accentColor,

@@ -39,6 +39,7 @@ class SparkConnection implements ISparkConnection {
   StatusFrame0? lastStatus0;
   StatusFrame1? lastStatus1;
   StatusFrame2? lastStatus2;
+  StatusFrame5? lastStatus5;
 
   /// Raw byte buffer for incoming data — processes both SLCAN text and
   /// binary 12-byte packets in a unified stream.
@@ -404,6 +405,7 @@ class SparkConnection implements ISparkConnection {
       if (parsed is StatusFrame0) lastStatus0 = parsed;
       if (parsed is StatusFrame1) lastStatus1 = parsed;
       if (parsed is StatusFrame2) lastStatus2 = parsed;
+      if (parsed is StatusFrame5) lastStatus5 = parsed;
     }
 
     if (!_responseController.isClosed) {

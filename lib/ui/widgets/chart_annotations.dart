@@ -158,51 +158,156 @@ List<WalkthroughStep> stepResponseWalkthroughSteps() {
 List<WalkthroughStep> liveChartWalkthroughSteps() {
   return [
     const WalkthroughStep(
-      title: 'Live Data Monitor',
+      title: 'Welcome to the Live Data Monitor',
       description:
-          'These four charts show real-time data streaming from the motor '
-          'controller during a test. Each chart shows the last 500 data '
-          'points, scrolling automatically.\n\n'
-          'Velocity, Voltage, Position, and Current are all recorded '
-          'simultaneously.',
+          'These four charts show real-time measurements streaming from '
+          'your motor controller while a test runs. All four are recorded '
+          'at the same time, so you can see how they relate to each other.\n\n'
+          'The charts are arranged in a 2\u00d72 grid:\n'
+          '  \u2022 Top-left: Velocity (how fast the motor spins)\n'
+          '  \u2022 Top-right: Voltage (the electrical "push" applied)\n'
+          '  \u2022 Bottom-left: Position (where the mechanism is)\n'
+          '  \u2022 Bottom-right: Current (how hard the motor works)\n\n'
+          'Each test you run adds a new colored trace:\n'
+          '  1st test = blue, 2nd = orange, 3rd = teal, 4th = magenta.\n'
+          'This lets you compare Forward vs. Reverse or Quasistatic vs. '
+          'Dynamic runs side-by-side.',
       icon: FluentIcons.chart,
     ),
     const WalkthroughStep(
-      title: 'Velocity Chart',
+      title: 'Velocity \u2014 Speed of the Motor',
       description:
-          'The blue chart tracks how fast the motor is spinning. During a '
-          'quasistatic test, you should see a smooth, gradually increasing '
-          'ramp. During a dynamic test, you\'ll see a sudden jump.\n\n'
-          'If velocity looks noisy or erratic, check your sensor wiring.',
+          'Think back to physics class: velocity = how fast something moves '
+          'in a given direction. Here, it\u2019s how fast your motor shaft '
+          '(or mechanism) is spinning or moving, shown in your configured '
+          'units (RPM, deg/s, m/s, etc.).\n\n'
+          'During a QUASISTATIC test, the voltage ramps up slowly, so '
+          'velocity should climb in a smooth, gradual line \u2014 almost '
+          'like the graph of y = mx from algebra.\n\n'
+          'During a DYNAMIC test, voltage jumps to a constant value '
+          'instantly, so velocity rises in a curve that looks like '
+          '1 \u2212 e^(\u2212t/\u03c4) (an exponential approach). This '
+          'is the same "charging capacitor" shape from physics!\n\n'
+          'If velocity stays at zero or is very noisy/erratic, '
+          'double-check your encoder wiring and sensor configuration.',
       icon: FluentIcons.speed_high,
     ),
     const WalkthroughStep(
-      title: 'Voltage Chart',
+      title: 'Voltage \u2014 The Input We Control',
       description:
-          'The orange chart shows the voltage being sent to the motor. '
-          'During quasistatic tests, this ramps linearly. During dynamic '
-          'tests, it jumps to a constant step voltage.\n\n'
-          'The program controls this automatically — you just watch!',
+          'Voltage is the electrical "push" sent to the motor, measured in '
+          'Volts (V). The app controls this automatically during tests \u2014 '
+          'you just watch.\n\n'
+          'QUASISTATIC tests ramp voltage linearly: V(t) = rate \u00d7 t. '
+          'On the chart this looks like a straight diagonal line (slope = '
+          'your configured ramp rate). This slow ramp keeps acceleration '
+          'near zero so we can isolate the relationship between voltage and '
+          'velocity.\n\n'
+          'DYNAMIC tests apply a constant step voltage instantly. On the '
+          'chart this looks like a flat horizontal line that appears '
+          'suddenly. The motor then responds over time \u2014 we measure '
+          'how quickly it reaches the new speed, which tells us the '
+          'mechanism\'s inertia (resistance to changing speed).\n\n'
+          'Remember from physics: V = IR for resistors. Motors are similar '
+          'but voltage also has to overcome friction (kS) and back-EMF '
+          '(kV \u00d7 speed).',
       icon: FluentIcons.lightning_bolt,
     ),
     const WalkthroughStep(
-      title: 'Position & Current',
+      title: 'Position \u2014 Where the Mechanism Is',
       description:
-          'Position (green) tracks total rotations — useful for Arms and '
-          'Elevators to verify soft limits are working.\n\n'
-          'Current (red) shows how hard the motor is working. High current '
-          'at low speed suggests binding or obstruction. Current should '
-          'decrease as the motor reaches steady-state speed.',
+          'Position tracks the total displacement of your mechanism in '
+          'your configured units (rotations, degrees, inches, meters, etc.).\n\n'
+          'For Arms and Elevators, this is critical for safety \u2014 if '
+          'the position approaches a soft limit, the test will automatically '
+          'stop to prevent damage.\n\n'
+          'From calculus (or physics kinematics): position is the integral '
+          'of velocity over time. So:\n'
+          '  \u2022 When velocity is constant, position changes at a steady '
+          'rate (straight line with slope = velocity)\n'
+          '  \u2022 When velocity is increasing, the position curve bends '
+          'upward (like the x\u00b2 parabola from algebra)\n'
+          '  \u2022 When velocity is zero, position stays flat\n\n'
+          'You can verify your conversion factor is correct by moving the '
+          'mechanism a known distance and checking that this chart shows '
+          'the right value.',
+      icon: FluentIcons.location,
+    ),
+    const WalkthroughStep(
+      title: 'Current \u2014 How Hard the Motor Works',
+      description:
+          'Current (measured in Amps, A) tells you how much electrical '
+          'power the motor is drawing. It\u2019s directly related to the '
+          'torque (rotational force) the motor produces:\n\n'
+          '  Torque = kT \u00d7 Current\n\n'
+          'High current at LOW speed means the motor is pushing hard '
+          'against resistance \u2014 friction, a stalled mechanism, or '
+          'gravity. This is like trying to push a heavy box: lots of '
+          'effort (current) but not much motion (velocity).\n\n'
+          'During steady-state motion, current should settle to a lower '
+          'value since the motor only needs to overcome friction, not '
+          'accelerate.\n\n'
+          'Watch for current hitting the safety limit \u2014 this means '
+          'the mechanism might be jammed or hitting a hard stop. The app '
+          'can auto-stop the test when this happens (Current Trip '
+          'Protection on the Config page).',
       icon: FluentIcons.plug_connected,
     ),
     const WalkthroughStep(
-      title: 'Safety Monitoring',
+      title: 'What Are We Actually Measuring?',
       description:
-          'Watch for these warning signs during tests:\n\n'
-          '\u2022 Velocity flat at zero = motor not spinning (check wiring)\n'
-          '\u2022 Current spikes to limit = mechanism jammed\n'
-          '\u2022 Position exceeding soft limits = stop immediately!\n\n'
-          'Use the EMERGENCY STOP button (top right) if anything looks wrong.',
+          'The goal of system identification (sysid) is to find the '
+          'equation that describes your motor + mechanism:\n\n'
+          '  V = kS\u00b7sign(\u03c9) + kV\u00b7\u03c9 + kA\u00b7\u03b1 '
+          '(+ kG for arms/elevators)\n\n'
+          'In plain English:\n'
+          '  \u2022 kS = voltage to overcome static friction ("unstick" '
+          'the motor)\n'
+          '  \u2022 kV = extra voltage per unit of speed (back-EMF + '
+          'viscous friction)\n'
+          '  \u2022 kA = extra voltage per unit of acceleration (inertia)\n'
+          '  \u2022 kG = voltage to fight gravity (arms need cos(\u03b8), '
+          'elevators need a constant)\n\n'
+          'This is really just physics: F = ma rewritten for motors! '
+          'The quasistatic tests find kS and kV (acceleration \u2248 0), '
+          'and the dynamic tests find kA (known voltage, measure '
+          'acceleration).',
+      icon: FluentIcons.education,
+    ),
+    const WalkthroughStep(
+      title: 'The Four Tests Explained',
+      description:
+          'You run four tests total, and here\u2019s why each matters:\n\n'
+          '1. Quasistatic Forward \u2014 Slowly ramp voltage in the '
+          'positive direction. Maps the V-vs-\u03c9 line for forward '
+          'motion. Gives you kS and kV.\n\n'
+          '2. Quasistatic Reverse \u2014 Same but in reverse. Confirms '
+          'the motor behaves symmetrically (it usually does).\n\n'
+          '3. Dynamic Forward \u2014 Sudden step voltage forward. The '
+          'speed-vs-time curve reveals kA (how much inertia the '
+          'mechanism has).\n\n'
+          '4. Dynamic Reverse \u2014 Same but reversed.\n\n'
+          'Running both directions averages out asymmetries like gravity, '
+          'uneven friction, or motor cogging.',
+      icon: FluentIcons.bulleted_list,
+    ),
+    const WalkthroughStep(
+      title: 'Safety Tips While Testing',
+      description:
+          'Watch for these warning signs on the charts:\n\n'
+          '\u2022 Velocity stuck at zero \u2192 motor not spinning (check '
+          'wiring, is the motor enabled?)\n'
+          '\u2022 Current spiking to the limit \u2192 mechanism jammed or '
+          'hitting a hard stop\n'
+          '\u2022 Position approaching soft limits \u2192 test will '
+          'auto-stop, but stay alert\n'
+          '\u2022 Velocity jumping erratically \u2192 loose encoder wire '
+          'or bad sensor connection\n\n'
+          'The EMERGENCY STOP button (top-right, yellow) instantly cuts '
+          'power to the motor. Don\u2019t hesitate to use it if anything '
+          'looks wrong \u2014 you can always re-run the test!\n\n'
+          'Always keep the area around the mechanism clear and physically '
+          'support gravity-loaded arms/elevators before the test begins.',
       icon: FluentIcons.warning,
     ),
   ];

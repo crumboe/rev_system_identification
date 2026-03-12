@@ -63,7 +63,6 @@ void main() {
     test('valid flywheel config produces no errors', () {
       const config = MechanismConfig(
         type: MechanismType.flywheel,
-        gearRatio: 1.0,
         currentLimitAmps: 40.0,
       );
       expect(config.validate(), isEmpty);
@@ -72,7 +71,6 @@ void main() {
     test('arm without soft limits produces error', () {
       const config = MechanismConfig(
         type: MechanismType.arm,
-        gearRatio: 5.0,
       );
       final errors = config.validate();
       expect(errors.length, greaterThanOrEqualTo(1));
@@ -82,7 +80,6 @@ void main() {
     test('elevator without soft limits produces error', () {
       const config = MechanismConfig(
         type: MechanismType.elevator,
-        gearRatio: 10.0,
       );
       final errors = config.validate();
       expect(errors.any((e) => e.contains('soft limits')), isTrue);
@@ -91,7 +88,6 @@ void main() {
     test('arm with valid soft limits passes', () {
       const config = MechanismConfig(
         type: MechanismType.arm,
-        gearRatio: 5.0,
         forwardSoftLimit: 90.0,
         reverseSoftLimit: -45.0,
         currentLimitAmps: 30.0,
@@ -102,7 +98,6 @@ void main() {
     test('forward <= reverse soft limit is an error', () {
       const config = MechanismConfig(
         type: MechanismType.arm,
-        gearRatio: 5.0,
         forwardSoftLimit: -10.0,
         reverseSoftLimit: 10.0,
         currentLimitAmps: 30.0,
@@ -111,24 +106,6 @@ void main() {
       expect(
           errors.any((e) => e.contains('Forward limit must be greater')),
           isTrue);
-    });
-
-    test('zero gear ratio is an error', () {
-      const config = MechanismConfig(
-        type: MechanismType.flywheel,
-        gearRatio: 0.0,
-      );
-      final errors = config.validate();
-      expect(errors.any((e) => e.contains('Gear ratio')), isTrue);
-    });
-
-    test('negative gear ratio is an error', () {
-      const config = MechanismConfig(
-        type: MechanismType.flywheel,
-        gearRatio: -1.0,
-      );
-      final errors = config.validate();
-      expect(errors.any((e) => e.contains('Gear ratio')), isTrue);
     });
 
     test('current limit > 80 is an error', () {
@@ -190,13 +167,11 @@ void main() {
     test('copyWith preserves unmodified fields', () {
       const original = MechanismConfig(
         type: MechanismType.arm,
-        gearRatio: 5.0,
         currentLimitAmps: 30.0,
         motorInverted: true,
       );
       final copy = original.copyWith(currentLimitAmps: 40.0);
       expect(copy.type, equals(MechanismType.arm));
-      expect(copy.gearRatio, equals(5.0));
       expect(copy.motorInverted, isTrue);
       expect(copy.currentLimitAmps, equals(40.0));
     });

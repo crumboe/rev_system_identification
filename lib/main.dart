@@ -19,7 +19,7 @@ class RevSysIdApp extends ConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
 
     return FluentApp(
-      title: 'REV System Identification Tool',
+      title: "Crumboe's (unofficial) REV System Identification Tool",
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       darkTheme: FluentThemeData(

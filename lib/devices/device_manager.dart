@@ -362,6 +362,7 @@ class DeviceManager {
     final pidFf = SimulatedPidFfController(parameters, physics);
     control.attachPidFfController(pidFf);
     connection.controlApi = control;
+    connection.paramApi = parameters;
 
     final device = SparkDevice(
       connection: connection,
@@ -418,6 +419,35 @@ class DeviceManager {
       followerType: followerType,
     );
     await device.parameters.burnFlash(heartbeat: device.heartbeat);
+    _notifyChanged();
+  }
+
+  /// Set the CAN ID on [device], burn to flash, and retarget APIs.
+  ///
+  /// The new CAN ID must be in the range 0–62.
+  Future<void> setCanId(SparkDevice device, int newCanId) async {
+    if (newCanId < 0 || newCanId > kMaxCanDeviceId) {
+      throw ArgumentError('CAN ID must be 0–$kMaxCanDeviceId');
+    }
+
+    final wasRunning = device.heartbeat.isRunning;
+    if (!wasRunning) {
+      device.heartbeat.start(enabled: true);
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+
+    await device.parameters.setCanId(newCanId);
+    await device.parameters.burnFlash(heartbeat: device.heartbeat);
+
+    device.canId = newCanId;
+    device.canIdReadSucceeded = true;
+    device.connectionNote = null;
+    _retargetApisToCanId(device);
+
+    if (!wasRunning) {
+      device.heartbeat.stop();
+    }
+
     _notifyChanged();
   }
 

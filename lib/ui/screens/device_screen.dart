@@ -76,8 +76,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           _simElevator => 'elevator',
           _ => 'flywheel',
         };
-        await dm.connectSimulated(mechanismType: type);
-        _applySimulatedConfig(type);
+        final device = await dm.connectSimulated(mechanismType: type);
+        _applySimulatedConfig(type, device: device);
       } else {
         await dm.connect(_selectedPort!, label: 'Leader');
       }
@@ -114,51 +114,56 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   /// These conversion factors translate encoder-native rotations/RPM into
   /// the user-facing units (degrees, inches, etc.) so that soft-limit
   /// checks and data recording work correctly.
-  void _applySimulatedConfig(String type) {
+  void _applySimulatedConfig(String type, {SparkDevice? device}) {
     final configNotifier = ref.read(mechanismConfigProvider.notifier);
     final paramsNotifier = ref.read(testParamsProvider.notifier);
 
+    double pcf = 1.0;
+    double vcf = 1.0;
+
     switch (type) {
       case 'arm':
-        // Arm physics: internal deg/s â†’ encoder RPM (Ã·360 Ã—60).
-        // Conversion: rotationsâ†’degrees = 360, RPMâ†’deg/s = 6.
-        // Soft limits match ArmPhysics defaults: âˆ’45Â° to +90Â°.
+        pcf = 360.0;
+        vcf = 6.0;
         configNotifier.setConfig(const MechanismConfig(
           type: MechanismType.arm,
-          gearRatio: 1.0,
           positionConversionFactor: 360.0,
           velocityConversionFactor: 6.0,
-          forwardSoftLimit: 85.0,  // 5Â° margin inside 90Â° hard stop
-          reverseSoftLimit: -40.0, // 5Â° margin inside âˆ’45Â° hard stop
+          forwardSoftLimit: 85.0,
+          reverseSoftLimit: -40.0,
           currentLimitAmps: 40.0,
         ));
         paramsNotifier.loadDefaults(MechanismType.arm);
 
       case 'elevator':
-        // Elevator physics: 1.504 in/rotation.
-        // Conversion: rotationsâ†’inches = 1.504, RPMâ†’in/s = 1.504/60.
-        // Soft limits match ElevatorPhysics defaults: 0â€“48 in.
+        pcf = 1.504;
+        vcf = 1.504 / 60.0;
         configNotifier.setConfig(MechanismConfig(
           type: MechanismType.elevator,
-          gearRatio: 1.0,
-          positionConversionFactor: 1.504,
-          velocityConversionFactor: 1.504 / 60.0,
-          forwardSoftLimit: 46.0,  // 2" margin inside 48" hard stop
-          reverseSoftLimit: 2.0,   // 2" margin inside 0" hard stop
+          positionConversionFactor: pcf,
+          velocityConversionFactor: vcf,
+          forwardSoftLimit: 46.0,
+          reverseSoftLimit: 2.0,
           currentLimitAmps: 40.0,
+          useImperialUnits: true,
         ));
         paramsNotifier.loadDefaults(MechanismType.elevator);
 
       default:
-        // Flywheel: rotations and RPM are native, no soft limits needed.
         configNotifier.setConfig(const MechanismConfig(
           type: MechanismType.flywheel,
-          gearRatio: 1.0,
           positionConversionFactor: 1.0,
           velocityConversionFactor: 1.0,
           currentLimitAmps: 40.0,
         ));
         paramsNotifier.loadDefaults(MechanismType.flywheel);
+    }
+
+    // Write conversion factors to the simulated device's parameter store
+    // so status frames report in user units from the start.
+    if (device != null) {
+      device.parameters.setPositionConversionFactor(pcf);
+      device.parameters.setVelocityConversionFactor(vcf);
     }
   }
 
@@ -285,11 +290,22 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   device: device,
                   onDisconnect: () {
                     dm.disconnect(device);
+                    // Clear test runs and computed PID/FF results.
+                    ref.read(testRunsProvider.notifier).clear();
+                    ref.read(feedforwardGainsProvider.notifier).state = null;
+                    ref.read(pidResultProvider.notifier).state = null;
+                    ref.read(posPidResultProvider.notifier).state = null;
+                    ref.read(sysIdResultsProvider.notifier).state = null;
+                    ref.read(validationResultProvider.notifier).state = null;
                     setState(() {});
                   },
                   onIdentify: () => device.identify(),
                   onReReadCanId: () async {
                     await dm.reReadCanId(device);
+                    setState(() {});
+                  },
+                  onSetCanId: (newCanId) async {
+                    await dm.setCanId(device, newCanId);
                     setState(() {});
                   },
                 ),
@@ -335,12 +351,14 @@ class _DeviceCard extends StatefulWidget {
   final VoidCallback onDisconnect;
   final VoidCallback onIdentify;
   final Future<void> Function() onReReadCanId;
+  final Future<void> Function(int newCanId) onSetCanId;
 
   const _DeviceCard({
     required this.device,
     required this.onDisconnect,
     required this.onIdentify,
     required this.onReReadCanId,
+    required this.onSetCanId,
   });
 
   @override
@@ -349,6 +367,7 @@ class _DeviceCard extends StatefulWidget {
 
 class _DeviceCardState extends State<_DeviceCard> {
   bool _reReading = false;
+  bool _settingCanId = false;
 
   Future<void> _handleReReadCanId() async {
     setState(() => _reReading = true);
@@ -356,6 +375,96 @@ class _DeviceCardState extends State<_DeviceCard> {
       await widget.onReReadCanId();
     } finally {
       if (mounted) setState(() => _reReading = false);
+    }
+  }
+
+  Future<void> _showSetCanIdDialog() async {
+    final controller = TextEditingController(
+      text: widget.device.canIdReadSucceeded
+          ? widget.device.canId.toString()
+          : '',
+    );
+    String? errorText;
+
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return ContentDialog(
+              title: const Text('Set CAN ID'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Enter a new CAN ID (0–62). This will be written to '
+                    'the controller and persisted to flash.',
+                  ),
+                  const SizedBox(height: 12),
+                  InfoLabel(
+                    label: 'CAN ID',
+                    child: TextBox(
+                      controller: controller,
+                      placeholder: '0–62',
+                      autofocus: true,
+                      onSubmitted: (_) {
+                        final id = int.tryParse(controller.text);
+                        if (id != null && id >= 0 && id <= 62) {
+                          Navigator.of(context).pop(id);
+                        } else {
+                          setDialogState(() {
+                            errorText = 'Must be an integer from 0 to 62.';
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                  if (errorText != null) ...[                    const SizedBox(height: 4),
+                    Text(
+                      errorText!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.errorPrimaryColor,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                Button(
+                  onPressed: () => Navigator.of(context).pop(null),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final id = int.tryParse(controller.text);
+                    if (id != null && id >= 0 && id <= 62) {
+                      Navigator.of(context).pop(id);
+                    } else {
+                      setDialogState(() {
+                        errorText = 'Must be an integer from 0 to 62.';
+                      });
+                    }
+                  },
+                  child: const Text('Set'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (result != null && mounted) {
+      setState(() => _settingCanId = true);
+      try {
+        await widget.onSetCanId(result);
+      } finally {
+        if (mounted) setState(() => _settingCanId = false);
+      }
     }
   }
 
@@ -503,6 +612,24 @@ class _DeviceCardState extends State<_DeviceCard> {
                 Button(
                   onPressed: widget.onIdentify,
                   child: const Text('Identify'),
+                ),
+                const SizedBox(width: 8),
+                Button(
+                  onPressed: _settingCanId ? null : _showSetCanIdDialog,
+                  child: _settingCanId
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: ProgressRing(strokeWidth: 2),
+                        )
+                      : const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(FluentIcons.edit, size: 12),
+                            SizedBox(width: 4),
+                            Text('Set CAN ID'),
+                          ],
+                        ),
                 ),
                 const SizedBox(width: 8),
                 Button(

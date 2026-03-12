@@ -358,28 +358,33 @@ class ValidationRunner {
   // -------------------------------------------------------------------------
 
   /// Write the appropriate PID + FeedForward gains to Slot 0 for a velocity
-  /// test.  Gains are converted from user units to native RPM-based units
-  /// before being written so the SPARK's internal PID operates correctly.
-  ///
-  /// The SPARK CAN protocol always uses RPM for velocity setpoints and
-  /// rotations for position setpoints.  The stored gains are derived from
-  /// user-unit data, so they must be scaled:
-  ///   kP_native = kP_user × VCF (duty-cycle per RPM)
-  ///   kV_native = kV_user × VCF (V per RPM)
+  /// test.  The controller's onboard conversion factors are set so that the
+  /// SPARK firmware handles unit conversion internally.  Gains are written
+  /// in user units (matching the identified plant model).
   Future<void> _prepareForVelocityTest() async {
     final ff = feedforwardGains;
     final pid = velocityPidGains;
     if (ff == null || pid == null) return;
 
-    final vcf = mechanismConfig.velocityConversionFactor;
-    final pcf = mechanismConfig.positionConversionFactor;
+    // Write conversion factors so the controller handles unit conversion.
+    await device.parameters.setPositionConversionFactor(
+        mechanismConfig.positionConversionFactor);
+    await device.parameters.setVelocityConversionFactor(
+        mechanismConfig.velocityConversionFactor);
 
+    // Brief pause between conversion-factor writes and PID writes.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    // PID gains are in user units — no pre-scaling needed.
     await device.parameters.setPidSlot0(
-      p: pid.kP * vcf,
-      i: pid.kI * vcf,
-      d: pid.kD * vcf,
+      p: pid.kP,
+      i: pid.kI,
+      d: pid.kD,
       f: 0.0,
     );
+
+    // Brief pause between PID and FF writes.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
 
     double kG = 0.0;
     double kCos = 0.0;
@@ -388,13 +393,16 @@ class ValidationRunner {
       kG = ff.kG;
     } else if (mechanismConfig.type == MechanismType.arm) {
       kCos = ff.kG;
-      kCosRatio = pcf / 360.0;
+      // Position is in degrees (user units); kCosRatio converts to full
+      // rotations for the cos() computation: cos(pos * kCosRatio * 2π).
+      kCosRatio = 1.0 / 360.0;
     }
 
+    // FeedForward gains are in user units — no pre-scaling needed.
     await device.parameters.setFeedForwardSlot0(
       kS: ff.kS,
-      kV: ff.kV * vcf,
-      kA: ff.kA * vcf,
+      kV: ff.kV,
+      kA: ff.kA,
       kG: kG,
       kCos: kCos,
       kCosRatio: kCosRatio,
@@ -402,23 +410,33 @@ class ValidationRunner {
   }
 
   /// Write the appropriate PID + FeedForward gains to Slot 0 for a position
-  /// test.  Position PID gains are scaled using PCF (rotations → user units):
-  ///   kP_native = kP_user × PCF (duty-cycle per rotation)
-  ///   kD_native = kD_user × PCF (duty-cycle per rot/s)
+  /// test.  The controller's onboard conversion factors are set so that the
+  /// SPARK firmware handles unit conversion internally.  Gains are written
+  /// in user units (matching the identified plant model).
   Future<void> _prepareForPositionTest() async {
     final ff = feedforwardGains;
     final pid = positionPidGains;
     if (ff == null || pid == null) return;
 
-    final vcf = mechanismConfig.velocityConversionFactor;
-    final pcf = mechanismConfig.positionConversionFactor;
+    // Write conversion factors so the controller handles unit conversion.
+    await device.parameters.setPositionConversionFactor(
+        mechanismConfig.positionConversionFactor);
+    await device.parameters.setVelocityConversionFactor(
+        mechanismConfig.velocityConversionFactor);
 
+    // Brief pause between conversion-factor writes and PID writes.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    // PID gains are in user units — no pre-scaling needed.
     await device.parameters.setPidSlot0(
-      p: pid.kP * pcf,
-      i: pid.kI * pcf,
-      d: pid.kD * pcf,
+      p: pid.kP,
+      i: pid.kI,
+      d: pid.kD,
       f: 0.0,
     );
+
+    // Brief pause between PID and FF writes.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
 
     double kG = 0.0;
     double kCos = 0.0;
@@ -427,13 +445,14 @@ class ValidationRunner {
       kG = ff.kG;
     } else if (mechanismConfig.type == MechanismType.arm) {
       kCos = ff.kG;
-      kCosRatio = pcf / 360.0;
+      kCosRatio = 1.0 / 360.0;
     }
 
+    // FeedForward gains are in user units — no pre-scaling needed.
     await device.parameters.setFeedForwardSlot0(
       kS: ff.kS,
-      kV: ff.kV * vcf,
-      kA: ff.kA * vcf,
+      kV: ff.kV,
+      kA: ff.kA,
       kG: kG,
       kCos: kCos,
       kCosRatio: kCosRatio,
@@ -447,29 +466,21 @@ class ValidationRunner {
   /// test.  In addition the MAXMotion cruise velocity, max acceleration,
   /// max jerk, allowed error and position mode are written.
   ///
-  /// User-unit values are converted to native units before writing:
-  ///   cruiseVelocity_native = cruiseVelocity_user / VCF  (RPM)
-  ///   maxAcceleration_native = maxAcceleration_user / VCF  (RPM/s)
-  ///   maxJerk_native = maxJerk_user / VCF  (RPM/s²)
-  ///   allowedError_native = allowedError_user / PCF  (rotations)
+  /// With onboard conversion factors, values are written in user units
+  /// and the controller handles conversion internally.
   Future<void> _prepareForMAXMotionTest(MAXMotionConfig config) async {
     // First write PID + FF gains exactly as for a normal position test.
     await _prepareForPositionTest();
 
-    final vcf = mechanismConfig.velocityConversionFactor;
-    final pcf = mechanismConfig.positionConversionFactor;
+    // Brief pause before MAXMotion parameter writes.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
 
-    // Convert user units → native units.
-    final nativeCruise = vcf != 0 ? config.cruiseVelocity / vcf : config.cruiseVelocity;
-    final nativeAccel  = vcf != 0 ? config.maxAcceleration / vcf : config.maxAcceleration;
-    final nativeJerk   = vcf != 0 ? config.maxJerk / vcf : config.maxJerk;
-    final nativeError  = pcf != 0 ? config.allowedError / pcf : config.allowedError;
-
+    // User-unit values go directly to the controller (onboard CFs active).
     await device.parameters.configureMAXMotionSlot0(
-      cruiseVelocity: nativeCruise,
-      maxAcceleration: nativeAccel,
-      maxJerk: nativeJerk,
-      allowedError: nativeError,
+      cruiseVelocity: config.cruiseVelocity,
+      maxAcceleration: config.maxAcceleration,
+      maxJerk: config.maxJerk,
+      allowedError: config.allowedError,
       positionMode: config.positionMode,
     );
   }
@@ -477,22 +488,21 @@ class ValidationRunner {
   /// Write only MAXMotion profile parameters to slot 0 while preserving the
   /// controller's existing PID/FF gains.
   Future<void> _prepareMAXMotionProfileOnly(MAXMotionConfig config) async {
-    final vcf = mechanismConfig.velocityConversionFactor;
-    final pcf = mechanismConfig.positionConversionFactor;
+    // Ensure conversion factors are on the controller.
+    await device.parameters.setPositionConversionFactor(
+        mechanismConfig.positionConversionFactor);
+    await device.parameters.setVelocityConversionFactor(
+        mechanismConfig.velocityConversionFactor);
 
-    final nativeCruise =
-        vcf != 0 ? config.cruiseVelocity / vcf : config.cruiseVelocity;
-    final nativeAccel =
-        vcf != 0 ? config.maxAcceleration / vcf : config.maxAcceleration;
-    final nativeJerk = vcf != 0 ? config.maxJerk / vcf : config.maxJerk;
-    final nativeError =
-        pcf != 0 ? config.allowedError / pcf : config.allowedError;
+    // Brief pause between conversion-factor and MAXMotion writes.
+    await Future<void>.delayed(const Duration(milliseconds: 10));
 
+    // User-unit values go directly to the controller (onboard CFs active).
     await device.parameters.configureMAXMotionSlot0(
-      cruiseVelocity: nativeCruise,
-      maxAcceleration: nativeAccel,
-      maxJerk: nativeJerk,
-      allowedError: nativeError,
+      cruiseVelocity: config.cruiseVelocity,
+      maxAcceleration: config.maxAcceleration,
+      maxJerk: config.maxJerk,
+      allowedError: config.allowedError,
       positionMode: config.positionMode,
     );
   }
@@ -600,6 +610,14 @@ class ValidationRunner {
       // telemetry arrive at their highest rate during the test.
       device.control.configureForSysId();
 
+      // Allow the frame-rate configuration to settle before further writes.
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+
+      // Set the closed-loop feedback sensor on the controller.
+      await device.parameters.setClosedLoopFeedbackSensor(
+        mechanismConfig.feedbackSensor.parameterValue,
+      );
+
       // Start heartbeat with motor enabled.
       device.heartbeat.start(enabled: true);
 
@@ -622,34 +640,22 @@ class ValidationRunner {
 
         if (mode == ValidationMode.velocity) {
           setpoint = inHoldPhase ? params.velocitySetpoint : 0.0;
-          // Convert user velocity units to native RPM for the controller.
-          // The SPARK CAN protocol always interprets velocity setpoints in RPM.
-          final rpmSetpoint =
-              mechanismConfig.velocityConversionFactor != 0
-                  ? setpoint / mechanismConfig.velocityConversionFactor
-                  : setpoint;
-          device.control.setVelocity(rpmSetpoint);
+          // With onboard conversion factors, the controller accepts
+          // setpoints in user units directly.
+          device.control.setVelocity(setpoint);
         } else if (mode == ValidationMode.maxMotionPosition) {
           // MAXMotion profiled position: always command the target position.
           // The profile generation (trapezoidal / S-curve) is handled
           // on-controller using the parameters written during preparation.
           setpoint = params.positionSetpoint;
-          final rotSetpoint =
-              mechanismConfig.positionConversionFactor != 0
-                  ? setpoint / mechanismConfig.positionConversionFactor
-                  : setpoint;
-          device.control.setSmartMotion(rotSetpoint);
+          device.control.setSmartMotion(setpoint);
         } else {
           // Position hold: always command the target position (including during
           // the settle phase so the mechanism holds still while we observe).
           setpoint = params.positionSetpoint;
-          // Convert user position units to native rotations for the controller.
-          // The SPARK CAN protocol always interprets position setpoints in rotations.
-          final rotSetpoint =
-              mechanismConfig.positionConversionFactor != 0
-                  ? setpoint / mechanismConfig.positionConversionFactor
-                  : setpoint;
-          device.control.setPosition(rotSetpoint);
+          // With onboard conversion factors, the controller accepts
+          // setpoints in user units directly.
+          device.control.setPosition(setpoint);
         }
 
         // Read measured state from status frames.
@@ -657,10 +663,19 @@ class ValidationRunner {
         final status2 = device.connection.lastStatus2;
 
         if (status1 != null) {
-          final velocity =
-              status1.velocityRpm * mechanismConfig.velocityConversionFactor;
-          final position = (status2?.positionRotations ?? 0.0) *
-              mechanismConfig.positionConversionFactor;
+          // Status frames already report in user units (onboard CFs).
+          final velocity = status1.velocityRpm;
+
+          // Read position from the configured feedback sensor's status frame.
+          final double rawPosition;
+          if (mechanismConfig.feedbackSensor == FeedbackSensor.absoluteEncoder) {
+            rawPosition = device.connection.lastStatus5
+                    ?.absoluteEncoderPosition ??
+                (status2?.positionRotations ?? 0.0);
+          } else {
+            rawPosition = status2?.positionRotations ?? 0.0;
+          }
+          final position = rawPosition;
 
           // Compute applied voltage: use the physics-based commandedVoltage
           // for simulated devices (status0.appliedOutput is not updated in sim),

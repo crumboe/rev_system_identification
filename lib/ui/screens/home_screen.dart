@@ -15,7 +15,7 @@ class HomeScreen extends ConsumerWidget {
       header: const PageHeader(title: Text('Welcome')),
       children: [
         const InfoBar(
-          title: Text('REV System Identification Tool'),
+          title: Text("Crumboe's (unofficial) REV System Identification Tool"),
           content: Text(
             'Characterize your REV motor mechanism to determine feedforward '
             'constants (kS, kV, kA, kG) and optimal PID values.',
@@ -44,9 +44,9 @@ class HomeScreen extends ConsumerWidget {
           title: 'Configure Mechanism',
           description:
               'Select your mechanism type (Arm, Elevator, or Flywheel), '
-              'set gear ratios, units, and safety limits.',
+              'set conversion factors, units, and safety limits.',
           icon: FluentIcons.settings,
-          onTap: () => ref.read(selectedPageProvider.notifier).state = 2,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 3,
         ),
         const SizedBox(height: 8),
         _StepCard(
@@ -57,7 +57,7 @@ class HomeScreen extends ConsumerWidget {
               'mechanism. Verify direction, conversion factors, and set '
               'soft limits from actual positions.',
           icon: FluentIcons.game,
-          onTap: () => ref.read(selectedPageProvider.notifier).state = 2,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 3,
         ),
         const SizedBox(height: 8),
         _StepCard(
@@ -67,7 +67,7 @@ class HomeScreen extends ConsumerWidget {
               'Execute quasistatic and dynamic tests. The tool will '
               'automatically ramp/step voltage while recording data.',
           icon: FluentIcons.play,
-          onTap: () => ref.read(selectedPageProvider.notifier).state = 3,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 4,
         ),
         const SizedBox(height: 8),
         _StepCard(
@@ -77,7 +77,7 @@ class HomeScreen extends ConsumerWidget {
               'Review computed feedforward & PID gains, diagnostic plots, '
               'and optionally export data to CSV.',
           icon: FluentIcons.chart,
-          onTap: () => ref.read(selectedPageProvider.notifier).state = 4,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 5,
         ),
         const SizedBox(height: 8),
         _StepCard(
@@ -88,7 +88,7 @@ class HomeScreen extends ConsumerWidget {
               'response tests to verify performance. Check rise time, '
               'overshoot, and steady-state error.',
           icon: FluentIcons.test_beaker,
-          onTap: () => ref.read(selectedPageProvider.notifier).state = 5,
+          onTap: () => ref.read(selectedPageProvider.notifier).state = 6,
         ),
         const SizedBox(height: 32),
         const InfoBar(

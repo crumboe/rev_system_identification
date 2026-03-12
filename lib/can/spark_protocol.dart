@@ -160,6 +160,7 @@ const int kUsbResponseData = 0x01;
 
 const int kParamCanId = 0; // c_Spark_kCANID
 const int kParamMotorType = 2; // c_Spark_kMotorType
+const int kParamClosedLoopControlSensor = 9; // c_Spark_kClosedLoopControlSensor
 const int kParamIdleMode = 6; // c_Spark_kIdleMode
 const int kParamInputDeadband = 7; // c_Spark_kInputDeadband — PWM deadband (% of input)
 const int kParamPolePairs = 10; // c_Spark_kPolePairs — brushless pole pairs (NEO=7, NEO550=7, Vortex=11)
@@ -245,6 +246,12 @@ const int kParamAltEncoderSampleDelta = 130; // c_Spark_kAltEncoderSampleDelta
 const int kParamAltEncoderInverted = 131; // c_Spark_kAltEncoderInverted
 const int kParamAltEncoderPositionFactor = 132; // c_Spark_kAltEncoderPositionFactor
 const int kParamAltEncoderVelocityFactor = 133; // c_Spark_kAltEncoderVelocityFactor
+
+// Duty-cycle (absolute) encoder
+const int kParamDutyCyclePositionFactor = 139; // c_Spark_kDutyCyclePositionFactor
+const int kParamDutyCycleVelocityFactor = 140; // c_Spark_kDutyCycleVelocityFactor
+const int kParamDutyCycleInverted = 141; // c_Spark_kDutyCycleInverted
+const int kParamDutyCycleOffset = 154; // c_Spark_kDutyCycleOffset
 
 const int kParamForwardSoftLimit = 115; // c_Spark_kSoftLimitForward
 const int kParamForwardSoftLimitEnabled = 54; // c_Spark_kSoftLimitFwdEn

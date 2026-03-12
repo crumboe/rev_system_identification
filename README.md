@@ -1,4 +1,4 @@
-# REV System Identification
+# Crumboe's (unofficial) REV System Identification
 
 A Windows desktop application for characterizing REV Robotics SPARK motor controllers. It performs **quasistatic** and **dynamic** tests to compute feedforward constants (kS, kV, kA, kG) and optimal PID gains for flywheels, arms, and elevators — the same approach used by WPILib's SysId tool, wrapped in an interactive, educational interface designed for high-school FRC teams.
 

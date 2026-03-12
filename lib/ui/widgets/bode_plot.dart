@@ -258,11 +258,19 @@ class BodePlot extends StatefulWidget {
   final PidResult? velPid;
   final PidResult? posPid;
 
+  /// When non-null, overrides the internal mode state.
+  final BodePlotMode? mode;
+
+  /// Called when the user changes the mode selector.
+  final ValueChanged<BodePlotMode>? onModeChanged;
+
   const BodePlot({
     super.key,
     required this.ff,
     this.velPid,
     this.posPid,
+    this.mode,
+    this.onModeChanged,
   });
 
   @override
@@ -270,11 +278,13 @@ class BodePlot extends StatefulWidget {
 }
 
 class _BodePlotState extends State<BodePlot> {
-  BodePlotMode _mode = BodePlotMode.velocity;
+  BodePlotMode _localMode = BodePlotMode.velocity;
   bool _showPlant = true;
   bool _showOpenLoop = true;
   bool _showClosedLoop = true;
   bool _walkthroughActive = false;
+
+  BodePlotMode get _mode => widget.mode ?? _localMode;
 
   PidResult? get _activePid =>
       _mode == BodePlotMode.velocity ? widget.velPid : widget.posPid;
@@ -333,7 +343,10 @@ class _BodePlotState extends State<BodePlot> {
                       ),
                   ],
                   onChanged: (v) {
-                    if (v != null) setState(() => _mode = v);
+                    if (v != null) {
+                      setState(() => _localMode = v);
+                      widget.onModeChanged?.call(v);
+                    }
                   },
                 ),
             ],
