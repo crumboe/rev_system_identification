@@ -155,7 +155,7 @@ StatusFrame1 parseStatusFrame1(Uint8List payload) {
   final rawCurrent = ((b6 >> 4) | (b7 << 4)) & 0x0FFF;
 
   final busVoltage = rawVoltage * (32.0 / 4096.0);
-  final outputCurrentAmps = rawCurrent * (32.0 / 4096.0);
+  final outputCurrentAmps = rawCurrent * (8.0 / 4096.0);
 
   return StatusFrame1(
     velocityRpm: velocityRpm,

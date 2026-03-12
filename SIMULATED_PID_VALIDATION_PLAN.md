@@ -1,218 +1,246 @@
-# Plan: Simulated PID Validation Popup in Playground
+# Simulated PID Validation Upgrade Checklist
 
-## Summary
+## Objective
+- [ ] Add a "Simulate PID" flow in the What If PID Playground that opens a popup dialog and runs closed-loop validation on a simulated mechanism only.
+- [ ] Keep simulation plant behavior grounded in identified feedforward gains.
+- [ ] Keep controller behavior driven by current playground PID + FF slider values.
+- [ ] Reuse existing validation architecture where possible.
+- [ ] Ship with tests, edge-case handling, and manual verification steps.
 
-Add a **"Simulate PID"** button to the What If PID Playground that opens a popup dialog running a full closed-loop validation test against a **simulated** motor. The physics model uses the identified feedforward gains as the plant (ground truth), while the controller uses the user's adjusted PID + FF slider values. The popup mirrors the existing validation screen layout (live plots + mechanism visual + metrics) but is entirely self-contained — no real hardware needed, no risk of damaging a motor.
+## Scope Guardrails
+- [ ] No real hardware required.
+- [ ] No writes to `DeviceManager` global device registry for this flow.
+- [ ] No behavior regressions in existing results, validation, or playground flows.
+- [ ] No MAXMotion in popup (only velocity/position test matching playground mode).
 
-## Architecture Overview
+## Phase 0: Prep and Baseline
 
-The existing infrastructure makes this feasible with minimal new code:
+### 0.1 Confirm references and dependencies
+- [ ] Review `lib/ui/screens/validation_screen.dart` for dialog layout and metric presentation patterns.
+- [ ] Review `lib/sysid/validation_runner.dart` for `ValidationRunner` setup and callbacks.
+- [ ] Review `lib/devices/device_manager.dart` simulated wiring pattern (`connectSimulated()`).
+- [ ] Review `lib/simulation/simulated_device.dart` for simulated APIs and controller attachment.
+- [ ] Review mechanism physics constructors:
+  - [ ] `lib/simulation/flywheel_physics.dart`
+  - [ ] `lib/simulation/arm_physics.dart`
+  - [ ] `lib/simulation/elevator_physics.dart`
+- [ ] Review shared data types in `lib/data/test_data.dart`.
+- [ ] Review mechanism typing in `lib/mechanisms/mechanism.dart`.
 
-- **Physics models** (`FlywheelPhysics`, `ArmPhysics`, `ElevatorPhysics`) already accept custom kS/kV/kA/kG via constructor parameters
-- **`ValidationRunner`** already works with any `SparkDevice` (simulated or real) — no changes needed
-- **Simulated device wiring** (`connectSimulated()` pattern in `DeviceManager`) shows exactly how to build a standalone simulated device
+### 0.2 Baseline sanity checks
+- [ ] Run existing tests before edits.
+- [ ] Record baseline results (pass/fail count, notable warnings).
 
-**Key design decision**: The physics model (plant) uses the **originally-identified** FF gains as ground truth. The controller uses the playground's **current slider values** (PID + FF). This lets the user see how their tuning changes would theoretically affect control of their specific system.
+## Phase 1: Standalone Simulated Device Factory
 
----
+### 1.1 Create file
+- [ ] Add `lib/simulation/standalone_sim.dart`.
 
-## Implementation Steps
+### 1.2 Implement factory API
+- [ ] Implement `createStandaloneSimulatedDevice()`.
+- [ ] Inputs:
+  - [ ] `MechanismType type`
+  - [ ] `FeedforwardGains identifiedGains`
+  - [ ] `MechanismConfig config`
+- [ ] Output:
+  - [ ] `SparkDevice` (self-contained, unregistered)
 
-### Phase 1: Standalone Simulated Device Factory
+### 1.3 Map mechanism type to plant physics
+- [ ] `flywheel` / `simple` -> `FlywheelPhysics(kS, kV, kA)`
+- [ ] `arm` -> `ArmPhysics(kS, kV, kA, kG)`
+- [ ] `elevator` -> `ElevatorPhysics(kS, kV, kA, kG)`
+- [ ] Use `identifiedGains` for plant physics values.
+- [ ] Use `noiseLevel: 0.005`.
 
-**Goal**: A utility function that creates a self-contained simulated `SparkDevice` without touching `DeviceManager`.
+### 1.4 Wire simulated stack
+- [ ] Create `SimulatedSparkConnection(physics)`.
+- [ ] Create `SimulatedParameterApi()`.
+- [ ] Create `SimulatedControlApi(physics, parameters)`.
+- [ ] Create `SimulatedPidFfController(parameters, physics)`.
+- [ ] Attach controller to control API.
+- [ ] Set `connection.controlApi` and `connection.paramApi`.
 
-**New file**: `lib/simulation/standalone_sim.dart`
+### 1.5 Initialize conversion factors
+- [ ] Write `kParamPositionConvFactor <- config.positionConversionFactor`.
+- [ ] Write `kParamVelocityConvFactor <- config.velocityConversionFactor`.
 
-Create a `createStandaloneSimulatedDevice()` function:
+### 1.6 Return simulated device instance
+- [ ] Return `SparkDevice(isSimulated: true, ...)`.
+- [ ] Confirm device is not added to `DeviceManager._devices`.
 
-- **Inputs**: `MechanismType type`, `FeedforwardGains identifiedGains`, `MechanismConfig config`
-- **Outputs**: `SparkDevice` (self-contained, not registered with `DeviceManager`)
-- **Logic**:
-  - Switch on `MechanismType`:
-    - `flywheel` / `simple` → `FlywheelPhysics(kS: gains.kS, kV: gains.kV, kA: gains.kA)`
-    - `arm` → `ArmPhysics(kS: gains.kS, kV: gains.kV, kA: gains.kA, kG: gains.kG)`
-    - `elevator` → `ElevatorPhysics(kS: gains.kS, kV: gains.kV, kA: gains.kA, kG: gains.kG)`
-  - Use `noiseLevel: 0.005` (light noise for visual realism)
-  - Wire up components following the pattern in `DeviceManager.connectSimulated()` (line 342):
-    - `SimulatedSparkConnection(physics)`
-    - `SimulatedParameterApi()`
-    - `SimulatedControlApi(physics, parameters)`
-    - `SimulatedPidFfController(parameters, physics)` → attach to control API
-    - Set `connection.controlApi` and `connection.paramApi`
-  - Write conversion factors from `MechanismConfig` to `SimulatedParameterApi`:
-    - `kParamPositionConvFactor` ← `config.positionConversionFactor`
-    - `kParamVelocityConvFactor` ← `config.velocityConversionFactor`
-  - Return `SparkDevice(isSimulated: true, ...)` — do **NOT** add to `DeviceManager._devices`
+### 1.7 Unit-level validation (factory)
+- [ ] Verify each `MechanismType` creates expected physics class.
+- [ ] Verify conversion factors are written correctly.
+- [ ] Verify no global device side effects.
 
-**Reference**: `lib/devices/device_manager.dart` lines 342–388
+## Phase 2: Simulated Validation Dialog Widget
 
----
+### 2.1 Create file
+- [ ] Add `lib/ui/widgets/simulated_validation_dialog.dart`.
 
-### Phase 2: Simulated Validation Dialog Widget
+### 2.2 Define dialog public API
+- [ ] Constructor includes:
+  - [ ] `FeedforwardGains identifiedGains`
+  - [ ] `FeedforwardGains controllerGains`
+  - [ ] `PidResult pidGains`
+  - [ ] `bool isPositionMode`
+  - [ ] `MechanismConfig mechanismConfig`
 
-**Goal**: A popup dialog that runs validation against the standalone simulated device.
+### 2.3 Build UI structure
+- [ ] Header with title and close affordance.
+- [ ] Controls row with Run button, status text, Emergency Stop.
+- [ ] Main content split:
+  - [ ] Live charts area (velocity, voltage, position, current)
+  - [ ] Mechanism visual area
+- [ ] Metrics row:
+  - [ ] Rise Time
+  - [ ] Overshoot
+  - [ ] Steady-State Error
 
-**New file**: `lib/ui/widgets/simulated_validation_dialog.dart`
+### 2.4 Chart behavior
+- [ ] Plot measured data as solid line.
+- [ ] Plot setpoint as dashed overlay.
+- [ ] Refresh in real time from progress callback.
+- [ ] Handle empty/initial states gracefully.
 
-#### Constructor Inputs
+### 2.5 Mechanism visual mapping
+- [ ] `arm` -> `ArmVisual`
+- [ ] `elevator` -> `ElevatorVisual`
+- [ ] `flywheel/simple` -> `JogPanel`
 
-| Parameter | Type | Source |
-|-----------|------|--------|
-| `identifiedGains` | `FeedforwardGains` | Original system identification results (plant ground truth) |
-| `controllerGains` | `FeedforwardGains` | Current playground FF slider values (controller tuning) |
-| `pidGains` | `PidResult` | Current playground PID slider values |
-| `isPositionMode` | `bool` | Matches playground's current velocity/position toggle |
-| `mechanismConfig` | `MechanismConfig` | From `mechanismConfigProvider` (app state) |
+### 2.6 Lifecycle: init
+- [ ] Create standalone simulated device with `identifiedGains` + `mechanismConfig`.
+- [ ] Write controller tuning to simulated params:
+  - [ ] PID: `kParamSlot0P`, `kParamSlot0I`, `kParamSlot0D`
+  - [ ] FF: `kParamSlot0FfKs`, `kParamSlot0FfKv`, `kParamSlot0FfKa`, `kParamSlot0FfKg`
+  - [ ] Conversion factors
+- [ ] Construct `ValidationRunner` with simulated device and config.
 
-#### Dialog Layout
+### 2.7 Lifecycle: run actions
+- [ ] If `isPositionMode` run `runPositionTest(...)`.
+- [ ] Else run `runVelocityTest(...)`.
+- [ ] Capture `onProgress` updates into live series/state.
+- [ ] Compute metrics on completion.
+- [ ] Surface completion/failure status in UI.
 
-Modeled after `lib/ui/screens/validation_screen.dart`:
+### 2.8 Lifecycle: cleanup
+- [ ] On dialog dispose, call `_runner?.abort()`.
+- [ ] Close simulated connection and timers.
+- [ ] Confirm no dangling background activity.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Simulated PID Validation — Velocity/Position Step   [X]│
-├─────────────────────────────────────────────────────────┤
-│  [▶ Run]  Status: Ready              [⬛ EMERGENCY STOP]│
-├───────────────────────────────────┬─────────────────────┤
-│  ┌─────────────┬─────────────┐    │                     │
-│  │  Velocity   │   Voltage   │    │   Mechanism Visual  │
-│  │  (chart)    │   (chart)   │    │   (Arm / Elevator   │
-│  ├─────────────┼─────────────┤    │    / JogPanel)      │
-│  │  Position   │   Current   │    │                     │
-│  │  (chart)    │   (chart)   │    │                     │
-│  └─────────────┴─────────────┘    │                     │
-├───────────────────────────────────┴─────────────────────┤
-│  Rise Time: —    Overshoot: —    Steady-State Error: —  │
-└─────────────────────────────────────────────────────────┘
-```
+### 2.9 Dialog-level validation
+- [ ] Open and close without running test.
+- [ ] Run full test and verify live updates.
+- [ ] Close dialog mid-run and verify safe abort.
 
-- Charts: `fl_chart` `LineChart` — measured data (solid blue) + setpoint overlay (dashed green)
-- Mechanism visual: `ArmVisual`, `ElevatorVisual`, or `JogPanel` based on `mechanismConfig.type`
-- Metrics strip: Rise Time (ms), Overshoot (%), Steady-State Error
+## Phase 3: Playground Integration
 
-#### Lifecycle
+### 3.1 Update `PidPlayground` API
+- [ ] Add `MechanismConfig mechanismConfig` constructor parameter.
+- [ ] Propagate parameter usage where needed.
 
-**`initState`**:
-1. Call `createStandaloneSimulatedDevice()` with `identifiedGains` and `mechanismConfig`
-2. Write playground's controller gains to simulated device parameter API:
-   - PID: `kParamSlot0P`, `kParamSlot0I`, `kParamSlot0D`
-   - FF: `kParamSlot0FfKs`, `kParamSlot0FfKv`, `kParamSlot0FfKa`, `kParamSlot0FfKg`
-   - Conversion factors: `kParamPositionConvFactor`, `kParamVelocityConvFactor`
-3. Create `ValidationRunner` with the simulated device, `mechanismConfig`, and gains
+### 3.2 Add trigger button
+- [ ] Add `FilledButton` labeled `Simulate PID` near existing reset action.
+- [ ] Ensure button availability follows existing gain readiness assumptions.
 
-**Run button press**:
-- If `isPositionMode`: call `_runner.runPositionTest(params, onProgress: _onProgress)`
-- Else: call `_runner.runVelocityTest(params, onProgress: _onProgress)`
-- `_onProgress` callback: append `DataPoint` to `_liveData`, update setpoints list, `setState()` to refresh charts
-- On completion: compute and display Rise Time, Overshoot, Steady-State Error
+### 3.3 Open dialog with current tuning context
+- [ ] Pass `identifiedGains` from original FF results.
+- [ ] Build `controllerGains` from current slider state.
+- [ ] Build `PidResult` from current slider state.
+- [ ] Pass `isPositionMode` and `mechanismConfig`.
 
-**`dispose`**:
-- Abort any running test (`_runner?.abort()`)
-- Close simulated device connection (cleanup internal timers)
-- No `DeviceManager` cleanup needed since device was never registered
+### 3.4 Wire from results screen
+- [ ] Update `lib/ui/screens/results_screen.dart` to pass `mechanismConfigProvider` value into `PidPlayground`.
 
----
+### 3.5 Integration validation
+- [ ] Confirm navigation path from Results -> Playground -> Simulate PID works end-to-end.
 
-### Phase 3: Wire Button into PID Playground
+## Phase 4: Metrics and Behavior Accuracy
 
-**Goal**: Add the trigger button to the existing playground UI.
+### 4.1 Ensure metric definitions are stable
+- [ ] Confirm rise time definition used by popup matches existing validation semantics.
+- [ ] Confirm overshoot calculation is consistent with sign and mode.
+- [ ] Confirm steady-state error window/threshold is reasonable.
 
-#### `lib/ui/widgets/pid_playground.dart`
+### 4.2 Consistency checks
+- [ ] Verify popup response trend qualitatively aligns with playground chart expectations.
+- [ ] Verify changing slider values changes popup response in expected direction.
 
-- Add a `FilledButton` labeled **"Simulate PID"** next to the existing Reset button
-- On press → `showDialog()` with `SimulatedValidationDialog`:
-  ```dart
-  showDialog(
-    context: context,
-    builder: (_) => SimulatedValidationDialog(
-      identifiedGains: widget.ff,
-      controllerGains: FeedforwardGains(
-        kS: _kS, kV: _kV, kA: _kA, kG: _kG, rSquared: 0,
-      ),
-      pidGains: PidResult(kP: _kP, kI: _kI, kD: _kD),
-      isPositionMode: widget.isPositionMode,
-      mechanismConfig: widget.mechanismConfig,
-    ),
-  );
-  ```
-- Add `MechanismConfig mechanismConfig` as a new constructor parameter on `PidPlayground`
+## Phase 5: Edge Cases and Safety
 
-#### `lib/ui/screens/results_screen.dart`
+- [ ] Gains unavailable state cannot trigger simulation.
+- [ ] Emergency stop aborts active run immediately.
+- [ ] Multiple rapid Run clicks are debounced/ignored while running.
+- [ ] Dialog close during run is safe and repeatable.
+- [ ] Arm/elevator initial position defaults are sensible.
+- [ ] Errors are surfaced to user with non-crashing UI state.
 
-- Pass `mechanismConfig` from `ref.watch(mechanismConfigProvider)` to the `PidPlayground` widget
+## Phase 6: Test Coverage
 
----
+### 6.1 Add widget test file
+- [ ] Create `test/simulated_validation_dialog_test.dart`.
 
-### Phase 4: Verification & Polish
+### 6.2 Minimum test cases
+- [ ] Dialog renders with flywheel config and no exceptions.
+- [ ] Run action triggers correct validation method by mode.
+- [ ] Progress callback updates chart state.
+- [ ] Abort on dispose path executes safely.
 
-#### Testing
+### 6.3 Optional deeper tests
+- [ ] Assert metrics fall in reasonable range for known gains.
+- [ ] Validate mechanism visual selection by `MechanismType`.
 
-- Create `test/simulated_validation_dialog_test.dart`:
-  - Construct dialog with known flywheel gains
-  - Verify it renders without errors
-  - Optionally: run a simulated test programmatically and verify metrics are reasonable
+### 6.4 Regression checks
+- [ ] Run full `flutter test` suite.
+- [ ] Resolve any new failures caused by this upgrade.
 
-#### Edge Cases
+## Phase 7: Documentation and Dev Notes
 
-- **Gains not computed**: "Simulate PID" button should already be unreachable since the playground only appears when `_ff != null`
-- **Dialog close during running test**: `dispose()` must call `_runner?.abort()` before closing the simulated connection
-- **Arm/Elevator initial position**: Set to mechanism-specific sensible defaults (0° for arm, 0" for elevator)
-- **Emergency stop**: Should abort the simulated test immediately (same behavior as real validation screen)
+- [ ] Update internal docs/comments for new simulation flow entry points.
+- [ ] Add brief rationale note in code where plant/controller gain split is applied.
+- [ ] Document why standalone simulated device is intentionally unregistered.
 
----
+## Phase 8: Final Verification (Manual)
 
-## Files to Modify
+- [ ] Simulated device -> SysId -> Results -> PID Playground -> Simulate PID works.
+- [ ] Velocity mode opens velocity test behavior.
+- [ ] Position mode opens position test behavior.
+- [ ] Charts animate with measured + setpoint overlays.
+- [ ] Flywheel shows `JogPanel`.
+- [ ] Arm shows `ArmVisual` with gravity effects.
+- [ ] Elevator shows `ElevatorVisual` with gravity effects.
+- [ ] Close and reopen dialog with new gains yields changed response.
+- [ ] Close mid-test does not crash or leak.
+- [ ] Existing workflows remain intact.
 
-| File | Change |
-|------|--------|
-| `lib/ui/widgets/pid_playground.dart` | Add "Simulate PID" button, add `mechanismConfig` constructor parameter |
-| `lib/ui/screens/results_screen.dart` | Pass `MechanismConfig` to `PidPlayground` |
+## Definition of Done
+- [ ] All checklist items in Phases 1-6 completed.
+- [ ] No critical or high regressions introduced.
+- [ ] Tests pass locally.
+- [ ] Manual verification passes for all mechanism types.
+- [ ] Code is ready for review with clear upgrade rationale.
 
-## Files to Create
+## Upgrade Package File Impact
 
-| File | Purpose |
-|------|---------|
-| `lib/simulation/standalone_sim.dart` | Standalone simulated device factory function |
-| `lib/ui/widgets/simulated_validation_dialog.dart` | Popup validation dialog widget |
-| `test/simulated_validation_dialog_test.dart` | Widget test for the dialog |
+### Files to modify
+- [ ] `lib/ui/widgets/pid_playground.dart`
+- [ ] `lib/ui/screens/results_screen.dart`
 
-## Reference Files (read-only)
+### Files to create
+- [ ] `lib/simulation/standalone_sim.dart`
+- [ ] `lib/ui/widgets/simulated_validation_dialog.dart`
+- [ ] `test/simulated_validation_dialog_test.dart`
 
-| File | What to Reference |
-|------|-------------------|
-| `lib/ui/screens/validation_screen.dart` | Chart layout, mechanism visual placement, metrics strip, status bar pattern |
-| `lib/sysid/validation_runner.dart` | `ValidationRunner` constructor, `runVelocityTest()`, `runPositionTest()`, `ValidationParams` |
-| `lib/devices/device_manager.dart` | `connectSimulated()` wiring pattern (lines 342–388) |
-| `lib/simulation/simulated_device.dart` | `SimulatedSparkConnection`, `SimulatedParameterApi`, `SimulatedControlApi`, `SimulatedPidFfController` |
-| `lib/simulation/flywheel_physics.dart` | Constructor with custom kS/kV/kA |
-| `lib/simulation/arm_physics.dart` | Constructor with custom kS/kV/kA/kG |
-| `lib/simulation/elevator_physics.dart` | Constructor with custom kS/kV/kA/kG |
-| `lib/data/test_data.dart` | `FeedforwardGains`, `PidResult`, `ValidationResult`, `DataPoint`, `ValidationParams` |
-| `lib/mechanisms/mechanism.dart` | `MechanismConfig`, `MechanismType` enum |
-| `lib/ui/widgets/arm_visual.dart` | Arm mechanism visualization widget |
-| `lib/ui/widgets/elevator_visual.dart` | Elevator mechanism visualization widget |
-| `lib/ui/widgets/jog_panel.dart` | Flywheel/simple mechanism jog visualization |
-
-## Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| **Plant uses identified FF gains (ground truth)** | The real motor doesn't change when you change controller gains. Playground FF sliders only affect the controller side. |
-| **Test mode matches playground mode** | Velocity loop → velocity step test; Position loop → position step test. No MAXMotion in the popup. |
-| **Mechanism visual included** | Provides spatial context for arm/elevator behavior during simulation. |
-| **Standalone device (not registered with DeviceManager)** | Avoids side effects on the main app's device state. Created and disposed entirely within the dialog lifecycle. |
-| **`ValidationRunner` reused as-is** | No modifications needed — it already works identically with simulated devices through the interface-based design. |
-
-## Manual Verification Checklist
-
-- [ ] Connect simulated device → run sysid → go to Results → open "What If" PID Playground
-- [ ] Adjust PID sliders → click "Simulate PID" → dialog opens with correct title (Velocity/Position)
-- [ ] Click "Run" in dialog → charts animate in real-time with step response data
-- [ ] Verify response qualitatively matches the playground's step response chart
-- [ ] Close dialog → reopen with different gains → run again → verify different response
-- [ ] Test with **flywheel** mechanism → JogPanel visual appears
-- [ ] Test with **arm** mechanism → ArmVisual appears, gravity compensation visible
-- [ ] Test with **elevator** mechanism → ElevatorVisual appears, gravity compensation visible
-- [ ] Close dialog mid-test → no crash (abort + dispose cleanup)
-- [ ] Run `flutter test` → no regressions in existing test suite
+### Reference files (read-only)
+- [ ] `lib/ui/screens/validation_screen.dart`
+- [ ] `lib/sysid/validation_runner.dart`
+- [ ] `lib/devices/device_manager.dart`
+- [ ] `lib/simulation/simulated_device.dart`
+- [ ] `lib/simulation/flywheel_physics.dart`
+- [ ] `lib/simulation/arm_physics.dart`
+- [ ] `lib/simulation/elevator_physics.dart`
+- [ ] `lib/data/test_data.dart`
+- [ ] `lib/mechanisms/mechanism.dart`
+- [ ] `lib/ui/widgets/arm_visual.dart`
+- [ ] `lib/ui/widgets/elevator_visual.dart`
+- [ ] `lib/ui/widgets/jog_panel.dart`
