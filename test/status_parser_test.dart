@@ -308,15 +308,26 @@ void main() {
     });
 
     test('voltage and current scaling', () {
+      // Build a payload with the correct 12-bit packed encoding verified against
+      // live SLCAN captures (modifForStatus.txt).
+      //
+      // Desired values: bus_voltage ≈ 12 V, output_current ≈ 20 A, temp = 25°C
+      //
+      // v_raw = 12 / 0.007326 ≈ 1638 = 0x666
+      //   → payload[2] = 0x66 = 102, low nibble of payload[3] = 6
+      // i_raw = 20 / 0.064 = 312 = 0x138
+      //   → high nibble of payload[3] = 8, payload[4] = 0x13 = 19
+      //   → payload[3] = (8 << 4) | 6 = 0x86 = 134
+      // temp → payload[5] = 25
       final payload = Uint8List(8);
-      final bd = ByteData.sublistView(payload);
-      bd.setUint16(2, 1636, Endian.little);  // ~12V at scale 0.00733
-      bd.setUint16(4, 5000, Endian.little);  // 20A at 250 counts per amp
-      payload[6] = 25;                         // 25°C
+      payload[2] = 0x66; // v_raw bits [7:0]
+      payload[3] = 0x86; // bits [3:0]=6 → v_raw bits [11:8]; bits [7:4]=8 → i_raw bits [3:0]
+      payload[4] = 0x13; // i_raw bits [11:4]
+      payload[5] = 25;   // temperature
 
       final result = parseNewStatusFrame0(payload);
       expect(result.partialStatus1.busVoltage, closeTo(12.0, 0.2));
-      expect(result.partialStatus1.outputCurrentAmps, closeTo(20.0, 0.05));
+      expect(result.partialStatus1.outputCurrentAmps, closeTo(20.0, 0.5));
       expect(result.partialStatus1.temperatureC, equals(25));
     });
 
@@ -325,6 +336,31 @@ void main() {
       payload[7] = 0x3F;
       final result = parseNewStatusFrame0(payload);
       expect(result.status0.flags, equals(0x3F));
+    });
+
+    // Live-captured idle frame from modifForStatus.txt:  00 00 98 06 00 19 80 00
+    // appOut=0.0, bus≈12.37V, current=0A, temp=25°C
+    test('idle captured frame: zero current and correct voltage', () {
+      final payload =
+          Uint8List.fromList([0x00, 0x00, 0x98, 0x06, 0x00, 0x19, 0x80, 0x00]);
+      final result = parseNewStatusFrame0(payload);
+      expect(result.status0.appliedOutput, closeTo(0.0, 0.001));
+      expect(result.partialStatus1.busVoltage, closeTo(12.37, 0.05));
+      expect(result.partialStatus1.outputCurrentAmps, closeTo(0.0, 0.001));
+      expect(result.partialStatus1.temperatureC, equals(25));
+    });
+
+    // Live-captured running frame from modifForStatus.txt:  fe 11 5c 46 15 19 80 00
+    // appOut≈0.142, bus≈11.93V, i_raw=340 → 21.76A, temp=25°C
+    test('running captured frame: non-zero current and correct voltage', () {
+      final payload =
+          Uint8List.fromList([0xfe, 0x11, 0x5c, 0x46, 0x15, 0x19, 0x80, 0x00]);
+      final result = parseNewStatusFrame0(payload);
+      expect(result.status0.appliedOutput, closeTo(0.142, 0.001));
+      expect(result.partialStatus1.busVoltage, closeTo(11.93, 0.05));
+      // i_raw = ((0x46>>4) | (0x15<<4)) & 0xFFF = (4 | 336) = 340 → 340 × 0.064 = 21.76 A
+      expect(result.partialStatus1.outputCurrentAmps, closeTo(21.76, 0.1));
+      expect(result.partialStatus1.temperatureC, equals(25));
     });
   });
 
