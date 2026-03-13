@@ -28,6 +28,22 @@ class DataPoint {
     required this.current,
   });
 
+  Map<String, dynamic> toJson() => {
+        't': timestamp,
+        'v': voltage,
+        'vel': velocity,
+        'pos': position,
+        'i': current,
+      };
+
+  factory DataPoint.fromJson(Map<String, dynamic> json) => DataPoint(
+        timestamp: (json['t'] as num).toDouble(),
+        voltage: (json['v'] as num).toDouble(),
+        velocity: (json['vel'] as num).toDouble(),
+        position: (json['pos'] as num).toDouble(),
+        current: (json['i'] as num).toDouble(),
+      );
+
   /// CSV header row.
   static const csvHeader = 'timestamp,voltage,velocity,position,current';
 
@@ -104,6 +120,28 @@ class TestRun {
     required this.testParams,
   });
 
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'startTime': startTime.toIso8601String(),
+        'mechanismType': mechanismType.name,
+        'testType': testType.name,
+        'durationSeconds': durationSeconds,
+        'testParams': testParams.toJson(),
+        'data': data.map((d) => d.toJson()).toList(),
+      };
+
+  factory TestRun.fromJson(Map<String, dynamic> json) => TestRun(
+        id: json['id'] as String,
+        startTime: DateTime.parse(json['startTime'] as String),
+        mechanismType: MechanismType.values.byName(json['mechanismType'] as String),
+        testType: TestType.values.byName(json['testType'] as String),
+        durationSeconds: (json['durationSeconds'] as num).toDouble(),
+        testParams: SysIdTestParams.fromJson(json['testParams'] as Map<String, dynamic>),
+        data: (json['data'] as List)
+            .map((d) => DataPoint.fromJson(d as Map<String, dynamic>))
+            .toList(),
+      );
+
   /// Number of data points recorded.
   int get sampleCount => data.length;
 
@@ -140,6 +178,23 @@ class FeedforwardGains {
     this.rSquared = 0.0,
   });
 
+  Map<String, dynamic> toJson() => {
+        'kS': kS,
+        'kV': kV,
+        'kA': kA,
+        'kG': kG,
+        'rSquared': rSquared,
+      };
+
+  factory FeedforwardGains.fromJson(Map<String, dynamic> json) =>
+      FeedforwardGains(
+        kS: (json['kS'] as num).toDouble(),
+        kV: (json['kV'] as num).toDouble(),
+        kA: (json['kA'] as num).toDouble(),
+        kG: (json['kG'] as num?)?.toDouble() ?? 0.0,
+        rSquared: (json['rSquared'] as num?)?.toDouble() ?? 0.0,
+      );
+
   @override
   String toString() =>
       'FF(kS=${kS.toStringAsFixed(4)}, kV=${kV.toStringAsFixed(4)}, '
@@ -171,6 +226,26 @@ class PidResult {
     this.positionBandwidthHz,
   });
 
+  Map<String, dynamic> toJson() => {
+        'kP': kP,
+        'kI': kI,
+        'kD': kD,
+        if (velocityTimeConstantMs != null)
+          'velocityTimeConstantMs': velocityTimeConstantMs,
+        if (positionBandwidthHz != null)
+          'positionBandwidthHz': positionBandwidthHz,
+      };
+
+  factory PidResult.fromJson(Map<String, dynamic> json) => PidResult(
+        kP: (json['kP'] as num?)?.toDouble() ?? 0.0,
+        kI: (json['kI'] as num?)?.toDouble() ?? 0.0,
+        kD: (json['kD'] as num?)?.toDouble() ?? 0.0,
+        velocityTimeConstantMs:
+            (json['velocityTimeConstantMs'] as num?)?.toDouble(),
+        positionBandwidthHz:
+            (json['positionBandwidthHz'] as num?)?.toDouble(),
+      );
+
   @override
   String toString() =>
       'PID(P=${kP.toStringAsFixed(6)}, I=${kI.toStringAsFixed(6)}, '
@@ -190,4 +265,22 @@ class SysIdResults {
     required this.pid,
     required this.testRuns,
   });
+
+  Map<String, dynamic> toJson() => {
+        'mechanismType': mechanismType.name,
+        'feedforward': feedforward.toJson(),
+        'pid': pid.toJson(),
+        'testRuns': testRuns.map((r) => r.toJson()).toList(),
+      };
+
+  factory SysIdResults.fromJson(Map<String, dynamic> json) => SysIdResults(
+        mechanismType:
+            MechanismType.values.byName(json['mechanismType'] as String),
+        feedforward: FeedforwardGains.fromJson(
+            json['feedforward'] as Map<String, dynamic>),
+        pid: PidResult.fromJson(json['pid'] as Map<String, dynamic>),
+        testRuns: (json['testRuns'] as List)
+            .map((r) => TestRun.fromJson(r as Map<String, dynamic>))
+            .toList(),
+      );
 }

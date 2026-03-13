@@ -269,6 +269,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               initialPosPid: _posPid,
               isPositionMode: _isPositionMode,
               onModeChanged: _setLoopMode,
+              mechanismConfig: config,
               onPidChanged: (pid) {
                 setState(() => _velPid = pid);
               },

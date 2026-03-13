@@ -51,6 +51,11 @@ class _TestScreenState extends ConsumerState<TestScreen> {
   /// render each test in a distinct color with no connecting line.
   final List<List<DataPoint>> _liveSegments = [];
 
+  /// Whether a UI rebuild is already scheduled for a progress update.
+  /// Used to coalesce rapid [_onProgress] callbacks into at most one
+  /// [setState] per animation frame.
+  bool _progressRebuildScheduled = false;
+
   /// Colors assigned to successive test segments.
   static final _segmentColors = [
     Colors.blue,
@@ -546,17 +551,26 @@ class _TestScreenState extends ConsumerState<TestScreen> {
   }
 
   void _onProgress(TestProgress progress) {
-    setState(() {
-      if (_liveSegments.isEmpty) _startNewSegment();
-      _liveSegments.last.add(DataPoint(
-        timestamp: progress.elapsedSeconds,
-        voltage: progress.currentVoltage,
-        velocity: progress.currentVelocity,
-        position: progress.currentPosition,
-        current: progress.currentCurrent,
-      ));
-      _currentPosition = progress.currentPosition;
-    });
+    // Always append data immediately so nothing is lost.
+    if (_liveSegments.isEmpty) _startNewSegment();
+    _liveSegments.last.add(DataPoint(
+      timestamp: progress.elapsedSeconds,
+      voltage: progress.currentVoltage,
+      velocity: progress.currentVelocity,
+      position: progress.currentPosition,
+      current: progress.currentCurrent,
+    ));
+    _currentPosition = progress.currentPosition;
+
+    // Coalesce rebuilds: schedule at most one setState per frame so rapid
+    // 10ms progress callbacks don't pile up redundant widget rebuilds.
+    if (!_progressRebuildScheduled) {
+      _progressRebuildScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _progressRebuildScheduled = false;
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   /// Shows a pre-test safety confirmation dialog for real hardware.

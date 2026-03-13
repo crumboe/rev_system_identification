@@ -115,6 +115,10 @@ final testParamsProvider =
 class TestParamsNotifier extends StateNotifier<SysIdTestParams> {
   TestParamsNotifier() : super(const SysIdTestParams());
 
+  void setParams(SysIdTestParams params) {
+    state = params;
+  }
+
   void setQuasistaticRampRate(double rate) {
     state = state.copyWith(quasistaticRampRate: rate);
   }
@@ -159,6 +163,10 @@ class TestRunsNotifier extends StateNotifier<List<TestRun>> {
 
   void removeRun(String id) {
     state = state.where((r) => r.id != id).toList();
+  }
+
+  void loadRuns(List<TestRun> runs) {
+    state = runs;
   }
 
   void clear() {

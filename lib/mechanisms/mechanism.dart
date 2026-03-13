@@ -187,6 +187,42 @@ class MechanismConfig {
     this.feedbackSensor = FeedbackSensor.primaryEncoder,
   });
 
+  Map<String, dynamic> toJson() => {
+        'type': type.name,
+        'systemName': systemName,
+        'positionConversionFactor': positionConversionFactor,
+        'velocityConversionFactor': velocityConversionFactor,
+        if (forwardSoftLimit != null) 'forwardSoftLimit': forwardSoftLimit,
+        if (reverseSoftLimit != null) 'reverseSoftLimit': reverseSoftLimit,
+        'useImperialUnits': useImperialUnits,
+        'motorInverted': motorInverted,
+        'isBrushless': isBrushless,
+        'currentLimitAmps': currentLimitAmps,
+        'feedbackSensor': feedbackSensor.name,
+      };
+
+  factory MechanismConfig.fromJson(Map<String, dynamic> json) =>
+      MechanismConfig(
+        type: MechanismType.values.byName(json['type'] as String),
+        systemName: json['systemName'] as String? ?? '',
+        positionConversionFactor:
+            (json['positionConversionFactor'] as num?)?.toDouble() ?? 1.0,
+        velocityConversionFactor:
+            (json['velocityConversionFactor'] as num?)?.toDouble() ?? 1.0,
+        forwardSoftLimit:
+            (json['forwardSoftLimit'] as num?)?.toDouble(),
+        reverseSoftLimit:
+            (json['reverseSoftLimit'] as num?)?.toDouble(),
+        useImperialUnits: json['useImperialUnits'] as bool? ?? false,
+        motorInverted: json['motorInverted'] as bool? ?? false,
+        isBrushless: json['isBrushless'] as bool? ?? true,
+        currentLimitAmps:
+            (json['currentLimitAmps'] as num?)?.toDouble() ?? 40.0,
+        feedbackSensor: json['feedbackSensor'] != null
+            ? FeedbackSensor.values.byName(json['feedbackSensor'] as String)
+            : FeedbackSensor.primaryEncoder,
+      );
+
   /// Whether soft limits are fully configured.
   bool get hasSoftLimits =>
       forwardSoftLimit != null && reverseSoftLimit != null;
@@ -282,6 +318,31 @@ class SysIdTestParams {
     this.velocityThreshold = 0.01,
     this.currentTripAmps,
   });
+
+  Map<String, dynamic> toJson() => {
+        'quasistaticRampRate': quasistaticRampRate,
+        'dynamicStepVoltage': dynamicStepVoltage,
+        'dynamicStepDuration': dynamicStepDuration,
+        'maxTestVoltage': maxTestVoltage,
+        'velocityThreshold': velocityThreshold,
+        if (currentTripAmps != null) 'currentTripAmps': currentTripAmps,
+      };
+
+  factory SysIdTestParams.fromJson(Map<String, dynamic> json) =>
+      SysIdTestParams(
+        quasistaticRampRate:
+            (json['quasistaticRampRate'] as num?)?.toDouble() ?? 0.25,
+        dynamicStepVoltage:
+            (json['dynamicStepVoltage'] as num?)?.toDouble() ?? 7.0,
+        dynamicStepDuration:
+            (json['dynamicStepDuration'] as num?)?.toDouble() ?? 2.0,
+        maxTestVoltage:
+            (json['maxTestVoltage'] as num?)?.toDouble() ?? 12.0,
+        velocityThreshold:
+            (json['velocityThreshold'] as num?)?.toDouble() ?? 0.01,
+        currentTripAmps:
+            (json['currentTripAmps'] as num?)?.toDouble(),
+      );
 
   /// Default params tuned for each mechanism type.
   factory SysIdTestParams.forMechanism(MechanismType type) {

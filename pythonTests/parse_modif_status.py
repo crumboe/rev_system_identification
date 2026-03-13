@@ -40,6 +40,7 @@ import re
 import struct
 import csv
 import sys
+import os
 
 # ---------------------------------------------------------------------------
 # Scale constants
@@ -348,10 +349,94 @@ def analyse(path: str, csv_out: str | None = None) -> None:
             prev_sp = d['setpoint']
 
     # -----------------------------------------------------------------------
+    # Merged timeline: setpoint, setpoint×12V, applied voltage, current
+    # -----------------------------------------------------------------------
+    print()
+    print("=" * 100)
+    print("TIMELINE — Setpoint, Voltage, Current, Velocity, Acceleration")
+    print("=" * 140)
+    print(
+        f"{'ts_ms':>8s}  {'src':>7s}  {'DutySetpt':>10s}  "
+        f"{'Setpt×12V':>10s}  {'AppliedV':>10s}  {'dV/dt':>10s}  "
+        f"{'AppliedA':>10s}  {'Vel(RPM)':>10s}  {'Accel':>10s}"
+    )
+    print("-" * 140)
+
+    # Build sorted event list
+    timeline_events: list[tuple[float, str, dict]] = []
+    for r in sp_rows:
+        timeline_events.append((r['ts_ms'], 'SP', r))
+    for r in s0_rows:
+        timeline_events.append((r['ts_ms'], 'ST0', r))
+    for r in s2_rows:
+        timeline_events.append((r['ts_ms'], 'ST2', r))
+    timeline_events.sort(key=lambda x: x[0])
+
+    # Carry-forward state for the last known values
+    last_setpoint: float | None = None
+    last_applied_v: float | None = None
+    last_applied_i: float | None = None
+    last_velocity: float | None = None
+    prev_applied_v: float | None = None
+    prev_velocity: float | None = None
+    prev_ts: float | None = None
+    timeline_rows: list[dict] = []
+
+    for ts, src, row in timeline_events:
+        if src == 'SP':
+            last_setpoint = row['setpoint']
+        elif src == 'ST0':
+            last_applied_v = row['output_voltage']
+            last_applied_i = row['output_current']
+        elif src == 'ST2':
+            last_velocity = row['velocity_rpm']
+
+        # Compute dAppliedVoltage/dt  (V/s)
+        dv_dt: float | None = None
+        if (last_applied_v is not None and prev_applied_v is not None
+                and prev_ts is not None and ts != prev_ts):
+            dt_s = (ts - prev_ts) / 1000.0  # ms → s
+            dv_dt = (last_applied_v - prev_applied_v) / dt_s
+
+        # Compute acceleration  (RPM/s)
+        accel: float | None = None
+        if (last_velocity is not None and prev_velocity is not None
+                and prev_ts is not None and ts != prev_ts):
+            dt_s = (ts - prev_ts) / 1000.0
+            accel = (last_velocity - prev_velocity) / dt_s
+
+        sp_str = f"{last_setpoint:10.4f}" if last_setpoint is not None else f"{'—':>10s}"
+        sp12_str = f"{last_setpoint * 12.0:10.4f}" if last_setpoint is not None else f"{'—':>10s}"
+        av_str = f"{last_applied_v:10.4f}" if last_applied_v is not None else f"{'—':>10s}"
+        dvdt_str = f"{dv_dt:10.2f}" if dv_dt is not None else f"{'—':>10s}"
+        ai_str = f"{last_applied_i:10.4f}" if last_applied_i is not None else f"{'—':>10s}"
+        vel_str = f"{last_velocity:10.2f}" if last_velocity is not None else f"{'—':>10s}"
+        acc_str = f"{accel:10.2f}" if accel is not None else f"{'—':>10s}"
+
+        tl_row = {
+            'ts_ms': ts,
+            'source': src,
+            'duty_setpoint': last_setpoint,
+            'setpoint_x12v': last_setpoint * 12.0 if last_setpoint is not None else None,
+            'applied_voltage': last_applied_v,
+            'dv_dt': dv_dt,
+            'applied_current': last_applied_i,
+            'velocity_rpm': last_velocity,
+            'accel_rpm_s': accel,
+        }
+        timeline_rows.append(tl_row)
+
+        print(f"{ts:8.0f}ms  {src:>7s}  {sp_str}  {sp12_str}  {av_str}  {dvdt_str}  {ai_str}  {vel_str}  {acc_str}")
+
+        prev_applied_v = last_applied_v
+        prev_velocity = last_velocity
+        prev_ts = ts
+
+    # -----------------------------------------------------------------------
     # CSV export
     # -----------------------------------------------------------------------
     if csv_out:
-        _write_csv(csv_out, s0_rows, s1_rows, s2_rows, sp_rows)
+        _write_csv(csv_out, s0_rows, s1_rows, s2_rows, sp_rows, timeline_rows)
         print(f"\nCSV written to '{csv_out}'")
 
 
@@ -361,6 +446,7 @@ def _write_csv(
     s1_rows: list[dict],
     s2_rows: list[dict],
     sp_rows: list[dict],
+    timeline_rows: list[dict] | None = None,
 ) -> None:
     """Write merged timeline CSV with Status 0/1/2 and setpoint data."""
 
@@ -413,6 +499,32 @@ def _write_csv(
                 out['setpoint'] = f"{row['setpoint']:.6f}"
                 out['pid_slot'] = row['pid_slot']
             writer.writerow(out)
+
+    # Write a separate timeline CSV (same base name with _timeline suffix)
+    if timeline_rows:
+        base, ext = os.path.splitext(path)
+        tl_path = f"{base}_timeline{ext}"
+        tl_fields = [
+            'ts_ms', 'source', 'duty_setpoint', 'setpoint_x12v',
+            'applied_voltage_V', 'dAppliedV_dt_Vps', 'applied_current_A',
+            'velocity_rpm', 'accel_rpm_per_s',
+        ]
+        with open(tl_path, 'w', newline='') as fh2:
+            tw = csv.DictWriter(fh2, fieldnames=tl_fields, extrasaction='ignore')
+            tw.writeheader()
+            for r in timeline_rows:
+                tw.writerow({
+                    'ts_ms': r['ts_ms'],
+                    'source': r['source'],
+                    'duty_setpoint': f"{r['duty_setpoint']:.6f}" if r['duty_setpoint'] is not None else '',
+                    'setpoint_x12v': f"{r['setpoint_x12v']:.6f}" if r['setpoint_x12v'] is not None else '',
+                    'applied_voltage_V': f"{r['applied_voltage']:.4f}" if r['applied_voltage'] is not None else '',
+                    'dAppliedV_dt_Vps': f"{r['dv_dt']:.4f}" if r.get('dv_dt') is not None else '',
+                    'applied_current_A': f"{r['applied_current']:.4f}" if r['applied_current'] is not None else '',
+                    'velocity_rpm': f"{r['velocity_rpm']:.3f}" if r.get('velocity_rpm') is not None else '',
+                    'accel_rpm_per_s': f"{r['accel_rpm_s']:.4f}" if r.get('accel_rpm_s') is not None else '',
+                })
+        print(f"Timeline CSV written to '{tl_path}'")
 
 
 # ---------------------------------------------------------------------------

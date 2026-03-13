@@ -232,6 +232,10 @@ class SparkConnection implements ISparkConnection {
   /// Once true, we prefer new-protocol data over legacy data.
   bool _usingNewProtocol = false;
 
+  /// Whether a continuation drain is already scheduled via
+  /// [scheduleMicrotask].  Prevents piling up multiple microtasks.
+  bool _drainScheduled = false;
+
   /// Hybrid receive handler — processes mixed SLCAN text and binary packets
   /// from the same byte stream.
   ///
@@ -247,18 +251,38 @@ class SparkConnection implements ISparkConnection {
     _drainRxBuf();
   }
 
-  /// Consume as many complete frames (SLCAN or binary) from [_rxBuf] as
-  /// possible.
+  /// Maximum number of frames to process per event-loop turn before
+  /// yielding.  Keeps the UI responsive when the device is streaming
+  /// status frames at high rate.
+  static const int _maxFramesPerDrain = 8;
+
+  /// Consume complete frames (SLCAN or binary) from [_rxBuf], processing
+  /// at most [_maxFramesPerDrain] per call.  If more data remains, a
+  /// microtask is scheduled to continue draining so the event loop (and
+  /// therefore the UI) can process pending paints and input events.
   void _drainRxBuf() {
+    _drainScheduled = false;
+    int framesProcessed = 0;
+
     while (_rxBuf.isNotEmpty) {
+      // Yield after a batch so the UI thread can paint / handle input.
+      if (framesProcessed >= _maxFramesPerDrain) {
+        if (!_drainScheduled) {
+          _drainScheduled = true;
+          scheduleMicrotask(_drainRxBuf);
+        }
+        return;
+      }
+
       final first = _rxBuf.first;
 
       if (first == 0x54 || first == 0x74) {
         // 'T' (0x54) or 't' (0x74) — SLCAN extended/standard frame.
         if (!_tryParseSlcanLine()) return; // need more data
       } else if (first == 0x0D || first == 0x0A) {
-        // Stray CR/LF — skip.
+        // Stray CR/LF — skip (don't count as a frame).
         _rxBuf.removeAt(0);
+        continue;
       } else if (_looksLikeBinarySparkPacket()) {
         // Binary 12-byte response whose first byte may be printable ASCII.
         // Must check this BEFORE the generic printable-ASCII skip, because
@@ -275,6 +299,7 @@ class SparkConnection implements ISparkConnection {
         // a binary packet from a non-SPARK device or corrupted data.
         if (!_tryParseBinaryPacket()) return; // need more data
       }
+      framesProcessed++;
     }
   }
 

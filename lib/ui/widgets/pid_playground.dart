@@ -9,6 +9,8 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:fl_chart/fl_chart.dart';
 
 import '../../data/test_data.dart';
+import '../../mechanisms/mechanism.dart';
+import 'simulated_validation_dialog.dart';
 
 class PidPlayground extends StatefulWidget {
   final FeedforwardGains ff;
@@ -29,6 +31,13 @@ class PidPlayground extends StatefulWidget {
   /// Called when the user toggles the mode selector.
   final ValueChanged<bool>? onModeChanged;
 
+  /// Mechanism configuration used to open the Simulate PID dialog.
+  ///
+  /// When non-null the "Simulate PID" button becomes available, allowing
+  /// the user to run a closed-loop validation test on a simulated mechanism
+  /// grounded in the identified feedforward gains.
+  final MechanismConfig? mechanismConfig;
+
   const PidPlayground({
     super.key,
     required this.ff,
@@ -38,6 +47,7 @@ class PidPlayground extends StatefulWidget {
     this.onPosPidChanged,
     this.isPositionMode = false,
     this.onModeChanged,
+    this.mechanismConfig,
   });
 
   @override
@@ -322,6 +332,32 @@ class _PidPlaygroundState extends State<PidPlayground>
     _runSimulation();
   }
 
+  void _openSimulateDialog(BuildContext context) {
+    final config = widget.mechanismConfig;
+    if (config == null) return;
+
+    // Build controller gains from current slider values.
+    final controllerGains = FeedforwardGains(
+      kS: _kS,
+      kV: _kV,
+      kA: _kA,
+      kG: _kG,
+    );
+
+    final pidGains = widget.isPositionMode
+        ? PidResult(kP: _posKP, kI: _posKI, kD: _posKD)
+        : PidResult(kP: _velKP, kI: _velKI, kD: _velKD);
+
+    showSimulatedValidationDialog(
+      context,
+      identifiedGains: widget.ff,
+      controllerGains: controllerGains,
+      pidGains: pidGains,
+      isPositionMode: widget.isPositionMode,
+      mechanismConfig: config,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -463,9 +499,20 @@ class _PidPlaygroundState extends State<PidPlayground>
           ),
           const SizedBox(height: 12),
 
-          Button(
-            onPressed: _resetToAutoTuned,
-            child: const Text('Reset to Identified Values'),
+          Row(
+            children: [
+              Button(
+                onPressed: _resetToAutoTuned,
+                child: const Text('Reset to Identified Values'),
+              ),
+              if (widget.mechanismConfig != null) ...[
+                const SizedBox(width: 12),
+                FilledButton(
+                  onPressed: () => _openSimulateDialog(context),
+                  child: const Text('Simulate PID'),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 16),
 
