@@ -15,11 +15,8 @@ import '../can/spark_protocol.dart';
 import '../data/test_data.dart';
 import '../devices/device_manager.dart';
 import '../mechanisms/mechanism.dart';
-import '../simulation/arm_physics.dart';
-import '../simulation/elevator_physics.dart';
-import '../simulation/flywheel_physics.dart';
+import '../simulation/project_physics_factory.dart';
 import '../simulation/simulated_device.dart';
-import '../simulation/simulated_physics.dart';
 
 /// Creates a standalone simulated [SparkDevice] grounded in [identifiedGains].
 ///
@@ -45,7 +42,10 @@ Future<SparkDevice> createStandaloneSimulatedDevice({
 }) async {
   // Build the physics plant using identified feedforward gains so the
   // simulated response is grounded in the real mechanism's characteristics.
-  final physics = _buildPhysics(type, identifiedGains);
+  final physics = createProjectBackedPhysics(
+    gains: identifiedGains,
+    config: config,
+  );
 
   final connection = SimulatedSparkConnection(physics);
   await connection.open();
@@ -84,37 +84,4 @@ Future<SparkDevice> createStandaloneSimulatedDevice({
   );
   device.canIdReadSucceeded = true;
   return device;
-}
-
-/// Build the appropriate physics model for [type] using the identified [gains].
-///
-/// [noiseLevel] is fixed at 0.005 (0.5 %) so the simulation is representative
-/// without being dominated by sensor noise artefacts.
-///
-/// A positive [kA] guard prevents division-by-zero inside the integrators if
-/// analysis somehow produced a zero or negative value.
-SimulatedPhysics _buildPhysics(MechanismType type, FeedforwardGains gains) {
-  const noiseLevel = 0.005;
-  return switch (type) {
-    MechanismType.arm => ArmPhysics(
-        kS: gains.kS,
-        kV: gains.kV,
-        kA: gains.kA > 0 ? gains.kA : 0.002,
-        kG: gains.kG,
-        noiseLevel: noiseLevel,
-      ),
-    MechanismType.elevator => ElevatorPhysics(
-        kS: gains.kS,
-        kV: gains.kV,
-        kA: gains.kA > 0 ? gains.kA : 0.015,
-        kG: gains.kG,
-        noiseLevel: noiseLevel,
-      ),
-    MechanismType.flywheel || MechanismType.simple => FlywheelPhysics(
-        kS: gains.kS,
-        kV: gains.kV,
-        kA: gains.kA > 0 ? gains.kA : 0.003,
-        noiseLevel: noiseLevel,
-      ),
-  };
 }

@@ -209,6 +209,7 @@ const _categories = <ParamCategory>[
       type: ParamType.decimal,
     ),
     ParamDef(id: kParamIMaxAccum0, name: 'I Max Accum', type: ParamType.decimal),
+    ParamDef(id: kParamAllowedClosedLoopError0, name: 'Allowed CL Error', type: ParamType.decimal),
     // MAXMotion Slot 0
     ParamDef(
       id: kParamMAXMotionCruiseVelocity0,
@@ -273,6 +274,7 @@ const _categories = <ParamCategory>[
       type: ParamType.decimal,
     ),
     ParamDef(id: kParamIMaxAccum1, name: 'I Max Accum', type: ParamType.decimal),
+    ParamDef(id: kParamAllowedClosedLoopError1, name: 'Allowed CL Error', type: ParamType.decimal),
     // MAXMotion Slot 1
     ParamDef(
       id: kParamMAXMotionCruiseVelocity1,
@@ -337,6 +339,7 @@ const _categories = <ParamCategory>[
       type: ParamType.decimal,
     ),
     ParamDef(id: kParamIMaxAccum2, name: 'I Max Accum', type: ParamType.decimal),
+    ParamDef(id: kParamAllowedClosedLoopError2, name: 'Allowed CL Error', type: ParamType.decimal),
     // MAXMotion Slot 2
     ParamDef(
       id: kParamMAXMotionCruiseVelocity2,
@@ -401,6 +404,7 @@ const _categories = <ParamCategory>[
       type: ParamType.decimal,
     ),
     ParamDef(id: kParamIMaxAccum3, name: 'I Max Accum', type: ParamType.decimal),
+    ParamDef(id: kParamAllowedClosedLoopError3, name: 'Allowed CL Error', type: ParamType.decimal),
     // MAXMotion Slot 3
     ParamDef(
       id: kParamMAXMotionCruiseVelocity3,
@@ -754,6 +758,10 @@ class _DeviceConfigScreenState extends ConsumerState<DeviceConfigScreen> {
     });
 
     try {
+      // Disable extra status frames before persisting to reduce CAN traffic
+      // on the real robot — keep only Status 0 force-enabled.
+      await device.parameters.disableExtraStatusFrames();
+
       await device.parameters.burnFlash(heartbeat: device.heartbeat);
       if (mounted) {
         setState(() {

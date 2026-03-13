@@ -76,6 +76,8 @@ class TestRunner {
 
   bool _abortRequested = false;
   bool _isRunning = false;
+  double? _filteredCurrentAmps;
+  double? _lastRawCurrentAmps;
 
   bool get isRunning => _isRunning;
 
@@ -99,6 +101,24 @@ class TestRunner {
     } catch (_) {}
   }
 
+  double _filterCurrentForDisplay(double rawAmps) {
+    if (device.isSimulated) return rawAmps;
+
+    // Real devices can report current in bursty updates with occasional
+    // zero-like dropouts between packets; hold/dropout-guard then smooth.
+    var sample = rawAmps;
+    if (sample <= 0.01 && (_lastRawCurrentAmps ?? 0.0) > 0.5) {
+      sample = _lastRawCurrentAmps!;
+    }
+    _lastRawCurrentAmps = sample;
+
+    const alpha = 0.20;
+    final prev = _filteredCurrentAmps;
+    final filtered = prev == null ? sample : (alpha * sample + (1 - alpha) * prev);
+    _filteredCurrentAmps = filtered;
+    return filtered;
+  }
+
   // -----------------------------------------------------------------------
   // Test preparation
   // -----------------------------------------------------------------------
@@ -106,6 +126,9 @@ class TestRunner {
   /// Configure the controller for system identification testing.
   Future<void> _prepareController() async {
     final params = device.parameters;
+
+    // Enable all periodic status frames so we get full telemetry.
+    await params.enableAllStatusFrames();
 
     // Set motor type.
     await params.setMotorType(
@@ -230,6 +253,8 @@ class TestRunner {
     final stopwatch = Stopwatch();
     TestStopReason stopReason = TestStopReason.completed;
     String? errorMessage;
+    _filteredCurrentAmps = null;
+    _lastRawCurrentAmps = null;
 
     // Consecutive over-current sample counter for debounced current trip.
     int overCurrentCount = 0;
@@ -289,8 +314,8 @@ class TestRunner {
 
         // Check current trip (skip first 0.3s — inrush grace period).
         if (testParams.currentTripAmps != null && elapsedSeconds > 0.3) {
-          final currentAmps =
-              device.connection.lastStatus1?.outputCurrentAmps ?? 0.0;
+          final rawCurrent = device.connection.lastStatus1?.outputCurrentAmps ?? 0.0;
+          final currentAmps = _filterCurrentForDisplay(rawCurrent);
           if (currentAmps > testParams.currentTripAmps!) {
             overCurrentCount++;
             if (overCurrentCount >= overCurrentThreshold) {
@@ -316,13 +341,14 @@ class TestRunner {
           // Status frames already report in user units (onboard CFs).
           final velocity = status1.velocityRpm;
           final position = status2?.positionRotations ?? 0.0;
+          final current = _filterCurrentForDisplay(status1.outputCurrentAmps);
 
           final dp = DataPoint(
             timestamp: elapsedSeconds,
             voltage: targetVoltage,
             velocity: velocity,
             position: position,
-            current: status1.outputCurrentAmps,
+            current: current,
           );
           data.add(dp);
 
@@ -331,7 +357,7 @@ class TestRunner {
             currentVoltage: targetVoltage,
             currentVelocity: velocity,
             currentPosition: position,
-            currentCurrent: status1.outputCurrentAmps,
+            currentCurrent: current,
             sampleCount: data.length,
             softLimitWarning: false,
           ));

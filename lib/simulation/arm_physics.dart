@@ -41,6 +41,9 @@ class ArmPhysics implements SimulatedPhysics {
   final double minAngleDeg;
   final double maxAngleDeg;
 
+  /// Backlash dead-band in degrees at the output.
+  final double backlashDeg;
+
   // -- State ----------------------------------------------------------------
 
   /// Current angular velocity in deg/s.
@@ -48,6 +51,15 @@ class ArmPhysics implements SimulatedPhysics {
 
   /// Current angle in degrees (0 = horizontal).
   double _angleDeg = 0.0;
+
+  /// Output-side angle after backlash is applied (sensor sees this).
+  double _outputAngleDeg = 0.0;
+
+  /// Remaining backlash clearance to consume in the current direction.
+  double _backlashRemainingDeg = 0.0;
+
+  /// Last direction of transmitted motion through the backlash mesh.
+  double _backlashDirection = 0.0;
 
   @override
   double commandedVoltage = 0.0;
@@ -65,6 +77,7 @@ class ArmPhysics implements SimulatedPhysics {
     this.noiseLevel = 0.015,
     this.minAngleDeg = -45.0,
     this.maxAngleDeg = 90.0,
+    this.backlashDeg = 0.0,
     int? randomSeed,
   }) : _rng = Random(randomSeed);
 
@@ -72,6 +85,9 @@ class ArmPhysics implements SimulatedPhysics {
   void reset() {
     _velocityDegPerS = 0.0;
     _angleDeg = 0.0;
+    _outputAngleDeg = 0.0;
+    _backlashRemainingDeg = 0.0;
+    _backlashDirection = 0.0;
     commandedVoltage = 0.0;
   }
 
@@ -79,6 +95,9 @@ class ArmPhysics implements SimulatedPhysics {
   void setPositionRotations(double rotations) {
     _angleDeg = rotations * 360.0;
     _angleDeg = _angleDeg.clamp(minAngleDeg, maxAngleDeg);
+    _outputAngleDeg = _angleDeg;
+    _backlashRemainingDeg = 0.0;
+    _backlashDirection = 0.0;
   }
 
   @override
@@ -113,15 +132,21 @@ class ArmPhysics implements SimulatedPhysics {
       _velocityDegPerS = 0.0;
     }
 
+    final prevAngle = _angleDeg;
     _angleDeg += _velocityDegPerS * dtSeconds;
+
+    final motorDeltaDeg = _angleDeg - prevAngle;
+    _outputAngleDeg += _transmitThroughBacklash(motorDeltaDeg);
 
     // Hard stops at soft limits — prevent motion into the wall.
     if (_angleDeg <= minAngleDeg) {
       _angleDeg = minAngleDeg;
+      _outputAngleDeg = minAngleDeg;
       if (_velocityDegPerS < 0) _velocityDegPerS = 0.0;
     }
     if (_angleDeg >= maxAngleDeg) {
       _angleDeg = maxAngleDeg;
+      _outputAngleDeg = maxAngleDeg;
       if (_velocityDegPerS > 0) _velocityDegPerS = 0.0;
     }
 
@@ -140,7 +165,7 @@ class ArmPhysics implements SimulatedPhysics {
   double get _velocityRpm => _velocityDegPerS / 360.0 * 60.0;
 
   /// Convert internal degrees to rotations for the encoder.
-  double get _positionRotations => _angleDeg / 360.0;
+  double get _positionRotations => _outputAngleDeg / 360.0;
 
   @override
   double get noisyVelocityRpm {
@@ -164,6 +189,26 @@ class ArmPhysics implements SimulatedPhysics {
 
   @override
   String get label => 'Simulated Arm';
+
+  double _transmitThroughBacklash(double motorDeltaDeg) {
+    if (backlashDeg <= 0 || motorDeltaDeg == 0.0) {
+      return motorDeltaDeg;
+    }
+
+    final direction = motorDeltaDeg.sign;
+    if (direction != _backlashDirection) {
+      _backlashDirection = direction;
+      _backlashRemainingDeg = backlashDeg;
+    }
+
+    final deltaAbs = motorDeltaDeg.abs();
+    final consume =
+        deltaAbs < _backlashRemainingDeg ? deltaAbs : _backlashRemainingDeg;
+    _backlashRemainingDeg -= consume;
+
+    final transmittedAbs = deltaAbs - consume;
+    return transmittedAbs * direction;
+  }
 
   double _noise() => (2.0 * _rng.nextDouble() - 1.0) * noiseLevel;
 }

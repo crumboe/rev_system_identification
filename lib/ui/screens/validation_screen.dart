@@ -21,6 +21,7 @@ import '../../sysid/validation_runner.dart';
 import '../../can/spark_protocol.dart';
 import '../widgets/arm_visual.dart';
 import '../widgets/elevator_visual.dart';
+import '../widgets/flywheel_visual.dart';
 import '../widgets/jog_panel.dart';
 
 class ValidationScreen extends ConsumerStatefulWidget {
@@ -54,6 +55,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   late TextEditingController _velSpCtrl;
   late TextEditingController _posSpCtrl;
 
+  // Allowed closed-loop error controller
+  late TextEditingController _clErrorCtrl;
+
   // MAXMotion configuration controllers
   late TextEditingController _mmCruiseCtrl;
   late TextEditingController _mmAccelCtrl;
@@ -82,6 +86,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
         text: (defaults.velocitySetpoint * 2.0).toStringAsFixed(1));
     _mmJerkCtrl = TextEditingController(text: '0');
     _mmErrorCtrl = TextEditingController(text: '0.05');
+    _clErrorCtrl = TextEditingController(text: '0');
 
     _positionPollTimer = Timer.periodic(
       const Duration(milliseconds: 100),
@@ -98,6 +103,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _mmAccelCtrl.dispose();
     _mmJerkCtrl.dispose();
     _mmErrorCtrl.dispose();
+    _clErrorCtrl.dispose();
     _mmFlyoutController.dispose();
     super.dispose();
   }
@@ -149,65 +155,83 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
     return ScaffoldPage(
       header: PageHeader(
-        title: const Text('Validation'),
-        commandBar: CommandBar(
-          mainAxisAlignment: MainAxisAlignment.end,
-          primaryItems: [
-            CommandBarButton(
-              icon: const Icon(FluentIcons.stop,
-                  color: Colors.warningPrimaryColor),
-              label: const Text('EMERGENCY STOP'),
-              onPressed: _isRunning ? _emergencyStop : null,
-            ),
+        title: Row(
+          children: [
+            const Text('Validation'),
+            const Spacer(),
+            const SizedBox(width: 12),
+            const Text('Allowed CL Error',style: TextStyle(fontSize: 11),),
+            const SizedBox(width: 5),
+            
+            SizedBox(
+              width: 170,
+              child: TextBox(
+                controller: _clErrorCtrl,
+                enabled: !_isRunning,
+                // placeholder: 'Allowed CL Error',
+              ),
+            )
+            
           ],
         ),
       ),
       content: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status bar
-            InfoBar(
-              title: Text(_isRunning ? 'Running validation' : 'Status'),
-              content: Text(_statusMessage),
-              severity: _isRunning
-                  ? InfoBarSeverity.warning
-                  : _error != null
-                      ? InfoBarSeverity.error
-                      : InfoBarSeverity.info,
-            ),
-            const SizedBox(height: 12),
-
-            Row(
-              children: [
-                ToggleSwitch(
-                  checked: _useStoredControllerGains,
-                  onChanged: _isRunning
-                      ? null
-                      : (v) {
-                          setState(() => _useStoredControllerGains = v);
-                        },
-                  content: const Text('Use PID/FF currently stored on controller'),
-                ),
-                const SizedBox(width: 12),
-                const Text(
-                  'When enabled, validation will not overwrite slot gains.',
-                  style: TextStyle(fontSize: 12),
-                ),
-                if (!usingStored && !hasGains) ...[
-                  const SizedBox(width: 16),
-                  const InfoBar(
-                    title: Text('No gains'),
-                    content: Text(
-                      'Compute and write gains from the Results page first.',
+            // Compact status bar
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: _isRunning
+                    ? Colors.warningPrimaryColor.withValues(alpha: 0.10)
+                    : _error != null
+                        ? Colors.red.withValues(alpha: 0.10)
+                        : FluentTheme.of(context)
+                            .resources
+                            .subtleFillColorSecondary,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _isRunning
+                        ? FluentIcons.progress_loop_outer
+                        : _error != null
+                            ? FluentIcons.error
+                            : FluentIcons.info,
+                    size: 14,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _statusMessage,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    severity: InfoBarSeverity.info,
+                  ),
+                  const SizedBox(width: 8),
+                  Button(
+                    onPressed: _isRunning ? _emergencyStop : null,
+                    child: const Text('E-Stop'),
                   ),
                 ],
-              ],
+              ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+
+            if (!usingStored && !hasGains) ...[
+              const InfoBar(
+                title: Text('No gains'),
+                content: Text(
+                  'Compute and write gains from the Results page first.',
+                ),
+                severity: InfoBarSeverity.info,
+              ),
+              const SizedBox(height: 8),
+            ],
 
             // Setpoint controls + run buttons
             Row(
@@ -597,12 +621,28 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                     const SizedBox(width: 8),
                     SizedBox(
                       width: 260,
-                      child: JogPanel(
-                        device: device,
-                        config: config,
-                        enabled: !_isRunning,
-                        onPositionChanged: (pos) =>
-                            setState(() => _currentPosition = pos),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: FlywheelVisual(
+                              currentRotations: _currentPosition,
+                              isDraggable: device.isSimulated && !_isRunning,
+                              onRotationChanged: (rot) =>
+                                  _onDragPosition(device, config, rot),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            height: 190,
+                            child: JogPanel(
+                              device: device,
+                              config: config,
+                              enabled: !_isRunning,
+                              onPositionChanged: (pos) =>
+                                  setState(() => _currentPosition = pos),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -631,6 +671,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   // -----------------------------------------------------------------------
 
   ValidationMode? _lastMode;
+
+  /// Apply the user-entered allowed CL error to a PidResult.
+  PidResult? _applyClError(PidResult? pid) {
+    if (pid == null) return null;
+    final val = double.tryParse(_clErrorCtrl.text) ?? 0.0;
+    if (val == pid.allowedClosedLoopError) return pid;
+    return pid.copyWith(allowedClosedLoopError: val);
+  }
 
   Future<void> _runTest(
     ValidationMode mode,
@@ -727,8 +775,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       device: device,
       mechanismConfig: config,
       feedforwardGains: ff,
-      velocityPidGains: velPid,
-      positionPidGains: posPid,
+      velocityPidGains: _applyClError(velPid),
+      positionPidGains: _applyClError(posPid),
       useStoredControllerGains: _useStoredControllerGains,
     );
 

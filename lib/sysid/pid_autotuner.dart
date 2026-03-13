@@ -4,11 +4,18 @@
 /// for closed-loop position or velocity control on the SPARK controller.
 library;
 
+import 'dart:math' as math;
+
 import '../data/test_data.dart';
 import '../mechanisms/mechanism.dart';
 
 /// Computes PID gains from identified feedforward constants.
 class PidAutoTuner {
+  /// Plant time constant threshold (seconds).  Below this, the system has very
+  /// low inertia and gains are automatically de-rated for robustness against
+  /// nonlinearities like backlash and stiction.
+  static const _lowInertiaTauThreshold = 0.075; // 75 ms
+
   /// Compute PID gains for velocity control.
   ///
   /// The plant transfer function from voltage to velocity is approximately:
@@ -26,40 +33,43 @@ class PidAutoTuner {
     double desiredTimeConstantMs = 100.0,
     double controlPeriodMs = 1.0,
   }) {
-    // The SPARK's internal PID operates on error in native units (RPM for
-    // velocity) and outputs duty cycle [-1, 1].  We need to account for the
-    // bus voltage when converting between the physical model and the
-    // controller's PID.
-    //
-    // However, since users will typically run voltage compensation mode,
-    // we can compute gains assuming 12V nominal bus voltage.
     const nominalVoltage = 12.0;
 
-    final tau = desiredTimeConstantMs / 1000.0; // desired time constant
+    var tau = desiredTimeConstantMs / 1000.0; // desired time constant
+    final warnings = <String>[];
 
-    // Model: τ·dω/dt + ω = (1/kV)·(V - kS·sign(ω))
-    // where τ_plant = kA / kV (the plant's natural time constant)
+    // Low-inertia robustness: when the plant time constant (kA/kV) is very
+    // small, the system has negligible inertia and nonlinearities (backlash,
+    // stiction) dominate the response.  Ensure the desired CL time constant
+    // is at least 3× the plant time constant so the controller doesn't try
+    // to be faster than the physical system can linearly track.
+    if (ff.kA > 0 && ff.kV > 0) {
+      final plantTau = ff.kA / ff.kV;
+      if (plantTau < _lowInertiaTauThreshold) {
+        final minTau = plantTau * 3.0;
+        if (tau < minTau) {
+          final oldTauMs = tau * 1000.0;
+          tau = minTau;
+          warnings.add(
+            'Low inertia detected (plant \u03c4 = '
+            '${(plantTau * 1000).toStringAsFixed(1)} ms). '
+            'Time constant increased from '
+            '${oldTauMs.toStringAsFixed(0)} ms to '
+            '${(tau * 1000).toStringAsFixed(0)} ms for robustness.');
+        }
+      }
+    }
 
-    // kP: proportional gain. For a first-order system, we want the closed-loop
-    // time constant to equal [tau].  The closed-loop bandwidth is determined by
-    // kP.  In voltage units: kP_volts = kA / tau.
-    // Convert to SPARK PID units (duty cycle per RPM):
     final kP = ff.kA > 0 ? (ff.kA / tau) / nominalVoltage : 0.0;
-
-    // kI: typically 0 for velocity control to avoid windup.
     const kI = 0.0;
-
-    // kD: not typically used for velocity control.
     const kD = 0.0;
-
-    // Note: feedforward (kS, kV, kA, kG) is now configured separately
-    // via the controller's FeedForwardConfig, not as part of PID.
 
     return PidResult(
       kP: kP,
       kI: kI,
       kD: kD,
-      velocityTimeConstantMs: desiredTimeConstantMs,
+      velocityTimeConstantMs: tau * 1000.0,
+      warnings: warnings,
     );
   }
 
@@ -88,16 +98,41 @@ class PidAutoTuner {
     double? maxVelocity,
   }) {
     const nominalVoltage = 12.0;
-    final omega = 2.0 * 3.14159265 * desiredBandwidthHz; // rad/s
-    final zeta = dampingRatio;
+    var omega = 2.0 * math.pi * desiredBandwidthHz; // rad/s
+    var zeta = dampingRatio;
+    final warnings = <String>[];
 
-    // Velocity-to-position-rate factor.
-    //
-    // For flywheel/simple: velocity is RPM, position is rotations.
-    //   d(rotations)/dt = RPM / 60  →  r = 60
-    // For arm: velocity is deg/s, position is degrees.  r = 1
-    // For elevator: velocity is m/s (or in/s), position is m (or in).  r = 1
     final double r = _velocityToPositionRateFactor(mechanismType);
+
+    // Low-inertia robustness: when the plant time constant is small,
+    // nonlinearities (backlash, stiction) dominate.  Reduce bandwidth and
+    // increase damping so the controller doesn't drive the system through
+    // dead zones at high speed.
+    if (ff.kA > 0 && ff.kV > 0) {
+      final plantTau = ff.kA / ff.kV;
+      if (plantTau < _lowInertiaTauThreshold) {
+        // Cap bandwidth: don't command faster than 1/(2·τ_plant) rad/s.
+        final maxOmega = 1.0 / (2.0 * plantTau);
+        if (omega > maxOmega) {
+          omega = maxOmega;
+          warnings.add(
+            'Low inertia detected (plant \u03c4 = '
+            '${(plantTau * 1000).toStringAsFixed(1)} ms). '
+            'Position bandwidth reduced from '
+            '${desiredBandwidthHz.toStringAsFixed(1)} Hz to '
+            '${(omega / (2.0 * math.pi)).toStringAsFixed(1)} Hz.');
+        }
+        // Increase damping proportionally to the inertia deficit.
+        final dampingBoost =
+            (_lowInertiaTauThreshold / plantTau).clamp(1.0, 2.5);
+        if (dampingBoost > 1.01) {
+          zeta = dampingRatio * dampingBoost;
+          warnings.add(
+            'Damping ratio increased from ${dampingRatio.toStringAsFixed(2)} '
+            'to ${zeta.toStringAsFixed(2)} for low-inertia robustness.');
+        }
+      }
+    }
 
     // The plant transfer function from voltage to position (user units):
     //   G(s) = 1 / (r·kA·s² + r·kV·s)
@@ -116,22 +151,16 @@ class PidAutoTuner {
     final kPVolts = r * ff.kA * omega * omega;
     final kDVolts = (2.0 * zeta * ff.kA * omega - ff.kV);
 
-    // Convert to SPARK PID units (duty cycle per position-unit for P,
-    // per velocity-unit for D).
     final kP = kPVolts / nominalVoltage;
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
-
-    // No integral needed for position PID.
     const kI = 0.0;
-
-    // Note: feedforward (kS, kG/kCos) is configured separately
-    // via the controller's FeedForwardConfig.
 
     return PidResult(
       kP: kP,
       kI: kI,
       kD: kD,
-      positionBandwidthHz: desiredBandwidthHz,
+      positionBandwidthHz: omega / (2.0 * math.pi),
+      warnings: warnings,
     );
   }
 

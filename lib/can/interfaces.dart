@@ -38,6 +38,9 @@ abstract class ISparkConnection {
   /// The latest parsed Status Frame 5 (absolute encoder position).
   StatusFrame5? get lastStatus5;
 
+  /// The latest parsed new-protocol Status Frame 1 (faults & warnings).
+  NewStatusFrame1? get lastNewStatus1;
+
   /// Stream of all decoded inbound frames.
   Stream<SparkResponse> get responses;
 
@@ -120,6 +123,7 @@ abstract class IParameterApi {
   Future<void> setSlot0DFilter(double value);
   Future<void> setSlot0MaxOutput(double value);
   Future<void> setSlot0MinOutput(double value);
+  Future<void> setAllowedClosedLoopError0(double value);
   Future<void> setPidSlot0({
     required double p,
     required double i,
@@ -195,6 +199,10 @@ abstract class IParameterApi {
     int leaderDeviceId, {
     int followerType,
   });
+
+  // Force Enable Status
+  Future<void> enableAllStatusFrames();
+  Future<void> disableExtraStatusFrames();
 }
 
 // ---------------------------------------------------------------------------

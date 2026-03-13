@@ -41,6 +41,9 @@ class SparkConnection implements ISparkConnection {
   StatusFrame2? lastStatus2;
   StatusFrame5? lastStatus5;
 
+  /// Faults & warnings from new-protocol Status Frame 1.
+  NewStatusFrame1? lastNewStatus1;
+
   /// Raw byte buffer for incoming data — processes both SLCAN text and
   /// binary 12-byte packets in a unified stream.
   final _rxBuf = <int>[];
@@ -423,6 +426,8 @@ class SparkConnection implements ISparkConnection {
             outputCurrentAmps: prev?.outputCurrentAmps ?? 0.0,
           );
         }
+      } else if (parsed is NewStatusFrame1) {
+        lastNewStatus1 = parsed;
       }
     } else if (response.apiClass == kApiClassStatus && !_usingNewProtocol) {
       // Only use legacy frames if we haven't seen new-protocol frames.

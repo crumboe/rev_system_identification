@@ -230,6 +230,12 @@ const int kParamIMaxAccum1 = 100; // c_Spark_kIMaxAccum_1
 const int kParamIMaxAccum2 = 104; // c_Spark_kIMaxAccum_2
 const int kParamIMaxAccum3 = 108; // c_Spark_kIMaxAccum_3
 
+// Allowed closed-loop error (all PID slots)
+const int kParamAllowedClosedLoopError0 = 97;  // c_Spark_kAllowedClosedLoopError_0
+const int kParamAllowedClosedLoopError1 = 101; // c_Spark_kAllowedClosedLoopError_1
+const int kParamAllowedClosedLoopError2 = 105; // c_Spark_kAllowedClosedLoopError_2
+const int kParamAllowedClosedLoopError3 = 109; // c_Spark_kAllowedClosedLoopError_3
+
 // Analog sensor
 const int kParamAnalogPositionConversion = 119; // c_Spark_kAnalogPositionConversion — rev/volt
 const int kParamAnalogVelocityConversion = 120; // c_Spark_kAnalogVelocityConversion — vel/v/s
@@ -330,6 +336,34 @@ const int kParamMAXMotionMaxAccel3 = 182;       // c_Spark_kMAXMotionMaxAccel_3
 const int kParamMAXMotionMaxJerk3 = 183;        // c_Spark_kMAXMotionMaxJerk_3
 const int kParamMAXMotionAllowedError3 = 184;   // c_Spark_kMAXMotionAllowedProfileError_3
 const int kParamMAXMotionPositionMode3 = 185;   // c_Spark_kMAXMotionPositionMode_3
+
+// Force Enable Status (IDs 186–193, 200, 225)
+// Extracted from REV Hardware Client 2 pcap capture — write 1 to enable,
+// 0 to disable the corresponding periodic status frame.
+const int kParamForceEnableStatus0 = 186; // c_Spark_kForceEnableStatus_0
+const int kParamForceEnableStatus1 = 187; // c_Spark_kForceEnableStatus_1
+const int kParamForceEnableStatus2 = 188; // c_Spark_kForceEnableStatus_2
+const int kParamForceEnableStatus3 = 189; // c_Spark_kForceEnableStatus_3
+const int kParamForceEnableStatus4 = 190; // c_Spark_kForceEnableStatus_4
+const int kParamForceEnableStatus5 = 191; // c_Spark_kForceEnableStatus_5
+const int kParamForceEnableStatus6 = 192; // c_Spark_kForceEnableStatus_6
+const int kParamForceEnableStatus7 = 193; // c_Spark_kForceEnableStatus_7
+const int kParamForceEnableStatus8 = 200; // c_Spark_kForceEnableStatus_8
+const int kParamForceEnableStatus9 = 225; // c_Spark_kForceEnableStatus_9
+
+/// All force enable status parameter IDs, in order.
+const List<int> kForceEnableStatusParams = [
+  kParamForceEnableStatus0,
+  kParamForceEnableStatus1,
+  kParamForceEnableStatus2,
+  kParamForceEnableStatus3,
+  kParamForceEnableStatus4,
+  kParamForceEnableStatus5,
+  kParamForceEnableStatus6,
+  kParamForceEnableStatus7,
+  kParamForceEnableStatus8,
+  kParamForceEnableStatus9,
+];
 
 // MAXMotion position modes
 const int kMAXMotionPositionModeTrapezoidal = 0;

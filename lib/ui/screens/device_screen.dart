@@ -2,8 +2,11 @@
 /// device parameter configuration, and follower configuration.
 library;
 
+import 'dart:async';
+
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../can/status_parser.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
@@ -341,6 +344,15 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   },
                 ),
               ]),
+        ],
+
+        const SizedBox(height: 24),
+
+        // Faults & Warnings section
+        if (devices.isNotEmpty) ...[
+          ...devices.expand((device) => [
+            _FaultsPanel(device: device),
+          ]),
         ],
 
         const SizedBox(height: 24),
@@ -803,5 +815,150 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
         _result = 'Error: $e';
       });
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Faults & Warnings panel — polls NewStatusFrame1 and shows fault chips.
+// ---------------------------------------------------------------------------
+
+class _FaultsPanel extends StatefulWidget {
+  final SparkDevice device;
+  const _FaultsPanel({required this.device});
+
+  @override
+  State<_FaultsPanel> createState() => _FaultsPanelState();
+}
+
+class _FaultsPanelState extends State<_FaultsPanel> {
+  Timer? _timer;
+  NewStatusFrame1? _status;
+  bool _clearing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _status = widget.device.connection.lastNewStatus1;
+    _timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final s = widget.device.connection.lastNewStatus1;
+      if (s != _status) {
+        setState(() => _status = s);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    final device = widget.device;
+    final status = _status;
+
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(FluentIcons.warning, color: theme.accentColor),
+              const SizedBox(width: 8),
+              Text(
+                'Faults — ${device.connection.portName} '
+                '(CAN ${device.canId})',
+                style: theme.typography.subtitle,
+              ),
+              const Spacer(),
+              FilledButton(
+                onPressed: _clearing
+                    ? null
+                    : () async {
+                        setState(() => _clearing = true);
+                        await device.control.clearFaults();
+                        // Give the controller a moment to update status.
+                        await Future.delayed(
+                            const Duration(milliseconds: 300));
+                        setState(() {
+                          _status = device.connection.lastNewStatus1;
+                          _clearing = false;
+                        });
+                      },
+                child: _clearing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: ProgressRing(strokeWidth: 2),
+                      )
+                    : const Text('Clear Faults'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (status == null)
+            Text(
+              'Waiting for fault status…',
+              style: theme.typography.body
+                  ?.copyWith(fontStyle: FontStyle.italic),
+            )
+          else if (!status.hasFaults)
+            Row(
+              children: [
+                Icon(FluentIcons.completed,
+                    color: Colors.green, size: 18),
+                const SizedBox(width: 6),
+                Text('No faults', style: theme.typography.body),
+              ],
+            )
+          else ...[
+            if (status.hasActiveFaults) ...[
+              Text('Active Faults', style: theme.typography.bodyStrong),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: status.activeFaultBits
+                    .map((f) => _faultChip(f.label, Colors.red))
+                    .toList(),
+              ),
+              const SizedBox(height: 10),
+            ],
+            if (status.hasStickyFaults) ...[
+              Text('Sticky Faults', style: theme.typography.bodyStrong),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: status.stickyFaultBits
+                    .map((f) => _faultChip(f.label, Colors.orange))
+                    .toList(),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _faultChip(String label, AccentColor color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.lightest,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color.darkest,
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        ),
+      ),
+    );
   }
 }

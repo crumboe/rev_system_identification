@@ -163,6 +163,17 @@ class ParameterApi implements IParameterApi {
     45: kParamTypeBool,  // kMotorInverted (param 45, bool in REVLib)
     123: kParamTypeBool, // kAnalogInverted
     131: kParamTypeBool, // kAltEncoderInverted
+    // Force Enable Status params (bool: 0=disabled, 1=enabled)
+    186: kParamTypeBool, // kForceEnableStatus0
+    187: kParamTypeBool, // kForceEnableStatus1
+    188: kParamTypeBool, // kForceEnableStatus2
+    189: kParamTypeBool, // kForceEnableStatus3
+    190: kParamTypeBool, // kForceEnableStatus4
+    191: kParamTypeBool, // kForceEnableStatus5
+    192: kParamTypeBool, // kForceEnableStatus6
+    193: kParamTypeBool, // kForceEnableStatus7
+    200: kParamTypeBool, // kForceEnableStatus8
+    225: kParamTypeBool, // kForceEnableStatus9
     // float params (selected \u2014 most params 7\u201344, 56, 75\u201395, 96\u2013116, 119\u2013120, 132\u2013133)
     7: kParamTypeFloat,  // kInputDeadband
     11: kParamTypeFloat, // kCurrentChop
@@ -490,6 +501,10 @@ class ParameterApi implements IParameterApi {
   Future<void> setSlot0MinOutput(double value) =>
       setParameter(kParamSlot0MinOutput, value);
 
+  @override
+  Future<void> setAllowedClosedLoopError0(double value) =>
+      setParameter(kParamAllowedClosedLoopError0, value);
+
   /// Set all PID Slot 0 values at once.
   Future<void> setPidSlot0({
     required double p,
@@ -646,6 +661,35 @@ class ParameterApi implements IParameterApi {
     );
     await setParameter(kParamFollowerId, leaderArbId.toDouble());
     await setParameter(kParamFollowerConfig, followerType.toDouble());
+  }
+
+  // -----------------------------------------------------------------------
+  // Force Enable Status
+  // -----------------------------------------------------------------------
+
+  /// Enable all periodic status frames on the controller.
+  ///
+  /// Write 1 to each of the 10 force enable status parameters (186–193,
+  /// 200, 225). Call this before testing or verification so all telemetry
+  /// is available.
+  @override
+  Future<void> enableAllStatusFrames() async {
+    for (final paramId in kForceEnableStatusParams) {
+      await setParameter(paramId, 1.0);
+    }
+  }
+
+  /// Disable all periodic status frames except Status 0.
+  ///
+  /// Write 0 to force enable status params 1–9, leaving Status 0 enabled.
+  /// Call this before persisting parameters to reduce CAN bus traffic on
+  /// the real robot.
+  @override
+  Future<void> disableExtraStatusFrames() async {
+    for (final paramId in kForceEnableStatusParams) {
+      if (paramId == kParamForceEnableStatus0) continue;
+      await setParameter(paramId, 0.0);
+    }
   }
 
   // -----------------------------------------------------------------------

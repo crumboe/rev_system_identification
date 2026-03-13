@@ -44,6 +44,9 @@ class ElevatorPhysics implements SimulatedPhysics {
   /// Inches per motor rotation (sprocket circumference / gear ratio).
   final double inchesPerRotation;
 
+  /// Backlash dead-band in output inches.
+  final double backlashInches;
+
   // -- State ----------------------------------------------------------------
 
   /// Current velocity in in/s.
@@ -51,6 +54,15 @@ class ElevatorPhysics implements SimulatedPhysics {
 
   /// Current position in inches.
   double _positionIn = 0.0;
+
+  /// Output-side position after backlash is applied (sensor sees this).
+  double _outputPositionIn = 0.0;
+
+  /// Remaining backlash clearance to consume in the current direction.
+  double _backlashRemainingIn = 0.0;
+
+  /// Last direction of transmitted motion through the backlash mesh.
+  double _backlashDirection = 0.0;
 
   @override
   double commandedVoltage = 0.0;
@@ -69,6 +81,7 @@ class ElevatorPhysics implements SimulatedPhysics {
     this.minPositionIn = 0.0,
     this.maxPositionIn = 78.74,  // ~2 meters
     this.inchesPerRotation = 1.504,  // ~1.5" sprocket with 16:1 reduction
+    this.backlashInches = 0.0,
     int? randomSeed,
   }) : _rng = Random(randomSeed);
 
@@ -76,6 +89,9 @@ class ElevatorPhysics implements SimulatedPhysics {
   void reset() {
     _velocityInPerS = 0.0;
     _positionIn = 0.0;
+    _outputPositionIn = 0.0;
+    _backlashRemainingIn = 0.0;
+    _backlashDirection = 0.0;
     commandedVoltage = 0.0;
   }
 
@@ -83,6 +99,9 @@ class ElevatorPhysics implements SimulatedPhysics {
   void setPositionRotations(double rotations) {
     _positionIn = rotations * inchesPerRotation;
     _positionIn = _positionIn.clamp(minPositionIn, maxPositionIn);
+    _outputPositionIn = _positionIn;
+    _backlashRemainingIn = 0.0;
+    _backlashDirection = 0.0;
   }
 
   @override
@@ -116,15 +135,21 @@ class ElevatorPhysics implements SimulatedPhysics {
       _velocityInPerS = 0.0;
     }
 
+    final prevPositionIn = _positionIn;
     _positionIn += _velocityInPerS * dtSeconds;
+
+    final motorDeltaIn = _positionIn - prevPositionIn;
+    _outputPositionIn += _transmitThroughBacklash(motorDeltaIn);
 
     // Hard stops at limits — prevent motion into the wall.
     if (_positionIn <= minPositionIn) {
       _positionIn = minPositionIn;
+      _outputPositionIn = minPositionIn;
       if (_velocityInPerS < 0) _velocityInPerS = 0.0;
     }
     if (_positionIn >= maxPositionIn) {
       _positionIn = maxPositionIn;
+      _outputPositionIn = maxPositionIn;
       if (_velocityInPerS > 0) _velocityInPerS = 0.0;
     }
 
@@ -144,7 +169,7 @@ class ElevatorPhysics implements SimulatedPhysics {
       (_velocityInPerS / inchesPerRotation) * 60.0;
 
   /// Convert inches to rotations.
-  double get _positionRotations => _positionIn / inchesPerRotation;
+  double get _positionRotations => _outputPositionIn / inchesPerRotation;
 
   @override
   double get noisyVelocityRpm {
@@ -168,6 +193,26 @@ class ElevatorPhysics implements SimulatedPhysics {
 
   @override
   String get label => 'Simulated Elevator';
+
+  double _transmitThroughBacklash(double motorDeltaIn) {
+    if (backlashInches <= 0 || motorDeltaIn == 0.0) {
+      return motorDeltaIn;
+    }
+
+    final direction = motorDeltaIn.sign;
+    if (direction != _backlashDirection) {
+      _backlashDirection = direction;
+      _backlashRemainingIn = backlashInches;
+    }
+
+    final deltaAbs = motorDeltaIn.abs();
+    final consume =
+        deltaAbs < _backlashRemainingIn ? deltaAbs : _backlashRemainingIn;
+    _backlashRemainingIn -= consume;
+
+    final transmittedAbs = deltaAbs - consume;
+    return transmittedAbs * direction;
+  }
 
   double _noise() => (2.0 * _rng.nextDouble() - 1.0) * noiseLevel;
 }

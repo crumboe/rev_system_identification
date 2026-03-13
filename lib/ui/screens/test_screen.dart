@@ -18,6 +18,7 @@ import '../widgets/arm_visual.dart';
 import '../widgets/chart_walkthrough.dart';
 import '../widgets/chart_annotations.dart';
 import '../widgets/elevator_visual.dart';
+import '../widgets/flywheel_visual.dart';
 import '../widgets/jog_panel.dart';
 
 class TestScreen extends ConsumerStatefulWidget {
@@ -414,12 +415,28 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                     const SizedBox(width: 8),
                     SizedBox(
                       width: 260,
-                      child: JogPanel(
-                        device: device,
-                        config: config,
-                        enabled: !_isRunning,
-                        onPositionChanged: (pos) =>
-                            setState(() => _currentPosition = pos),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: FlywheelVisual(
+                              currentRotations: _currentPosition,
+                              isDraggable: device.isSimulated && !_isRunning,
+                              onRotationChanged: (rot) =>
+                                  _onDragPosition(device, config, rot),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          SizedBox(
+                            height: 190,
+                            child: JogPanel(
+                              device: device,
+                              config: config,
+                              enabled: !_isRunning,
+                              onPositionChanged: (pos) =>
+                                  setState(() => _currentPosition = pos),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],

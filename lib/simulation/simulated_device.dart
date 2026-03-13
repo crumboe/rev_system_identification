@@ -51,6 +51,9 @@ class SimulatedSparkConnection implements ISparkConnection {
   StatusFrame5? lastStatus5;
 
   @override
+  NewStatusFrame1? lastNewStatus1;
+
+  @override
   Stream<SparkResponse> get responses => const Stream<SparkResponse>.empty();
 
   SimulatedSparkConnection(this.physics, {String? portName})
@@ -926,6 +929,8 @@ class SimulatedParameterApi implements IParameterApi {
     kParamMAXMotionMaxJerk0: 0.0,
     kParamMAXMotionAllowedError0: 0.0,
     kParamMAXMotionPositionMode0: 0.0,
+    // Allowed closed-loop error defaults
+    kParamAllowedClosedLoopError0: 0.0,
   };
 
   /// Synchronous parameter read for the simulated PID controller.
@@ -1039,6 +1044,10 @@ class SimulatedParameterApi implements IParameterApi {
   @override
   Future<void> setSlot0MinOutput(double value) =>
       setParameter(kParamSlot0MinOutput, value);
+
+  @override
+  Future<void> setAllowedClosedLoopError0(double value) =>
+      setParameter(kParamAllowedClosedLoopError0, value);
 
   @override
   Future<void> setPidSlot0({
@@ -1165,6 +1174,18 @@ class SimulatedParameterApi implements IParameterApi {
   }) async {
     await setParameter(kParamFollowerId, leaderDeviceId.toDouble());
     await setParameter(kParamFollowerConfig, followerType.toDouble());
+  }
+
+  // -- Force Enable Status --------------------------------------------------
+
+  @override
+  Future<void> enableAllStatusFrames() async {
+    // Simulated — no real status frames to enable.
+  }
+
+  @override
+  Future<void> disableExtraStatusFrames() async {
+    // Simulated — no real status frames to disable.
   }
 
   // -- FeedForward Slot 0 ---------------------------------------------------

@@ -64,10 +64,20 @@ class _PidPlaygroundState extends State<PidPlayground>
   late double _velKI;
   late double _velKD;
 
+  // Baseline identified velocity PID gains captured at widget init.
+  late final double _identifiedVelKP;
+  late final double _identifiedVelKI;
+  late final double _identifiedVelKD;
+
   // --- Position PID gains (stored when switching modes) ---
   late double _posKP;
   late double _posKI;
   late double _posKD;
+
+  // Baseline identified position PID gains captured at widget init.
+  late final double _identifiedPosKP;
+  late final double _identifiedPosKI;
+  late final double _identifiedPosKD;
 
   // Active PID gains (pointers into vel or pos depending on mode)
   double get _kP => widget.isPositionMode ? _posKP : _velKP;
@@ -88,6 +98,12 @@ class _PidPlaygroundState extends State<PidPlayground>
   late double _kV;
   late double _kA;
   late double _kG;
+
+  // Baseline identified feedforward gains captured at widget init.
+  late final double _identifiedKS;
+  late final double _identifiedKV;
+  late final double _identifiedKA;
+  late final double _identifiedKG;
 
   // Slider upper bounds — 5× the identified value or a sensible minimum.
   late double _kPMax;
@@ -110,18 +126,31 @@ class _PidPlaygroundState extends State<PidPlayground>
   @override
   void initState() {
     super.initState();
-    _velKP = widget.initialPid?.kP ?? 1.0;
-    _velKI = widget.initialPid?.kI ?? 0.0;
-    _velKD = widget.initialPid?.kD ?? 0.0;
+    _identifiedVelKP = widget.initialPid?.kP ?? 1.0;
+    _identifiedVelKI = widget.initialPid?.kI ?? 0.0;
+    _identifiedVelKD = widget.initialPid?.kD ?? 0.0;
 
-    _posKP = widget.initialPosPid?.kP ?? 1.0;
-    _posKI = widget.initialPosPid?.kI ?? 0.0;
-    _posKD = widget.initialPosPid?.kD ?? 0.0;
+    _identifiedPosKP = widget.initialPosPid?.kP ?? 1.0;
+    _identifiedPosKI = widget.initialPosPid?.kI ?? 0.0;
+    _identifiedPosKD = widget.initialPosPid?.kD ?? 0.0;
 
-    _kS = widget.ff.kS;
-    _kV = widget.ff.kV;
-    _kA = widget.ff.kA;
-    _kG = widget.ff.kG;
+    _identifiedKS = widget.ff.kS;
+    _identifiedKV = widget.ff.kV;
+    _identifiedKA = widget.ff.kA;
+    _identifiedKG = widget.ff.kG;
+
+    _velKP = _identifiedVelKP;
+    _velKI = _identifiedVelKI;
+    _velKD = _identifiedVelKD;
+
+    _posKP = _identifiedPosKP;
+    _posKI = _identifiedPosKI;
+    _posKD = _identifiedPosKD;
+
+    _kS = _identifiedKS;
+    _kV = _identifiedKV;
+    _kA = _identifiedKA;
+    _kG = _identifiedKG;
 
     _prevIsPositionMode = widget.isPositionMode;
     _updateSliderBounds();
@@ -242,19 +271,34 @@ class _PidPlaygroundState extends State<PidPlayground>
 
     const dt = 0.001;
     const steps = 4000; // 4 s (position response is slower)
-    const setpoint = 1.0;
+  // Use mechanism-scale position steps so stiction/backlash modeling does
+  // not pin the estimated response at zero for tiny normalized moves.
+  final setpoint = _positionStepSetpoint();
+  const normalizedSetpoint = 1.0;
     const nominalVoltage = 12.0;
+
+    final backlashSeverity = _lowInertiaBacklashSeverity(plant);
+    final backlash = 0.3 * backlashSeverity;
+    final stictionExtra = 0.45 * backlashSeverity;
+    final delaySteps = (1 + 2 * backlashSeverity).round();
+    final posQuantum = 0.004 * backlashSeverity;
+    final velQuantum = 8.0 * backlashSeverity;
 
     double integral = 0;
     double prevError = setpoint;
     double velocity = 0;
-    double position = 0;
+    double motorPosition = 0;
+    double outputPosition = 0;
+    double backlashRemaining = 0;
+    double backlashDirection = 0;
+    final voltageDelayQueue = <double>[];
+    _firstPositionTick = true;
 
     final actual = <FlSpot>[];
     final reference = <FlSpot>[];
 
     actual.add(const FlSpot(0, 0));
-    reference.add(const FlSpot(0, setpoint));
+    reference.add(const FlSpot(0, normalizedSetpoint));
 
     double maxPos = 0;
     double? riseTime10;
@@ -262,36 +306,78 @@ class _PidPlaygroundState extends State<PidPlayground>
 
     for (int i = 1; i <= steps; i++) {
       final t = i * dt;
-      final error = setpoint - position;
+      final measuredPosition = _quantize(outputPosition, posQuantum);
+      final measuredVelocity = _quantize(velocity, velQuantum);
+      final error = setpoint - measuredPosition;
       integral += error * dt;
       // Position PID D-term uses negative measured velocity (like SPARK).
-      final derivative = _firstPositionTick ? 0.0 : -velocity;
+      final derivative = _firstPositionTick ? 0.0 : -measuredVelocity;
       _firstPositionTick = false;
       final pidOutput = _kP * error + _kI * integral + _kD * derivative;
 
       // Position FF: kS·sign(error) + kG (no kV in position mode per REV).
       final ffOutput = _kS * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0))
           + _kG;
-      final voltage =
+        final requestedVoltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
 
+        double appliedVoltage;
+        if (delaySteps <= 0) {
+        appliedVoltage = requestedVoltage;
+        } else {
+        voltageDelayQueue.add(requestedVoltage);
+        appliedVoltage = voltageDelayQueue.length <= delaySteps
+          ? 0.0
+          : voltageDelayQueue.removeAt(0);
+        }
+
       // Plant dynamics (velocity domain).
-      final velSign = velocity >= 0 ? 1.0 : -1.0;
+        final velSign = velocity >= 0 ? 1.0 : -1.0;
+        final frictionTerm = velocity.abs() > 35.0
+          ? plant.kS * velSign
+          : appliedVoltage.abs() > plant.kS + stictionExtra
+            ? (plant.kS + stictionExtra) * appliedVoltage.sign
+            : appliedVoltage;
       final acceleration =
-          (voltage - plant.kS * velSign - plant.kV * velocity - plant.kG) /
+          (appliedVoltage - frictionTerm - plant.kV * velocity - plant.kG) /
               plant.kA;
       velocity += acceleration * dt;
-      position += velocity * dt;
+      final prevMotorPosition = motorPosition;
+      motorPosition += velocity * dt;
+      final motorDelta = motorPosition - prevMotorPosition;
+
+      if (backlash <= 0 || motorDelta == 0.0) {
+        outputPosition += motorDelta;
+      } else {
+        final direction = motorDelta.sign;
+        if (direction != backlashDirection) {
+          backlashDirection = direction;
+          backlashRemaining = backlash;
+        }
+        final deltaAbs = motorDelta.abs();
+        final consume =
+            deltaAbs < backlashRemaining ? deltaAbs : backlashRemaining;
+        backlashRemaining -= consume;
+        final transmittedAbs = deltaAbs - consume;
+        outputPosition += transmittedAbs * direction;
+      }
+
       prevError = error;
 
       if (i % 10 == 0) {
-        actual.add(FlSpot(t, position));
-        reference.add(FlSpot(t, setpoint));
+        final normalizedOutput =
+            setpoint.abs() > 1e-9 ? outputPosition / setpoint : outputPosition;
+        actual.add(FlSpot(t, normalizedOutput));
+        reference.add(FlSpot(t, normalizedSetpoint));
       }
 
-      if (position > maxPos) maxPos = position;
-      if (riseTime10 == null && position >= 0.1 * setpoint) riseTime10 = t;
-      if (riseTime90 == null && position >= 0.9 * setpoint) riseTime90 = t;
+      if (outputPosition > maxPos) maxPos = outputPosition;
+      if (riseTime10 == null && outputPosition >= 0.1 * setpoint) {
+        riseTime10 = t;
+      }
+      if (riseTime90 == null && outputPosition >= 0.9 * setpoint) {
+        riseTime90 = t;
+      }
     }
 
     final riseTime = (riseTime10 != null && riseTime90 != null)
@@ -304,7 +390,8 @@ class _PidPlaygroundState extends State<PidPlayground>
       _riseTime = riseTime;
       _overshoot =
           maxPos > setpoint ? (maxPos - setpoint) / setpoint * 100.0 : 0.0;
-      _steadyStateError = (setpoint - position).abs();
+        _steadyStateError =
+          setpoint.abs() > 1e-9 ? ((setpoint - outputPosition).abs() / setpoint.abs()) : (setpoint - outputPosition).abs();
     });
 
     widget.onPosPidChanged?.call(PidResult(kP: _posKP, kI: _posKI, kD: _posKD));
@@ -312,21 +399,44 @@ class _PidPlaygroundState extends State<PidPlayground>
 
   bool _firstPositionTick = true;
 
+  double _positionStepSetpoint() {
+    final config = widget.mechanismConfig;
+    if (config == null) return 1.0;
+
+    return switch (config.type) {
+      MechanismType.arm => 45.0,
+      MechanismType.elevator => config.useImperialUnits ? 12.0 : 0.3,
+      MechanismType.flywheel || MechanismType.simple => 5.0,
+    };
+  }
+
+  double _lowInertiaBacklashSeverity(FeedforwardGains plant) {
+    if (plant.kV <= 1e-9 || plant.kA <= 0) return 0.0;
+    final tau = plant.kA / plant.kV;
+    final severity = (0.3 - tau) / 0.3;
+    return severity.clamp(0.0, 1.0);
+  }
+
+  double _quantize(double value, double quantum) {
+    if (quantum <= 0) return value;
+    return (value / quantum).round() * quantum;
+  }
+
   void _resetToAutoTuned() {
     setState(() {
       if (widget.isPositionMode) {
-        _posKP = widget.initialPosPid?.kP ?? 1.0;
-        _posKI = widget.initialPosPid?.kI ?? 0.0;
-        _posKD = widget.initialPosPid?.kD ?? 0.0;
+        _posKP = _identifiedPosKP;
+        _posKI = _identifiedPosKI;
+        _posKD = _identifiedPosKD;
       } else {
-        _velKP = widget.initialPid?.kP ?? 1.0;
-        _velKI = widget.initialPid?.kI ?? 0.0;
-        _velKD = widget.initialPid?.kD ?? 0.0;
+        _velKP = _identifiedVelKP;
+        _velKI = _identifiedVelKI;
+        _velKD = _identifiedVelKD;
       }
-      _kS = widget.ff.kS;
-      _kV = widget.ff.kV;
-      _kA = widget.ff.kA;
-      _kG = widget.ff.kG;
+      _kS = _identifiedKS;
+      _kV = _identifiedKV;
+      _kA = _identifiedKA;
+      _kG = _identifiedKG;
       // Update slider bounds atomically with the value changes so that
       // value <= max always holds after the rebuild.
       _updateSliderBounds();

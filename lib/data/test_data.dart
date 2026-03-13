@@ -218,32 +218,68 @@ class PidResult {
   /// The position bandwidth (Hz) used during auto-tuning, if applicable.
   final double? positionBandwidthHz;
 
+  /// Allowed closed-loop error (user units).  When the error is less than
+  /// this value the controller stops applying PID output.  Default 0 = no
+  /// dead-band.
+  final double allowedClosedLoopError;
+
+  /// Warnings about automatic gain adjustments (e.g. low-inertia de-rating).
+  final List<String> warnings;
+
   const PidResult({
     this.kP = 0.0,
     this.kI = 0.0,
     this.kD = 0.0,
+    this.allowedClosedLoopError = 0.0,
     this.velocityTimeConstantMs,
     this.positionBandwidthHz,
+    this.warnings = const [],
   });
+
+  PidResult copyWith({
+    double? kP,
+    double? kI,
+    double? kD,
+    double? allowedClosedLoopError,
+    double? velocityTimeConstantMs,
+    double? positionBandwidthHz,
+    List<String>? warnings,
+  }) {
+    return PidResult(
+      kP: kP ?? this.kP,
+      kI: kI ?? this.kI,
+      kD: kD ?? this.kD,
+      allowedClosedLoopError: allowedClosedLoopError ?? this.allowedClosedLoopError,
+      velocityTimeConstantMs: velocityTimeConstantMs ?? this.velocityTimeConstantMs,
+      positionBandwidthHz: positionBandwidthHz ?? this.positionBandwidthHz,
+      warnings: warnings ?? this.warnings,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'kP': kP,
         'kI': kI,
         'kD': kD,
+        if (allowedClosedLoopError != 0.0)
+          'allowedClosedLoopError': allowedClosedLoopError,
         if (velocityTimeConstantMs != null)
           'velocityTimeConstantMs': velocityTimeConstantMs,
         if (positionBandwidthHz != null)
           'positionBandwidthHz': positionBandwidthHz,
+        if (warnings.isNotEmpty) 'warnings': warnings,
       };
 
   factory PidResult.fromJson(Map<String, dynamic> json) => PidResult(
         kP: (json['kP'] as num?)?.toDouble() ?? 0.0,
         kI: (json['kI'] as num?)?.toDouble() ?? 0.0,
         kD: (json['kD'] as num?)?.toDouble() ?? 0.0,
+        allowedClosedLoopError:
+            (json['allowedClosedLoopError'] as num?)?.toDouble() ?? 0.0,
         velocityTimeConstantMs:
             (json['velocityTimeConstantMs'] as num?)?.toDouble(),
         positionBandwidthHz:
             (json['positionBandwidthHz'] as num?)?.toDouble(),
+        warnings: (json['warnings'] as List?)?.cast<String>() ?? const [],
       );
 
   @override

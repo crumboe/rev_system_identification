@@ -114,6 +114,74 @@ class StatusFrame5 {
 }
 
 // ---------------------------------------------------------------------------
+// Fault bit definitions — firmware ≥25.0 (new Status 1, uint32 bitmask)
+//
+// From REVLib 2026.0.4 CANSparkParameters.h / SparkFaults enum.
+// ---------------------------------------------------------------------------
+
+/// Fault bit names for SPARK MAX / Flex controllers.
+///
+/// Bit positions map to the uint32 active_faults and sticky_faults
+/// fields in new-protocol Status Frame 1 (apiClass 0x2E, index 1).
+enum SparkFaultBit {
+  other(0, 'Other'),
+  motorType(1, 'Motor Type'),
+  sensor(2, 'Sensor'),
+  can(3, 'CAN'),
+  temperature(4, 'Temperature'),
+  gateDriver(5, 'Gate Driver'),
+  escEeprom(6, 'ESC EEPROM'),
+  firmware(7, 'Firmware'),
+  brownout(13, 'Brownout'),
+  overcurrent(14, 'Overcurrent'),
+  softLimit(15, 'Soft Limit'),
+  stall(16, 'Stall'),
+  hasReset(17, 'Has Reset');
+
+  final int bit;
+  final String label;
+  const SparkFaultBit(this.bit, this.label);
+
+  /// Whether this fault bit is set in [mask].
+  bool isSet(int mask) => (mask >> bit) & 1 == 1;
+}
+
+/// Decode a fault bitmask into the list of active [SparkFaultBit]s.
+List<SparkFaultBit> decodeFaults(int mask) {
+  if (mask == 0) return const [];
+  return SparkFaultBit.values.where((f) => f.isSet(mask)).toList();
+}
+
+/// New-protocol Status Frame 1: Faults & warnings (apiClass 0x2E, index 1).
+class NewStatusFrame1 {
+  /// Active fault bitmask (uint32) — currently asserted faults.
+  final int activeFaults;
+
+  /// Sticky fault bitmask (uint32) — latched faults since last clear.
+  final int stickyFaults;
+
+  const NewStatusFrame1({
+    required this.activeFaults,
+    required this.stickyFaults,
+  });
+
+  /// Active fault bits decoded to enum values.
+  List<SparkFaultBit> get activeFaultBits => decodeFaults(activeFaults);
+
+  /// Sticky fault bits decoded to enum values.
+  List<SparkFaultBit> get stickyFaultBits => decodeFaults(stickyFaults);
+
+  bool get hasActiveFaults => activeFaults != 0;
+  bool get hasStickyFaults => stickyFaults != 0;
+  bool get hasFaults => hasActiveFaults || hasStickyFaults;
+
+  @override
+  String toString() =>
+      'NewStatus1(active=0x${activeFaults.toRadixString(16)}, '
+      'sticky=0x${stickyFaults.toRadixString(16)})';
+}
+
+// ---------------------------------------------------------------------------
 // Parsers
 // ---------------------------------------------------------------------------
 
@@ -221,6 +289,7 @@ Object? parseStatusFrame(SparkResponse response) {
   if (response.apiClass == kApiClassNewStatus) {
     return switch (response.apiIndex) {
       kNewStatusIndex0 => parseNewStatusFrame0(response.payload),
+      kNewStatusIndex1 => parseNewStatusFrame1(response.payload),
       kNewStatusIndex2 => parseNewStatusFrame2(response.payload),
       _ => null,
     };
@@ -336,5 +405,20 @@ StatusFrame1 parseNewStatusFrame0AsLegacy1(Uint8List payload) {
       outputCurrentAmps: 0.0, // Current is in new Status 0 now
     ),
     status2: StatusFrame2(positionRotations: positionRotations),
+  );
+}
+
+/// Parse new-protocol Status Frame 1 (apiClass 0x2E, index 1).
+///
+/// Byte layout:
+///   Bytes 0–3: uint32_t active_faults  (bitmask of currently active faults)
+///   Bytes 4–7: uint32_t sticky_faults  (bitmask of latched faults)
+NewStatusFrame1 parseNewStatusFrame1(Uint8List payload) {
+  final bd = ByteData.sublistView(payload);
+  final activeFaults = bd.getUint32(0, Endian.little);
+  final stickyFaults = bd.getUint32(4, Endian.little);
+  return NewStatusFrame1(
+    activeFaults: activeFaults,
+    stickyFaults: stickyFaults,
   );
 }

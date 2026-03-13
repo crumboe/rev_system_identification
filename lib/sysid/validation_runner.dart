@@ -331,6 +331,8 @@ class ValidationRunner {
   bool _isRunning = false;
 
   bool get isRunning => _isRunning;
+  double? _filteredCurrentAmps;
+  double? _lastRawCurrentAmps;
 
   ValidationRunner({
     required this.device,
@@ -351,6 +353,22 @@ class ValidationRunner {
       device.control.stop();
       device.heartbeat.disable();
     } catch (_) {}
+  }
+
+  double _filterCurrentForDisplay(double rawAmps) {
+    if (device.isSimulated) return rawAmps;
+
+    var sample = rawAmps;
+    if (sample <= 0.01 && (_lastRawCurrentAmps ?? 0.0) > 0.5) {
+      sample = _lastRawCurrentAmps!;
+    }
+    _lastRawCurrentAmps = sample;
+
+    const alpha = 0.20;
+    final prev = _filteredCurrentAmps;
+    final filtered = prev == null ? sample : (alpha * sample + (1 - alpha) * prev);
+    _filteredCurrentAmps = filtered;
+    return filtered;
   }
 
   // -------------------------------------------------------------------------
@@ -382,6 +400,8 @@ class ValidationRunner {
       d: pid.kD,
       f: 0.0,
     );
+    await device.parameters.setAllowedClosedLoopError0(
+        pid.allowedClosedLoopError);
 
     // Brief pause between PID and FF writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -434,6 +454,8 @@ class ValidationRunner {
       d: pid.kD,
       f: 0.0,
     );
+    await device.parameters.setAllowedClosedLoopError0(
+        pid.allowedClosedLoopError);
 
     // Brief pause between PID and FF writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -581,12 +603,17 @@ class ValidationRunner {
     final stopwatch = Stopwatch();
     bool completed = false;
     String? error;
+    _filteredCurrentAmps = null;
+    _lastRawCurrentAmps = null;
 
     final totalDuration = params.holdDuration + params.settleDuration;
     // MAXMotion tests run until manually stopped (no time limit).
     final untimed = mode == ValidationMode.maxMotionPosition;
 
     try {
+      // Enable all periodic status frames so we get full telemetry.
+      await device.parameters.enableAllStatusFrames();
+
       // Prepare controller settings for this test.
       if (!useStoredControllerGains) {
         // Write the appropriate gains to the controller for this test type.
@@ -689,7 +716,7 @@ class ValidationRunner {
             voltage: recordedVoltage,
             velocity: velocity,
             position: position,
-            current: status1.outputCurrentAmps,
+            current: _filterCurrentForDisplay(status1.outputCurrentAmps),
           );
           data.add(dp);
           setpoints.add(setpoint);

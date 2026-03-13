@@ -221,6 +221,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   ff: _ff,
                   mode: _PidMode.velocity,
                   config: config,
+                  onAllowedErrorChanged: (v) {
+                    setState(() => _velPid = _velPid!.copyWith(allowedClosedLoopError: v));
+                    ref.read(pidResultProvider.notifier).state = _velPid;
+                  },
                 )),
               const SizedBox(width: 12),
               if (_posPid != null)
@@ -230,6 +234,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   ff: _ff,
                   mode: _PidMode.position,
                   config: config,
+                  onAllowedErrorChanged: (v) {
+                    setState(() => _posPid = _posPid!.copyWith(allowedClosedLoopError: v));
+                    ref.read(posPidResultProvider.notifier).state = _posPid;
+                  },
                 )),
             ],
           ),
@@ -713,6 +721,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             d: _velPid!.kD,
             f: 0.0,
           );
+          await device.parameters.setAllowedClosedLoopError0(
+              _velPid!.allowedClosedLoopError);
         } on ParameterWriteException catch (e) {
           errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
         }
@@ -725,6 +735,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             d: _posPid!.kD,
             f: 0.0,
           );
+          await device.parameters.setAllowedClosedLoopError0(
+              _posPid!.allowedClosedLoopError);
         } on ParameterWriteException catch (e) {
           errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
         }
@@ -760,6 +772,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       } on ParameterWriteException catch (e) {
         errors.add('FF param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
       }
+
+      // Disable extra status frames before persisting to reduce CAN traffic
+      // on the real robot — keep only Status 0 force-enabled.
+      await device.parameters.disableExtraStatusFrames();
 
       await device.parameters.burnFlash(heartbeat: device.heartbeat);
 
@@ -1440,6 +1456,7 @@ class _PidCard extends StatefulWidget {
   final FeedforwardGains? ff;
   final _PidMode mode;
   final MechanismConfig? config;
+  final ValueChanged<double>? onAllowedErrorChanged;
 
   const _PidCard({
     required this.title,
@@ -1447,6 +1464,7 @@ class _PidCard extends StatefulWidget {
     this.ff,
     this.mode = _PidMode.velocity,
     this.config,
+    this.onAllowedErrorChanged,
   });
 
   @override
@@ -1455,6 +1473,35 @@ class _PidCard extends StatefulWidget {
 
 class _PidCardState extends State<_PidCard> {
   bool _showExplanation = false;
+  late TextEditingController _allowedErrorCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _allowedErrorCtrl = TextEditingController(
+      text: widget.pid.allowedClosedLoopError == 0.0
+          ? '0'
+          : widget.pid.allowedClosedLoopError.toString(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _PidCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.pid.allowedClosedLoopError !=
+        widget.pid.allowedClosedLoopError) {
+      _allowedErrorCtrl.text =
+          widget.pid.allowedClosedLoopError == 0.0
+              ? '0'
+              : widget.pid.allowedClosedLoopError.toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _allowedErrorCtrl.dispose();
+    super.dispose();
+  }
 
   String get _pidUnitNote {
     final cfg = widget.config;
@@ -1498,10 +1545,37 @@ class _PidCardState extends State<_PidCard> {
             ],
           ),
           const SizedBox(height: 8),
+          // Low-inertia or other auto-tuning warnings
+          for (final warning in widget.pid.warnings) ...[
+            InfoBar(
+              title: Text(warning),
+              severity: InfoBarSeverity.warning,
+              isLong: true,
+            ),
+            const SizedBox(height: 6),
+          ],
           _GainRow('kP', widget.pid.kP.toStringAsFixed(6),
             tooltip: _pidUnitNote),
           _GainRow('kI', widget.pid.kI.toStringAsFixed(6)),
           _GainRow('kD', widget.pid.kD.toStringAsFixed(6)),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: 260,
+            child: InfoLabel(
+              label: 'Allowed Closed-Loop Error'
+                  '${widget.config != null ? ' (${widget.mode == _PidMode.velocity ? widget.config!.velocityUnit : widget.config!.positionUnit})' : ''}',
+              child: TextBox(
+                controller: _allowedErrorCtrl,
+                placeholder: '0 = no dead-band',
+                onChanged: (v) {
+                  final val = double.tryParse(v);
+                  if (val != null && val >= 0) {
+                    widget.onAllowedErrorChanged?.call(val);
+                  }
+                },
+              ),
+            ),
+          ),
           const SizedBox(height: 4),
           Text(
             'These are user-unit gains — use them directly in WPILib\n'

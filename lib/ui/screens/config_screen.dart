@@ -59,22 +59,19 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   /// populate the mechanism config state so the UI matches the device.
   Future<void> _loadConfigFromDevice(SparkDevice device) async {
     final notifier = ref.read(mechanismConfigProvider.notifier);
+    const readDelay = Duration(milliseconds: 50);
     try {
-      final results = await Future.wait<double>([
-        device.parameters.getParameter(kParamMotorType),
-        device.parameters.getParameter(kParamMotorInverted),
-        device.parameters.getParameter(kParamSmartCurrentLimit),
-        device.parameters.getParameter(kParamClosedLoopControlSensor),
-        device.parameters.getPositionConversionFactor(),
-        device.parameters.getVelocityConversionFactor(),
-      ]);
-
-      final motorType = results[0]; // 0 = brushed, 1 = brushless
-      final inverted = results[1]; // 0 = normal, 1 = inverted
-      final currentLimit = results[2];
-      final sensorVal = results[3]; // 0 = primary, 2 = absolute
-      final pcf = results[4];
-      final vcf = results[5];
+      final motorType = await device.parameters.getParameter(kParamMotorType);
+      await Future<void>.delayed(readDelay);
+      final inverted = await device.parameters.getParameter(kParamMotorInverted);
+      await Future<void>.delayed(readDelay);
+      final currentLimit = await device.parameters.getParameter(kParamSmartCurrentLimit);
+      await Future<void>.delayed(readDelay);
+      final sensorVal = await device.parameters.getParameter(kParamClosedLoopControlSensor);
+      await Future<void>.delayed(readDelay);
+      final pcf = await device.parameters.getPositionConversionFactor();
+      await Future<void>.delayed(readDelay);
+      final vcf = await device.parameters.getVelocityConversionFactor();
 
       notifier.setIsBrushless(motorType >= 0.5);
       notifier.setMotorInverted(inverted >= 0.5);

@@ -27,6 +27,7 @@ import '../../simulation/simulated_device.dart';
 import '../../sysid/validation_runner.dart';
 import 'arm_visual.dart';
 import 'elevator_visual.dart';
+import 'flywheel_visual.dart';
 import 'jog_panel.dart';
 
 /// Shows [SimulatedValidationDialog] as a modal overlay.
@@ -575,12 +576,27 @@ class _SimulatedValidationDialogState
       case MechanismType.flywheel:
       case MechanismType.simple:
         if (device == null) return const SizedBox.shrink();
-        return JogPanel(
-          device: device,
-          config: config,
-          enabled: !_isRunning,
-          onPositionChanged: (pos) =>
-              setState(() => _currentPosition = pos),
+        return Column(
+          children: [
+            Expanded(
+              child: FlywheelVisual(
+                currentRotations: _currentPosition,
+                isDraggable: !_isRunning,
+                onRotationChanged: (rot) => _dragPosition(device, rot),
+              ),
+            ),
+            const SizedBox(height: 4),
+            SizedBox(
+              height: 160,
+              child: JogPanel(
+                device: device,
+                config: config,
+                enabled: !_isRunning,
+                onPositionChanged: (pos) =>
+                    setState(() => _currentPosition = pos),
+              ),
+            ),
+          ],
         );
     }
   }

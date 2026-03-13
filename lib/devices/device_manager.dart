@@ -16,6 +16,7 @@ import '../simulation/simulated_physics.dart';
 import '../simulation/flywheel_physics.dart';
 import '../simulation/arm_physics.dart';
 import '../simulation/elevator_physics.dart';
+import '../simulation/project_physics_factory.dart';
 import '../simulation/simulated_device.dart';
 import '../data/test_data.dart';
 import '../mechanisms/mechanism.dart';
@@ -395,30 +396,10 @@ class DeviceManager {
     required FeedforwardGains gains,
     required MechanismConfig config,
   }) async {
-    const noiseLevel = 0.005;
-    final type = config.type;
-    final SimulatedPhysics physics = switch (type) {
-      MechanismType.arm => ArmPhysics(
-          kS: gains.kS,
-          kV: gains.kV,
-          kA: gains.kA > 0 ? gains.kA : 0.002,
-          kG: gains.kG,
-          noiseLevel: noiseLevel,
-        ),
-      MechanismType.elevator => ElevatorPhysics(
-          kS: gains.kS,
-          kV: gains.kV,
-          kA: gains.kA > 0 ? gains.kA : 0.015,
-          kG: gains.kG,
-          noiseLevel: noiseLevel,
-        ),
-      MechanismType.flywheel || MechanismType.simple => FlywheelPhysics(
-          kS: gains.kS,
-          kV: gains.kV,
-          kA: gains.kA > 0 ? gains.kA : 0.003,
-          noiseLevel: noiseLevel,
-        ),
-    };
+    final SimulatedPhysics physics = createProjectBackedPhysics(
+      gains: gains,
+      config: config,
+    );
 
     final connection = SimulatedSparkConnection(physics);
     await connection.open();
