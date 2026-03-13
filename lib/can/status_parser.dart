@@ -235,12 +235,22 @@ Object? parseStatusFrame(SparkResponse response) {
 
 /// Parse new-protocol Status Frame 0 (apiClass 0x2E, index 0).
 ///
-/// Byte layout (from CANSparkFrames.h `spark_status_0_t`):
-///   Bytes 0–1: int16_t applied_output (scale ≈ 3.082e−5 → [-1, +1])
-///   Bytes 2–3: uint16_t voltage       (scale ≈ 0.00733 → Volts)
-///   Bytes 4–5: uint16_t current       (250 counts per amp)
-///   Byte  6:   uint8_t  motor_temperature (°C)
-///   Byte  7:   packed flags (limit switches, inverted, model, etc.)
+/// Actual byte layout verified against live SLCAN captures
+/// (modifForStatus.txt, firmware 26.x, API class 0x2E):
+///
+///   Bytes 0–1: int16_t applied_output  scale 3.082369457075716e-5 → [-1, +1]
+///   Bytes 2–4: 12-bit packed voltage + current (3 bytes, two 12-bit fields)
+///     voltage_raw = payload[2] | ((payload[3] & 0x0F) << 8)   (12 bits)
+///     current_raw = ((payload[3] >> 4) | (payload[4] << 4)) & 0x0FFF  (12 bits)
+///     bus_voltage   = voltage_raw × (2/273)      → Volts  (full-scale 30 V)
+///     output_current = current_raw × (16/250)    → Amps   (full-scale ≈ 262 A)
+///   Byte  5:   uint8_t  motor_temperature         → °C
+///   Bytes 6–7: packed status flags
+///
+/// NOTE: The old comment claimed uint16 voltage at bytes 2-3 and uint16 current
+/// at bytes 4-5.  That layout gives valid voltage at idle (when payload[3] has
+/// a zero high nibble) but produces wrong current (≈25 A at idle instead of 0).
+/// Confirmed correct layout from captured data where idle current_raw = 0.
 ///
 /// This replaces the legacy Status 0 + Status 1 combined, since the new
 /// Status 0 contains voltage, current, and temperature that had been in
@@ -248,10 +258,11 @@ Object? parseStatusFrame(SparkResponse response) {
 StatusFrame0 parseNewStatusFrame0AsLegacy0(Uint8List payload) {
   final bd = ByteData.sublistView(payload);
   final rawOutput = bd.getInt16(0, Endian.little);
-  // Scale per header: 3.082369457075716e-05, but ≈ 1/32443 ≈ 1/32767 range.
+  // Scale per header: 3.082369457075716e-05.
   final appliedOutput = rawOutput * 3.082369457075716e-05;
 
   // Byte 7 packed flags — we map to legacy "flags" field.
+  // Byte 6 contains a hardware-model indicator (typically 0x80 for SPARK MAX).
   final flags = payload[7];
 
   return StatusFrame0(
@@ -265,15 +276,23 @@ StatusFrame0 parseNewStatusFrame0AsLegacy0(Uint8List payload) {
 /// Parse new-protocol Status Frame 0 and extract the Status 1-equivalent
 /// data (voltage, current, temperature) that used to live in legacy Status 1.
 StatusFrame1 parseNewStatusFrame0AsLegacy1(Uint8List payload) {
-  final bd = ByteData.sublistView(payload);
-  final rawVoltage = bd.getUint16(2, Endian.little);
-  final rawCurrent = bd.getUint16(4, Endian.little);
-  final temperatureC = payload[6];
+  // 12-bit packed voltage: lower 8 bits from byte 2, upper 4 from low nibble of byte 3.
+  final rawVoltage = (payload[2] | ((payload[3] & 0x0F) << 8));
 
-  // Scale factors from CANSparkFrames.h:
+  // 12-bit packed current: high nibble of byte 3 concatenated with byte 4.
+  final rawCurrent = ((payload[3] >> 4) | (payload[4] << 4)) & 0x0FFF;
+
+  // Temperature is at byte 5 (not byte 6 as previously commented).
+  final temperatureC = payload[5];
+
+  // Voltage scale: 2/273 ≈ 0.00733 V/count — full-scale 30 V for 12-bit.
   final busVoltage = rawVoltage * 0.0073260073260073;
-  // Empirical HC2/new-status decode: current is reported in 1/250 A counts.
-  final outputCurrentAmps = rawCurrent / 250.0;
+
+  // Current scale: 16/250 = 0.064 A/count.
+  // Derived from the documented 16-bit encoding (1/250 A per count) compressed
+  // to 12 bits: 12-bit covers 1/16 of the 16-bit range, so scale × 16.
+  // Full-scale ≈ 262 A at 12-bit max (4095 counts).
+  final outputCurrentAmps = rawCurrent * (16.0 / 250.0);
 
   return StatusFrame1(
     velocityRpm: 0.0,  // Velocity is now in new Status 2
