@@ -327,8 +327,10 @@ class _PidPlaygroundState extends State<PidPlayground>
       _kV = widget.ff.kV;
       _kA = widget.ff.kA;
       _kG = widget.ff.kG;
+      // Update slider bounds atomically with the value changes so that
+      // value <= max always holds after the rebuild.
+      _updateSliderBounds();
     });
-    _updateSliderBounds();
     _runSimulation();
   }
 

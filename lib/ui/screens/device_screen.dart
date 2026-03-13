@@ -167,10 +167,24 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     }
   }
 
+  /// Disconnect a project-loaded simulated device WITHOUT clearing gains or
+  /// test data, so the user can immediately substitute a real controller.
+  void _substituteWithRealController(SparkDevice device) {
+    final dm = ref.read(deviceManagerProvider);
+    dm.disconnect(device);
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final dm = ref.watch(deviceManagerProvider);
     final devices = dm.devices;
+    final ff = ref.watch(feedforwardGainsProvider);
+
+    // Detect a simulated device loaded from a saved project.
+    final projectSimDevice = devices.where(
+      (d) => d.isSimulated && d.label.endsWith('(Project)'),
+    ).firstOrNull;
 
     return ScaffoldPage.scrollable(
       header: const PageHeader(title: Text('Device Setup')),
@@ -284,7 +298,24 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             ),
             severity: InfoBarSeverity.info,
           )
-        else
+        else ...[
+          // Banner shown when a project-loaded simulated device is active.
+          if (projectSimDevice != null && ff != null) ...[
+            InfoBar(
+              title: const Text('Using simulated model from loaded project'),
+              content: const Text(
+                'The physics are grounded in the identified feedforward gains. '
+                'Connect a real controller below to substitute it — '
+                'all project data (gains, test runs) will be preserved.',
+              ),
+              severity: InfoBarSeverity.warning,
+              action: Button(
+                onPressed: () => _substituteWithRealController(projectSimDevice),
+                child: const Text('Disconnect Simulation'),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           ...devices.expand((device) => [
                 _DeviceCard(
                   device: device,
@@ -310,6 +341,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   },
                 ),
               ]),
+        ],
 
         const SizedBox(height: 24),
 

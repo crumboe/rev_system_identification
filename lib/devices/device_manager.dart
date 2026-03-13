@@ -17,6 +17,8 @@ import '../simulation/flywheel_physics.dart';
 import '../simulation/arm_physics.dart';
 import '../simulation/elevator_physics.dart';
 import '../simulation/simulated_device.dart';
+import '../data/test_data.dart';
+import '../mechanisms/mechanism.dart';
 
 /// Information about a discovered serial port that may be a SPARK controller.
 class PortInfo {
@@ -370,6 +372,75 @@ class DeviceManager {
       parameters: parameters,
       control: control,
       label: physics.label,
+      canId: 42,
+      isSimulated: true,
+    );
+    device.canIdReadSucceeded = true;
+
+    _devices.add(device);
+    _notifyChanged();
+    return device;
+  }
+
+  /// Connect a simulated device whose physics are grounded in [gains].
+  ///
+  /// Used when loading a saved project: the simulated plant mirrors the
+  /// real mechanism identified during a previous session.  The device is
+  /// registered in [_devices] like any other connection so the full app
+  /// workflow (test, validation, PID playground) operates normally.
+  ///
+  /// Conversion factors from [config] are written to the simulated
+  /// parameter store immediately so status frames use user units.
+  Future<SparkDevice> connectSimulatedFromProject({
+    required FeedforwardGains gains,
+    required MechanismConfig config,
+  }) async {
+    const noiseLevel = 0.005;
+    final type = config.type;
+    final SimulatedPhysics physics = switch (type) {
+      MechanismType.arm => ArmPhysics(
+          kS: gains.kS,
+          kV: gains.kV,
+          kA: gains.kA > 0 ? gains.kA : 0.002,
+          kG: gains.kG,
+          noiseLevel: noiseLevel,
+        ),
+      MechanismType.elevator => ElevatorPhysics(
+          kS: gains.kS,
+          kV: gains.kV,
+          kA: gains.kA > 0 ? gains.kA : 0.015,
+          kG: gains.kG,
+          noiseLevel: noiseLevel,
+        ),
+      MechanismType.flywheel || MechanismType.simple => FlywheelPhysics(
+          kS: gains.kS,
+          kV: gains.kV,
+          kA: gains.kA > 0 ? gains.kA : 0.003,
+          noiseLevel: noiseLevel,
+        ),
+    };
+
+    final connection = SimulatedSparkConnection(physics);
+    await connection.open();
+
+    final heartbeat = SimulatedHeartbeatManager();
+    final parameters = SimulatedParameterApi();
+    final control = SimulatedControlApi(physics, parameters);
+
+    final pidFf = SimulatedPidFfController(parameters, physics);
+    control.attachPidFfController(pidFf);
+    connection.controlApi = control;
+    connection.paramApi = parameters;
+
+    parameters.setPositionConversionFactor(config.positionConversionFactor);
+    parameters.setVelocityConversionFactor(config.velocityConversionFactor);
+
+    final device = SparkDevice(
+      connection: connection,
+      heartbeat: heartbeat,
+      parameters: parameters,
+      control: control,
+      label: '${physics.label} (Project)',
       canId: 42,
       isSimulated: true,
     );

@@ -69,19 +69,32 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.read(pidResultProvider.notifier).state = project.velocityPid;
     ref.read(posPidResultProvider.notifier).state = project.positionPid;
 
+    // If identified gains are present, auto-connect a simulated device so
+    // the full app workflow is available without real hardware.
+    if (project.feedforward != null) {
+      final dm = ref.read(deviceManagerProvider);
+      dm.disconnectAll(); // remove any previously connected device
+      await dm.connectSimulatedFromProject(
+        gains: project.feedforward!,
+        config: project.config,
+      );
+    }
+
     if (mounted) {
       final name = project.config.systemName.isNotEmpty
           ? project.config.systemName
           : 'Untitled';
       final runCount = project.testRuns.length;
+      final hasGains = project.feedforward != null;
       await displayInfoBar(context, builder: (context, close) {
         return InfoBar(
           title: Text('Loaded "$name"'),
           content: Text(
             '$runCount test run${runCount == 1 ? '' : 's'}'
-            '${project.feedforward != null ? ', feedforward gains' : ''}'
+            '${hasGains ? ', feedforward gains' : ''}'
             '${project.velocityPid != null ? ', velocity PID' : ''}'
-            '${project.positionPid != null ? ', position PID' : ''}',
+            '${project.positionPid != null ? ', position PID' : ''}'
+            '${hasGains ? ' — simulated device connected' : ''}',
           ),
           severity: InfoBarSeverity.success,
           action: IconButton(

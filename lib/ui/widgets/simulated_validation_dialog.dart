@@ -100,6 +100,7 @@ class _SimulatedValidationDialogState
 
   double _currentPosition = 0.0;
   Timer? _positionPollTimer;
+  late TextEditingController _setpointCtrl;
 
   // -------------------------------------------------------------------------
   // Lifecycle
@@ -108,6 +109,16 @@ class _SimulatedValidationDialogState
   @override
   void initState() {
     super.initState();
+    // Pre-populate the setpoint field with mechanism-appropriate defaults.
+    final defaults = ValidationParams.forMechanism(
+      widget.mechanismConfig.type,
+      imperial: widget.mechanismConfig.useImperialUnits,
+    );
+    final defaultSetpoint = widget.isPositionMode
+        ? defaults.positionSetpoint
+        : defaults.velocitySetpoint;
+    _setpointCtrl =
+        TextEditingController(text: defaultSetpoint.toString());
     _initDevice();
   }
 
@@ -188,6 +199,7 @@ class _SimulatedValidationDialogState
     _runner?.abort();
     // Close the simulated connection to stop its internal timer.
     _device?.connection.close();
+    _setpointCtrl.dispose();
     super.dispose();
   }
 
@@ -224,10 +236,18 @@ class _SimulatedValidationDialogState
       );
       _runner = runner;
 
-      final params = ValidationParams.forMechanism(
+      final defaults = ValidationParams.forMechanism(
         widget.mechanismConfig.type,
         imperial: widget.mechanismConfig.useImperialUnits,
       );
+      final userSetpoint =
+          double.tryParse(_setpointCtrl.text.trim()) ??
+              (widget.isPositionMode
+                  ? defaults.positionSetpoint
+                  : defaults.velocitySetpoint);
+      final params = widget.isPositionMode
+          ? defaults.copyWith(positionSetpoint: userSetpoint)
+          : defaults.copyWith(velocitySetpoint: userSetpoint);
 
       final ValidationResult result;
       if (widget.isPositionMode) {
@@ -428,9 +448,25 @@ class _SimulatedValidationDialogState
   }
 
   Widget _buildControlsRow(BuildContext context) {
+    final config = widget.mechanismConfig;
+    final setpointUnit =
+        widget.isPositionMode ? config.positionUnit : config.velocityUnit;
     final canRun = _device != null && !_isRunning;
     return Row(
       children: [
+        // Setpoint input
+        SizedBox(
+          width: 160,
+          child: InfoLabel(
+            label: 'Setpoint ($setpointUnit)',
+            child: TextBox(
+              controller: _setpointCtrl,
+              enabled: !_isRunning,
+              placeholder: setpointUnit,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
         FilledButton(
           onPressed: canRun ? _runTest : null,
           child: Row(
