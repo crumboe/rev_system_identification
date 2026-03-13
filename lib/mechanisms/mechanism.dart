@@ -163,6 +163,16 @@ class MechanismConfig {
   /// Which feedback sensor the closed-loop controller uses.
   final FeedbackSensor feedbackSensor;
 
+  /// Optional simulated arm mass (lb) used to scale simulation inertia.
+  ///
+  /// When null, simulation falls back to identified-gain heuristics.
+  final double? simulatedArmMassLbs;
+
+  /// Optional simulated arm length (in) used to scale simulation inertia.
+  ///
+  /// When null, simulation falls back to identified-gain heuristics.
+  final double? simulatedArmLengthIn;
+
   /// Position unit for the current config (respects [useImperialUnits]).
   String get positionUnit => useImperialUnits
       ? type.positionUnitImperial
@@ -185,6 +195,8 @@ class MechanismConfig {
     this.isBrushless = true,
     this.currentLimitAmps = 40.0,
     this.feedbackSensor = FeedbackSensor.primaryEncoder,
+    this.simulatedArmMassLbs,
+    this.simulatedArmLengthIn,
   });
 
   Map<String, dynamic> toJson() => {
@@ -199,6 +211,10 @@ class MechanismConfig {
         'isBrushless': isBrushless,
         'currentLimitAmps': currentLimitAmps,
         'feedbackSensor': feedbackSensor.name,
+        if (simulatedArmMassLbs != null)
+          'simulatedArmMassLbs': simulatedArmMassLbs,
+        if (simulatedArmLengthIn != null)
+          'simulatedArmLengthIn': simulatedArmLengthIn,
       };
 
   factory MechanismConfig.fromJson(Map<String, dynamic> json) =>
@@ -221,6 +237,10 @@ class MechanismConfig {
         feedbackSensor: json['feedbackSensor'] != null
             ? FeedbackSensor.values.byName(json['feedbackSensor'] as String)
             : FeedbackSensor.primaryEncoder,
+        simulatedArmMassLbs:
+          (json['simulatedArmMassLbs'] as num?)?.toDouble(),
+        simulatedArmLengthIn:
+          (json['simulatedArmLengthIn'] as num?)?.toDouble(),
       );
 
   /// Whether soft limits are fully configured.
@@ -264,6 +284,8 @@ class MechanismConfig {
     bool? isBrushless,
     double? currentLimitAmps,
     FeedbackSensor? feedbackSensor,
+    double? Function()? simulatedArmMassLbs,
+    double? Function()? simulatedArmLengthIn,
   }) {
     return MechanismConfig(
       type: type ?? this.type,
@@ -279,6 +301,12 @@ class MechanismConfig {
       isBrushless: isBrushless ?? this.isBrushless,
       currentLimitAmps: currentLimitAmps ?? this.currentLimitAmps,
       feedbackSensor: feedbackSensor ?? this.feedbackSensor,
+      simulatedArmMassLbs: simulatedArmMassLbs != null
+          ? simulatedArmMassLbs()
+          : this.simulatedArmMassLbs,
+      simulatedArmLengthIn: simulatedArmLengthIn != null
+          ? simulatedArmLengthIn()
+          : this.simulatedArmLengthIn,
     );
   }
 }

@@ -22,18 +22,33 @@ SimulatedPhysics createProjectBackedPhysics({
   final type = config.type;
   final vcf = config.velocityConversionFactor;
   final pcf = config.positionConversionFactor;
-  final backlashSeverity = _lowInertiaBacklashSeverity(gains);
+  final armScale = _armScaleFromConfig(config);
+  final adjustedForSeverity = type == MechanismType.arm && armScale != null
+      ? FeedforwardGains(
+          kS: gains.kS,
+          kV: gains.kV,
+          kA: gains.kA * armScale.inertiaScale,
+          kG: gains.kG * armScale.gravityScale,
+        )
+      : gains;
+  final backlashSeverity = _lowInertiaBacklashSeverity(adjustedForSeverity);
 
   return switch (type) {
     MechanismType.arm => () {
         // Arm physics integrates in deg/s. noisyVelocityRpm = degPerS / 6.
         final scale = (vcf > 0) ? vcf / 6.0 : 1.0;
+        final kSScale = armScale?.kSScale ?? 1.0;
+        final kAScale = armScale?.inertiaScale ?? 1.0;
+        final kGScale = armScale?.gravityScale ?? 1.0;
+        final armBacklashSeverity = backlashSeverity * 0.35;
         return ArmPhysics(
-          kS: gains.kS,
+          kS: gains.kS * kSScale,
           kV: gains.kV * scale,
-          kA: (gains.kA > 0 ? gains.kA : 0.002) * scale,
-          kG: gains.kG,
-          backlashDeg: 2.0 * backlashSeverity,
+          kA: (gains.kA > 0 ? gains.kA : 0.002) * scale * kAScale,
+          kG: gains.kG * kGScale,
+          inertiaMultiplier: 1.0,
+          degreesPerRotation: pcf > 0 ? pcf : 360.0,
+          backlashDeg: 2.0 * armBacklashSeverity,
           noiseLevel: noiseLevel,
         );
       }(),
@@ -66,6 +81,34 @@ SimulatedPhysics createProjectBackedPhysics({
         );
       }(),
   };
+}
+
+({double inertiaScale, double gravityScale, double kSScale})?
+    _armScaleFromConfig(MechanismConfig config) {
+  final massLbs = config.simulatedArmMassLbs;
+  final lengthIn = config.simulatedArmLengthIn;
+  if (massLbs != null && lengthIn != null && massLbs > 0 && lengthIn > 0) {
+    // Reference profile: 10 lb, 20 in arm => scales of 1.0.
+    final massRatio = massLbs / 10.0;
+    final lengthRatio = lengthIn / 20.0;
+
+    // I scales with m * L^2 for a simple arm model.
+    final inertiaScale =
+        (massRatio * lengthRatio * lengthRatio).clamp(0.2, 12.0);
+
+    // Gravity torque scales with m * L.
+    final gravityScale = (massRatio * lengthRatio).clamp(0.2, 12.0);
+
+    // Coulomb friction typically changes less than inertia/gravity.
+    final kSScale = (0.85 + 0.15 * gravityScale).clamp(0.6, 2.0);
+
+    return (
+      inertiaScale: inertiaScale,
+      gravityScale: gravityScale,
+      kSScale: kSScale,
+    );
+  }
+  return null;
 }
 
 double _lowInertiaBacklashSeverity(FeedforwardGains gains) {

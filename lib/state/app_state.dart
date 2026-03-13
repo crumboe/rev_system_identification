@@ -97,6 +97,21 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
     state = state.copyWith(feedbackSensor: sensor);
   }
 
+  void setSimulatedArmMassLbs(double? massLbs) {
+    state = state.copyWith(simulatedArmMassLbs: () => massLbs);
+  }
+
+  void setSimulatedArmLengthIn(double? lengthIn) {
+    state = state.copyWith(simulatedArmLengthIn: () => lengthIn);
+  }
+
+  void setSimulatedArmSpec({double? massLbs, double? lengthIn}) {
+    state = state.copyWith(
+      simulatedArmMassLbs: () => massLbs,
+      simulatedArmLengthIn: () => lengthIn,
+    );
+  }
+
   void setConfig(MechanismConfig config) {
     state = config;
   }

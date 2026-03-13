@@ -37,6 +37,19 @@ class ArmPhysics implements SimulatedPhysics {
 
   final double currentPerVolt;
 
+  /// Multiplies effective inertia in simulation by scaling kA.
+  ///
+  /// Values > 1 make the arm feel heavier (slower acceleration for the same
+  /// voltage). Values < 1 make it feel lighter.
+  final double inertiaMultiplier;
+
+  /// Degrees of arm output motion per one motor rotation.
+  ///
+  /// This should match the controller position conversion factor so that
+  /// status-frame user units and simulated plant units stay consistent,
+  /// including geared arms.
+  final double degreesPerRotation;
+
   /// Soft limits in degrees.
   final double minAngleDeg;
   final double maxAngleDeg;
@@ -74,6 +87,8 @@ class ArmPhysics implements SimulatedPhysics {
     this.kG = 0.80,
     this.nominalVoltage = 12.0,
     this.currentPerVolt = 3.0,
+    this.inertiaMultiplier = 1.0,
+    this.degreesPerRotation = 360.0,
     this.noiseLevel = 0.015,
     this.minAngleDeg = -45.0,
     this.maxAngleDeg = 90.0,
@@ -93,7 +108,7 @@ class ArmPhysics implements SimulatedPhysics {
 
   @override
   void setPositionRotations(double rotations) {
-    _angleDeg = rotations * 360.0;
+    _angleDeg = rotations * degreesPerRotation;
     _angleDeg = _angleDeg.clamp(minAngleDeg, maxAngleDeg);
     _outputAngleDeg = _angleDeg;
     _backlashRemainingDeg = 0.0;
@@ -122,7 +137,8 @@ class ArmPhysics implements SimulatedPhysics {
     // α = (V - kS·sign(ω) - kG·cos(θ) - kV·ω) / kA
     final netVoltage =
         commandedVoltage - frictionTerm - gravityVoltage - kV * _velocityDegPerS;
-    final accel = kA > 0 ? netVoltage / kA : 0.0;
+    final effectiveKA = kA * (inertiaMultiplier > 0 ? inertiaMultiplier : 1.0);
+    final accel = effectiveKA > 0 ? netVoltage / effectiveKA : 0.0;
 
     _velocityDegPerS += accel * dtSeconds;
 
@@ -162,10 +178,10 @@ class ArmPhysics implements SimulatedPhysics {
   // -- Sensor outputs (in encoder-native units: rotations & RPM) -----------
 
   /// Convert internal deg/s to RPM for the encoder.
-  double get _velocityRpm => _velocityDegPerS / 360.0 * 60.0;
+  double get _velocityRpm => _velocityDegPerS / degreesPerRotation * 60.0;
 
   /// Convert internal degrees to rotations for the encoder.
-  double get _positionRotations => _outputAngleDeg / 360.0;
+  double get _positionRotations => _outputAngleDeg / degreesPerRotation;
 
   @override
   double get noisyVelocityRpm {

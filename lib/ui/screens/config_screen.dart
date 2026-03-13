@@ -8,6 +8,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../can/spark_protocol.dart';
+import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
@@ -28,10 +29,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   double _currentPosition = 0.0;
   Timer? _positionTimer;
   bool _didLoadFromDevice = false;
+  late TextEditingController _armSpecCtrl;
 
   @override
   void initState() {
     super.initState();
+    _armSpecCtrl = TextEditingController();
     _positionTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => _pollPosition(),
@@ -42,7 +45,183 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
   @override
   void dispose() {
     _positionTimer?.cancel();
+    _armSpecCtrl.dispose();
     super.dispose();
+  }
+
+  ({double massLbs, double lengthIn})? _parseArmSpec(String input) {
+    final text = input.toLowerCase();
+    final numberRegex = RegExp(r'[-+]?\d*\.?\d+');
+
+    final lbRegex = RegExp(r'([-+]?\d*\.?\d+)\s*(lb|lbs|pound|pounds)');
+    final inRegex = RegExp(r'([-+]?\d*\.?\d+)\s*(in|inch|inches)');
+
+    double? massLbs;
+    double? lengthIn;
+
+    final lbMatch = lbRegex.firstMatch(text);
+    if (lbMatch != null) {
+      massLbs = double.tryParse(lbMatch.group(1)!);
+    }
+
+    final inMatch = inRegex.firstMatch(text);
+    if (inMatch != null) {
+      lengthIn = double.tryParse(inMatch.group(1)!);
+    }
+
+    if (massLbs == null || lengthIn == null) {
+      final nums = numberRegex
+          .allMatches(text)
+          .map((m) => double.tryParse(m.group(0)!))
+          .whereType<double>()
+          .toList();
+      if (nums.length >= 2) {
+        massLbs ??= nums[0];
+        lengthIn ??= nums[1];
+      }
+    }
+
+    if (massLbs == null || lengthIn == null) return null;
+    if (massLbs <= 0 || lengthIn <= 0) return null;
+    return (massLbs: massLbs, lengthIn: lengthIn);
+  }
+
+  ({double kAScale, double kGScale, double kSScale})?
+      _armDynamicScales(MechanismConfig config) {
+    final massLbs = config.simulatedArmMassLbs;
+    final lengthIn = config.simulatedArmLengthIn;
+    if (massLbs == null || lengthIn == null || massLbs <= 0 || lengthIn <= 0) {
+      return null;
+    }
+
+    final massRatio = massLbs / 10.0;
+    final lengthRatio = lengthIn / 20.0;
+    final kAScale = (massRatio * lengthRatio * lengthRatio).clamp(0.2, 12.0);
+    final kGScale = (massRatio * lengthRatio).clamp(0.2, 12.0);
+    final kSScale = (0.85 + 0.15 * kGScale).clamp(0.6, 2.0);
+    return (kAScale: kAScale, kGScale: kGScale, kSScale: kSScale);
+  }
+
+  Future<void> _refreshProjectSimulationIfNeeded() async {
+    final dm = ref.read(deviceManagerProvider);
+    final device = dm.leader;
+    // Refresh any simulated device (project-backed OR generic) so arm-spec
+    // changes take effect regardless of how the simulation was connected.
+    if (device == null || !device.isSimulated) {
+      return;
+    }
+
+    final config = ref.read(mechanismConfigProvider);
+    // Use identified gains when available; fall back to built-in physics
+    // defaults so arm-spec scaling works even before any sysid run.
+    final gains =
+        ref.read(feedforwardGainsProvider) ?? _referenceGainsForConfig(config);
+
+    dm.disconnect(device);
+    await dm.connectSimulatedFromProject(gains: gains, config: config);
+  }
+
+  /// Reference feedforward gains representing the built-in simulation
+  /// defaults, converted to "identified-unit" space (the same units that
+  /// FeedforwardAnalyzer produces from test data).
+  ///
+  /// Used when no project gains have been identified yet so that arm-spec
+  /// scaling produces a physically-meaningful simulation.
+  FeedforwardGains _referenceGainsForConfig(MechanismConfig config) {
+    final vcf = config.velocityConversionFactor;
+    final pcf = config.positionConversionFactor;
+    return switch (config.type) {
+      // ArmPhysics defaults: kS≈0.20, kV≈0.018 V·s/deg, kA≈0.002 V·s²/deg,
+      // kG≈0.80. Reported velocity = ω_deg * VCF/6, so kA_id = kA * 6/VCF.
+      MechanismType.arm => () {
+          final inv = vcf > 0 ? 6.0 / vcf : 1.0;
+          return FeedforwardGains(
+            kS: 0.20,
+            kV: 0.018 * inv,
+            kA: 0.002 * inv,
+            kG: 0.80,
+          );
+        }(),
+      // ElevatorPhysics defaults: kS≈0.18, kV≈0.12 V·s/in, kA≈0.015, kG≈0.55.
+      // Scale = VCF*60/PCF; identified kA_id = kA_physics / scale.
+      MechanismType.elevator => () {
+          final scale =
+              (vcf > 0 && pcf > 0) ? vcf * 60.0 / pcf : 1.0;
+          final inv = scale > 0 ? 1.0 / scale : 1.0;
+          return FeedforwardGains(
+            kS: 0.18,
+            kV: 0.12 * inv,
+            kA: 0.015 * inv,
+            kG: 0.55,
+          );
+        }(),
+      // FlywheelPhysics defaults: kS≈0.14, kV≈0.0185 V/RPM, kA≈0.003 V/(RPM/s).
+      // Scale = VCF; identified kA_id = kA_physics / VCF.
+      MechanismType.flywheel || MechanismType.simple => () {
+          final inv = vcf > 0 ? 1.0 / vcf : 1.0;
+          return FeedforwardGains(
+            kS: 0.14,
+            kV: 0.0185 * inv,
+            kA: 0.003 * inv,
+            kG: 0.0,
+          );
+        }(),
+    };
+  }
+
+  Future<void> _applyArmSpecText(MechanismConfigNotifier configNotifier) async {
+    final parsed = _parseArmSpec(_armSpecCtrl.text.trim());
+    if (parsed == null) {
+      if (!mounted) return;
+      await displayInfoBar(context, builder: (ctx, close) {
+        return InfoBar(
+          title: const Text('Could not parse arm spec'),
+          content: const Text(
+            'Try a format like "10 lbs, 20 inches".',
+          ),
+          severity: InfoBarSeverity.warning,
+          action: IconButton(
+            icon: const Icon(FluentIcons.clear),
+            onPressed: close,
+          ),
+        );
+      });
+      return;
+    }
+
+    configNotifier.setSimulatedArmSpec(
+      massLbs: parsed.massLbs,
+      lengthIn: parsed.lengthIn,
+    );
+
+    await _refreshProjectSimulationIfNeeded();
+
+    // Clear test runs collected under the old physics so feedforward analysis
+    // only uses data from the current arm spec.
+    ref.read(testRunsProvider.notifier).clear();
+
+    final cfg = ref.read(mechanismConfigProvider);
+    final scales = _armDynamicScales(cfg);
+
+    if (!mounted) return;
+    await displayInfoBar(context, builder: (ctx, close) {
+      return InfoBar(
+        title: const Text('Arm simulation spec applied'),
+        content: Text(
+          'Mass ${parsed.massLbs.toStringAsFixed(1)} lb, length '
+          '${parsed.lengthIn.toStringAsFixed(1)} in. '
+          '${scales != null ? '(kA×${scales.kAScale.toStringAsFixed(2)}, '
+          'kG×${scales.kGScale.toStringAsFixed(2)}, '
+          'kS×${scales.kSScale.toStringAsFixed(2)}) ' : ''}'
+          'Previous test data cleared — re-run tests to identify new gains.',
+        ),
+        severity: InfoBarSeverity.success,
+        action: IconButton(
+          icon: const Icon(FluentIcons.clear),
+          onPressed: close,
+        ),
+      );
+    });
   }
 
   /// Attempt to load config from device once after the screen is shown.
@@ -377,6 +556,65 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
             ),
           ),
         ),
+        if (config.type == MechanismType.arm) ...[
+          const SizedBox(height: 8),
+          _ConfigRow(
+            label: 'Sim Arm Spec (NL)',
+            child: SizedBox(
+              width: 460,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextBox(
+                      controller: _armSpecCtrl,
+                      placeholder: 'e.g. 10 lbs, 20 inches',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Button(
+                    onPressed: () => _applyArmSpecText(configNotifier),
+                    child: const Text('Apply'),
+                  ),
+                  const SizedBox(width: 8),
+                  Button(
+                    onPressed: () {
+                      configNotifier.setSimulatedArmSpec(
+                        massLbs: null,
+                        lengthIn: null,
+                      );
+                    },
+                    child: const Text('Clear'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          _ConfigRow(
+            label: 'Computed Dynamics',
+            child: Builder(
+              builder: (_) {
+                final scales = _armDynamicScales(config);
+                return Text(
+                  scales == null
+                      ? 'kA x1.00, kG x1.00, kS x1.00'
+                      : 'kA x${scales.kAScale.toStringAsFixed(2)}, '
+                          'kG x${scales.kGScale.toStringAsFixed(2)}, '
+                          'kS x${scales.kSScale.toStringAsFixed(2)}',
+                );
+              },
+            ),
+          ),
+          _ConfigRow(
+            label: 'Current Sim Spec',
+            child: Text(
+              (config.simulatedArmMassLbs != null &&
+                      config.simulatedArmLengthIn != null)
+                  ? '${config.simulatedArmMassLbs!.toStringAsFixed(1)} lb, '
+                      '${config.simulatedArmLengthIn!.toStringAsFixed(1)} in'
+                  : 'Using identified-gain heuristic',
+            ),
+          ),
+        ],
 
         // Soft limits (only for arms and elevators)
         if (config.type.requiresSoftLimits) ...[
