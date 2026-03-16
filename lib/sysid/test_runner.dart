@@ -78,6 +78,7 @@ class TestRunner {
   bool _isRunning = false;
   double? _filteredCurrentAmps;
   double? _lastRawCurrentAmps;
+  double? _prevVoltage;
 
   bool get isRunning => _isRunning;
 
@@ -255,6 +256,7 @@ class TestRunner {
     String? errorMessage;
     _filteredCurrentAmps = null;
     _lastRawCurrentAmps = null;
+    _prevVoltage = null;
 
     // Consecutive over-current sample counter for debounced current trip.
     int overCurrentCount = 0;
@@ -330,14 +332,15 @@ class TestRunner {
           }
         }
 
-        // Apply voltage.
-        device.control.setVoltage(targetVoltage);
-
-        // Record data from latest status frames.
+        // Record data from latest status frames BEFORE applying this
+        // iteration's voltage.  The current status frames reflect the
+        // physics state produced by the PREVIOUS voltage command, so we
+        // must pair them with that previous voltage to avoid a systematic
+        // one-tick lead that inflates kS during the quasistatic ramp.
         final status1 = device.connection.lastStatus1;
         final status2 = device.connection.lastStatus2;
 
-        if (status1 != null) {
+        if (status1 != null && _prevVoltage != null) {
           // Status frames already report in user units (onboard CFs).
           final velocity = status1.velocityRpm;
           final position = status2?.positionRotations ?? 0.0;
@@ -345,7 +348,7 @@ class TestRunner {
 
           final dp = DataPoint(
             timestamp: elapsedSeconds,
-            voltage: targetVoltage,
+            voltage: _prevVoltage!,
             velocity: velocity,
             position: position,
             current: current,
@@ -354,7 +357,7 @@ class TestRunner {
 
           onProgress?.call(TestProgress(
             elapsedSeconds: elapsedSeconds,
-            currentVoltage: targetVoltage,
+            currentVoltage: _prevVoltage!,
             currentVelocity: velocity,
             currentPosition: position,
             currentCurrent: current,
@@ -362,6 +365,10 @@ class TestRunner {
             softLimitWarning: false,
           ));
         }
+
+        // Apply voltage for the next physics tick.
+        _prevVoltage = targetVoltage;
+        device.control.setVoltage(targetVoltage);
 
         // Wait ~10ms for next sample.
         await Future.delayed(const Duration(milliseconds: 10));

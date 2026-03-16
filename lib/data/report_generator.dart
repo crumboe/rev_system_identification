@@ -172,14 +172,16 @@ class ReportGenerator {
                   if (velocityPid != null)
                     pw.Expanded(
                       child: _buildPoleZeroPdfPlot(
-                          ff, velocityPid, PoleZeroMode.velocity, chartFont),
+                          ff, velocityPid, PoleZeroMode.velocity, chartFont,
+                          config.type),
                     ),
                   if (velocityPid != null && positionPid != null)
                     pw.SizedBox(width: 16),
                   if (positionPid != null)
                     pw.Expanded(
                       child: _buildPoleZeroPdfPlot(
-                          ff, positionPid, PoleZeroMode.position, chartFont),
+                          ff, positionPid, PoleZeroMode.position, chartFont,
+                          config.type),
                     ),
                 ],
               ),
@@ -1171,8 +1173,9 @@ class ReportGenerator {
     PidResult pid,
     PoleZeroMode mode,
     PdfFont chartFont,
+    MechanismType mechanismType,
   ) {
-    final poles = computeClosedLoopPoles(ff, pid, mode);
+    final poles = computeClosedLoopPoles(ff, pid, mode, mechanismType);
     final olPoles = computeOpenLoopPoles(ff, pid, mode);
     final modeLabel =
         mode == PoleZeroMode.velocity ? 'Velocity Loop' : 'Position Loop';

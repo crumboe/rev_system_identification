@@ -348,6 +348,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               ff: _ff!,
               velPid: _velPid,
               posPid: _posPid,
+              mechanismType: config.type,
               mode: _isPositionMode
                   ? PoleZeroMode.position
                   : PoleZeroMode.velocity,

@@ -11,6 +11,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/material.dart' show Material;
 
 import '../../data/test_data.dart';
+import '../../mechanisms/mechanism.dart' show MechanismType;
 import 'chart_walkthrough.dart';
 
 // ──────────────────────────────────────────────────────────────────────
@@ -26,6 +27,10 @@ class PoleZeroMap extends StatefulWidget {
   final PidResult? velPid;
   final PidResult? posPid;
 
+  /// Mechanism type — needed to compute the velocity-to-position rate factor
+  /// (r = 60 for flywheel/simple, 1 for arm/elevator) in position CL poles.
+  final MechanismType? mechanismType;
+
   /// When non-null, overrides the internal mode state.
   final PoleZeroMode? mode;
 
@@ -37,6 +42,7 @@ class PoleZeroMap extends StatefulWidget {
     required this.ff,
     this.velPid,
     this.posPid,
+    this.mechanismType,
     this.mode,
     this.onModeChanged,
   });
@@ -62,7 +68,7 @@ class _PoleZeroMapState extends State<PoleZeroMap>
   Widget build(BuildContext context) {
     super.build(context);
     final pid = _activePid;
-    final poles = _computePoles(widget.ff, pid, _mode);
+    final poles = _computePoles(widget.ff, pid, _mode, widget.mechanismType);
 
     final chart = Card(
       child: Column(
@@ -241,8 +247,19 @@ class _Complex {
   }
 }
 
+/// Velocity-to-position rate factor: RPM / (rot/s) = 60 for flywheel/simple,
+/// 1 for arm/elevator (velocity unit = d(position unit)/dt).
+double _velocityToPositionRateFactor(MechanismType? type) {
+  return switch (type) {
+    MechanismType.flywheel || MechanismType.simple => 60.0,
+    MechanismType.arm || MechanismType.elevator => 1.0,
+    null => 1.0,
+  };
+}
+
 List<_Complex> _computePoles(
-    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode) {
+    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
+    [MechanismType? mechanismType]) {
   final kA = ff.kA;
   final kV = ff.kV;
 
@@ -269,18 +286,25 @@ List<_Complex> _computePoles(
       return _solveQuadratic(kA, kV + kPv, kIv);
 
     case PoleZeroMode.position:
-      // C(s) = kP + kD·s + kI/s = (kD·s² + kP·s + kI) / s
-      // G(s) = 1 / (s·(kA·s + kV))
-      // Characteristic: kA·s³ + (kV + kD)·s² + kP·s + kI = 0
-      // When kI = 0 (PD): reduces to kA·s² + (kV + kD)·s + kP = 0
+      // The plant from voltage to position (user units) is:
+      //   G(s) = 1 / (r·kA·s² + r·kV·s)
+      // where r = velocity-to-position rate factor (60 for flywheel, 1 for arm).
+      //
+      // SPARK PID output: V = V_nom·(kP·pos_error − kD·velocity)
+      //
+      // Closed-loop characteristic (with PID+I):
+      //   r·kA·s³ + r·(kV + kD_v)·s² + kP_v·s + kI_v = 0
+      // When kI = 0 (PD):
+      //   r·kA·s² + r·(kV + kD_v)·s + kP_v = 0
+      final r = _velocityToPositionRateFactor(mechanismType);
       final kPv = (pid?.kP ?? 0.0) * nomV;
       final kDv = (pid?.kD ?? 0.0) * nomV;
       final kIv = (pid?.kI ?? 0.0) * nomV;
 
       if (kIv.abs() < 1e-12) {
-        return _solveQuadratic(kA, kV + kDv, kPv);
+        return _solveQuadratic(r * kA, r * (kV + kDv), kPv);
       }
-      return _solveCubic(kA, kV + kDv, kPv, kIv);
+      return _solveCubic(r * kA, r * (kV + kDv), kPv, kIv);
   }
 }
 
@@ -1286,8 +1310,9 @@ class PolePlotData {
 
 /// Compute closed-loop poles for the given plant model and PID gains.
 List<PolePlotData> computeClosedLoopPoles(
-    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode) {
-  return _computePoles(ff, pid, mode)
+    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
+    [MechanismType? mechanismType]) {
+  return _computePoles(ff, pid, mode, mechanismType)
       .map((c) => PolePlotData(c.re, c.im))
       .toList();
 }
