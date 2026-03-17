@@ -3,12 +3,12 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter/foundation.dart';
 
 import '../can/interfaces.dart';
-import '../can/spark_connection.dart';
 import '../can/spark_protocol.dart';
+import 'serial_port_factory.dart';
+export 'serial_port_factory.dart' show PortInfo;
 import '../can/heartbeat.dart';
 import '../can/parameter_api.dart';
 import '../can/control_api.dart';
@@ -20,36 +20,6 @@ import '../simulation/project_physics_factory.dart';
 import '../simulation/simulated_device.dart';
 import '../data/test_data.dart';
 import '../mechanisms/mechanism.dart';
-
-/// Information about a discovered serial port that may be a SPARK controller.
-class PortInfo {
-  final String name;
-  final String description;
-  final String? manufacturer;
-  final int? vendorId;
-  final int? productId;
-
-  const PortInfo({
-    required this.name,
-    required this.description,
-    this.manufacturer,
-    this.vendorId,
-    this.productId,
-  });
-
-  /// Whether this port is likely a REV SPARK controller.
-  bool get isLikelySpark {
-    final mfr = manufacturer?.toLowerCase() ?? '';
-    final desc = description.toLowerCase();
-    return mfr.contains('rev') ||
-        desc.contains('spark') ||
-        desc.contains('rev') ||
-        desc.contains('usb serial');
-  }
-
-  @override
-  String toString() => '$name ($description)';
-}
 
 /// The type of connection used to communicate with a SPARK controller.
 enum ConnectionType {
@@ -187,21 +157,7 @@ class DeviceManager {
   // -----------------------------------------------------------------------
 
   /// Scan for available serial ports and return info about each.
-  List<PortInfo> scanPorts() {
-    final portNames = SerialPort.availablePorts;
-    return portNames.map((name) {
-      final port = SerialPort(name);
-      final info = PortInfo(
-        name: name,
-        description: port.description ?? name,
-        manufacturer: port.manufacturer,
-        vendorId: port.vendorId,
-        productId: port.productId,
-      );
-      port.dispose();
-      return info;
-    }).toList();
-  }
+  List<PortInfo> scanPorts() => scanSerialPorts();
 
   // -----------------------------------------------------------------------
   // Connection
@@ -241,9 +197,24 @@ class DeviceManager {
   /// Returns the connected [SparkDevice].
   /// Throws if the port cannot be opened.
   Future<SparkDevice> connect(String portName, {String label = 'Motor'}) async {
-    final connection = SparkConnection.fromPortName(portName);
+    final connection = createSerialConnection(portName);
     await connection.open();
 
+    return _initializeDevice(
+      connection,
+      connectionType: ConnectionType.serial,
+      label: label,
+    );
+  }
+
+  /// Connect using a pre-created [ISparkConnection] (e.g. from Web Serial).
+  ///
+  /// The connection must already be opened by the caller. This calls
+  /// [_initializeDevice] directly, bypassing port scanning.
+  Future<SparkDevice> connectFromConnection(
+    ISparkConnection connection, {
+    String label = 'Motor',
+  }) async {
     return _initializeDevice(
       connection,
       connectionType: ConnectionType.serial,

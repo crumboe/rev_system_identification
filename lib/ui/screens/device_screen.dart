@@ -5,10 +5,14 @@ library;
 import 'dart:async';
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../can/status_parser.dart';
 import '../../devices/device_manager.dart';
+import '../../devices/serial_port_factory.dart'
+    show isWebSerialAvailable, requestWebSerialPort, getGrantedWebSerialPorts;
 import '../../mechanisms/mechanism.dart';
+import '../../simulation/simulated_device.dart';
 import '../../state/app_state.dart';
 
 class DeviceScreen extends ConsumerStatefulWidget {
@@ -36,6 +40,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   void initState() {
     super.initState();
     _refreshPorts();
+    if (kIsWeb) _autoReconnectWeb();
   }
 
   void _refreshPorts() {
@@ -108,6 +113,42 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         _autoConnecting = false;
         _errorMessage = 'Auto-connect failed: $e';
       });
+    }
+  }
+
+  /// Request a Web Serial port via browser prompt and connect.
+  Future<void> _connectWebSerial() async {
+    setState(() {
+      _connecting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final dm = ref.read(deviceManagerProvider);
+      final connection = await requestWebSerialPort();
+      await connection.open();
+      await dm.connectFromConnection(connection, label: 'Leader');
+      setState(() => _connecting = false);
+    } catch (e) {
+      setState(() {
+        _connecting = false;
+        _errorMessage = 'Web Serial connection failed: $e';
+      });
+    }
+  }
+
+  /// Auto-reconnect previously-granted Web Serial ports on page load.
+  Future<void> _autoReconnectWeb() async {
+    try {
+      final dm = ref.read(deviceManagerProvider);
+      final ports = await getGrantedWebSerialPorts();
+      for (final connection in ports) {
+        await connection.open();
+        await dm.connectFromConnection(connection, label: 'Leader');
+      }
+      if (ports.isNotEmpty && mounted) setState(() {});
+    } catch (_) {
+      // Silently ignore — user can manually connect.
     }
   }
 
@@ -198,84 +239,176 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            FilledButton(
-              onPressed:
-                  !_connecting && !_autoConnecting ? _autoConnect : null,
-              child: _autoConnecting
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: ProgressRing(strokeWidth: 2),
-                    )
-                  : const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(FluentIcons.plug_connected, size: 14),
-                        SizedBox(width: 6),
-                        Text('Auto Connect'),
-                      ],
-                    ),
-            ),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: _refreshPorts,
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(FluentIcons.refresh, size: 14),
-                  SizedBox(width: 6),
-                  Text('Refresh'),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
 
-        // Manual port selection (fallback / advanced)
-        const Text(
-          'Manual Port Selection',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Flexible(
-              child: ComboBox<String>(
-                placeholder: const Text('Select COM port'),
-                isExpanded: true,
-                value: _selectedPort,
-                items: _portsWithSim
-                    .map((p) => ComboBoxItem<String>(
-                          value: p.name,
-                          child: Text(
-                            _simPorts.contains(p.name)
-                                ? '\u{1F9EA} ${p.description}'
-                                : '${p.name} â€” ${p.description}'
-                                  '${p.isLikelySpark ? ' \u2605' : ''}',
-                          ),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => _selectedPort = v),
-              ),
+        // Web Serial: single connect button + simulated devices
+        if (kIsWeb) ...[
+          if (isWebSerialAvailable) ...[
+            Row(
+              children: [
+                FilledButton(
+                  onPressed: !_connecting ? _connectWebSerial : null,
+                  child: _connecting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: ProgressRing(strokeWidth: 2),
+                        )
+                      : const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(FluentIcons.plug_connected, size: 14),
+                            SizedBox(width: 6),
+                            Text('Connect via Web Serial'),
+                          ],
+                        ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: _selectedPort != null && !_connecting && !_autoConnecting
-                  ? _connect
-                  : null,
-              child: _connecting
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: ProgressRing(strokeWidth: 2),
-                    )
-                  : const Text('Connect'),
+            const SizedBox(height: 8),
+            const InfoBar(
+              title: Text('Web Serial'),
+              content: Text(
+                'Click "Connect via Web Serial" to open the browser\'s device '
+                'chooser. Select your SPARK MAX/Flex controller from the list. '
+                'Previously-connected devices reconnect automatically on page load.',
+              ),
+              severity: InfoBarSeverity.info,
+            ),
+          ] else ...[
+            const InfoBar(
+              title: Text('Hardware not supported'),
+              content: Text(
+                'Your browser does not support Web Serial. '
+                'Use Chrome, Edge, or Opera for USB device access. '
+                'Simulation mode works in all browsers.',
+              ),
+              severity: InfoBarSeverity.warning,
             ),
           ],
-        ),
+          const SizedBox(height: 16),
+
+          // Simulated device selection (available on web too)
+          const Text(
+            'Simulated Devices',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Flexible(
+                child: ComboBox<String>(
+                  placeholder: const Text('Select simulated device'),
+                  isExpanded: true,
+                  value: _simPorts.contains(_selectedPort) ? _selectedPort : null,
+                  items: [
+                    ComboBoxItem<String>(
+                      value: _simFlywheel,
+                      child: const Text('\u{1F9EA} Simulated Flywheel (no hardware needed)'),
+                    ),
+                    ComboBoxItem<String>(
+                      value: _simArm,
+                      child: const Text('\u{1F9EA} Simulated Arm (no hardware needed)'),
+                    ),
+                    ComboBoxItem<String>(
+                      value: _simElevator,
+                      child: const Text('\u{1F9EA} Simulated Elevator (no hardware needed)'),
+                    ),
+                  ],
+                  onChanged: (v) => setState(() => _selectedPort = v),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Button(
+                onPressed: _selectedPort != null && _simPorts.contains(_selectedPort) && !_connecting
+                    ? _connect
+                    : null,
+                child: const Text('Connect'),
+              ),
+            ],
+          ),
+        ]
+
+        // Native: Auto Connect + port scanning + manual selection
+        else ...[
+          Row(
+            children: [
+              FilledButton(
+                onPressed:
+                    !_connecting && !_autoConnecting ? _autoConnect : null,
+                child: _autoConnecting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: ProgressRing(strokeWidth: 2),
+                      )
+                    : const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(FluentIcons.plug_connected, size: 14),
+                          SizedBox(width: 6),
+                          Text('Auto Connect'),
+                        ],
+                      ),
+              ),
+              const SizedBox(width: 8),
+              Button(
+                onPressed: _refreshPorts,
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(FluentIcons.refresh, size: 14),
+                    SizedBox(width: 6),
+                    Text('Refresh'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Manual port selection (fallback / advanced)
+          const Text(
+            'Manual Port Selection',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Flexible(
+                child: ComboBox<String>(
+                  placeholder: const Text('Select COM port'),
+                  isExpanded: true,
+                  value: _selectedPort,
+                  items: _portsWithSim
+                      .map((p) => ComboBoxItem<String>(
+                            value: p.name,
+                            child: Text(
+                              _simPorts.contains(p.name)
+                                  ? '\u{1F9EA} ${p.description}'
+                                  : '${p.name} \u2014 ${p.description}'
+                                    '${p.isLikelySpark ? ' \u2605' : ''}',
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedPort = v),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Button(
+                onPressed: _selectedPort != null && !_connecting && !_autoConnecting
+                    ? _connect
+                    : null,
+                child: _connecting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: ProgressRing(strokeWidth: 2),
+                      )
+                    : const Text('Connect'),
+              ),
+            ],
+          ),
+        ],
         if (_errorMessage != null) ...[
           const SizedBox(height: 8),
           InfoBar(
@@ -683,6 +816,30 @@ class _DeviceCardState extends State<_DeviceCard> {
               ],
             ),
           ),
+          // Show ideal feedforward gains for simulated devices.
+          if (widget.device.isSimulated) ...[
+            const SizedBox(height: 4),
+            Builder(builder: (context) {
+              final physics =
+                  (widget.device.connection as SimulatedSparkConnection)
+                      .physics;
+              final hasGravity = physics.kG != 0.0;
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  'Ideal FF Gains:  kS = ${physics.kS.toStringAsFixed(3)},  '
+                  'kV = ${physics.kV.toStringAsFixed(4)},  '
+                  'kA = ${physics.kA.toStringAsFixed(4)}'
+                  '${hasGravity ? ',  kG = ${physics.kG.toStringAsFixed(3)}' : ''}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.inactiveColor,
+                    fontFamily: 'Consolas',
+                  ),
+                ),
+              );
+            }),
+          ],
           // Show actionable diagnostic note if the CAN ID could not be read.
           if (widget.device.connectionNote != null) ...[
             const SizedBox(height: 4),

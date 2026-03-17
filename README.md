@@ -1,6 +1,6 @@
 # Crumboe's (unofficial) REV System Identification
 
-A Windows desktop application for characterizing REV Robotics SPARK motor controllers. It performs **quasistatic** and **dynamic** tests to compute feedforward constants (kS, kV, kA, kG) and optimal PID gains for flywheels, arms, and elevators — the same approach used by WPILib's SysId tool, wrapped in an interactive, educational interface designed for high-school FRC teams.
+A cross-platform desktop application (Windows, macOS, Linux) for characterizing REV Robotics SPARK motor controllers. It performs **quasistatic** and **dynamic** tests to compute feedforward constants (kS, kV, kA, kG) and optimal PID gains for flywheels, arms, and elevators — the same approach used by WPILib's SysId tool, wrapped in an interactive, educational interface designed for high-school FRC teams.
 
 ## Features
 
@@ -150,22 +150,51 @@ All three simulations share these characteristics:
 ### Prerequisites
 
 - Flutter SDK ≥ 3.11.0
-- Windows 10 or later (targets Windows desktop only)
+- **Windows:** Windows 10 or later
+- **macOS:** macOS 10.15 (Catalina) or later
+- **Linux:** GTK 3 (`sudo apt install libgtk-3-dev` on Debian/Ubuntu if not already present)
 
 ### Build & Run
 
-```powershell
+```bash
 flutter pub get
-flutter run -d windows
+flutter run -d windows  # or -d macos, -d linux
 ```
 
 ### Production Build
 
-```powershell
-flutter build windows
+```bash
+flutter build windows  # or macos, linux
 ```
 
-The executable will be at `build/windows/x64/runner/Release/rev_system_identification.exe`.
+- **Windows:** `build/windows/x64/runner/Release/rev_system_identification.exe`
+- **macOS:** `build/macos/Build/Products/Release/rev_system_identification.app`
+- **Linux:** `build/linux/x64/release/bundle/rev_system_identification`
+
+### Platform Setup
+
+#### macOS
+
+USB/serial entitlements are already included in the Xcode project — no extra setup is needed for development builds. For distribution:
+- Sign with a Developer ID certificate and notarize via `xcrun notarytool`, or
+- Distribute unsigned and instruct users to right-click → Open on first launch
+
+#### Linux
+
+**1. Install udev rule** — prevents ModemManager from claiming the SPARK MAX USB port for ~15 seconds on plug-in:
+
+```bash
+sudo cp linux/99-sparkmax.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+**2. Add your user to the `dialout` group** for serial port access:
+
+```bash
+sudo usermod -aG dialout $USER
+```
+
+Then log out and back in. On Arch Linux or some other distros, the group may be `uucp` instead of `dialout`.
 
 ### Connecting to Hardware
 

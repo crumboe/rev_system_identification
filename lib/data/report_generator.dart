@@ -5,8 +5,11 @@
 /// Useful for FRC engineering notebooks.
 library;
 
-import 'dart:io';
 import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'file_saver.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:pdf/pdf.dart';
@@ -34,7 +37,7 @@ class ReportGenerator {
     PidTuningParams tuningParams = const PidTuningParams(),
   }) async {
     final path = await _pickSavePath(config);
-    if (path == null) return null;
+    if (path == null) return null; // user cancelled (desktop only)
 
     final pdf = pw.Document(
       title: 'SysID Report - ${config.type.displayName}',
@@ -194,7 +197,7 @@ class ReportGenerator {
     }
 
     final bytes = await pdf.save();
-    await File(path).writeAsBytes(bytes);
+    await writeFileBytes(path, bytes);
     return path;
   }
 
@@ -1440,6 +1443,8 @@ class ReportGenerator {
             .replaceAll(RegExp(r'^_+|_+$'), '')
         : config.type.name;
     final name = 'sysid_report_${slug}_$timestamp.pdf';
+
+    if (kIsWeb) return name;
 
     return FilePicker.platform.saveFile(
       dialogTitle: 'Save PDF Report',

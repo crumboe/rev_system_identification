@@ -1,0 +1,4 @@
+# REV SPARK MAX / SPARK Flex USB-CAN bridge (STM32 VID 0x0483)
+# Prevents ModemManager from claiming the port and grants rw access to all users.
+# Install: sudo cp 99-sparkmax.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"

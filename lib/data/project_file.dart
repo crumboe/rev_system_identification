@@ -8,9 +8,11 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'file_saver.dart';
 
 import '../mechanisms/mechanism.dart';
 import 'test_data.dart';
@@ -82,18 +84,25 @@ Future<String?> saveProject(ProjectData project) async {
       ? project.config.systemName
       : 'untitled';
 
-  final result = await FilePicker.platform.saveFile(
-    dialogTitle: 'Save System Identification Project',
-    fileName: '$name.$projectFileExtension',
-    type: FileType.custom,
-    allowedExtensions: [projectFileExtension],
-  );
+  final fileName = '$name.$projectFileExtension';
 
-  if (result == null) return null;
+  final String result;
+  if (kIsWeb) {
+    result = fileName;
+  } else {
+    final picked = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save System Identification Project',
+      fileName: fileName,
+      type: FileType.custom,
+      allowedExtensions: [projectFileExtension],
+    );
+    if (picked == null) return null;
+    result = picked;
+  }
 
   final jsonString =
       const JsonEncoder.withIndent('  ').convert(project.toJson());
-  await File(result).writeAsString(jsonString, flush: true);
+  await writeFileString(result, jsonString, flush: true);
   return result;
 }
 
@@ -110,10 +119,18 @@ Future<ProjectData?> loadProject() async {
 
   if (result == null || result.files.isEmpty) return null;
 
-  final path = result.files.single.path;
-  if (path == null) return null;
+  final file = result.files.single;
+  final String jsonString;
+  if (kIsWeb) {
+    final bytes = file.bytes;
+    if (bytes == null) return null;
+    jsonString = utf8.decode(bytes);
+  } else {
+    final path = file.path;
+    if (path == null) return null;
+    jsonString = await readFileString(path);
+  }
 
-  final jsonString = await File(path).readAsString();
   final json = jsonDecode(jsonString) as Map<String, dynamic>;
   return ProjectData.fromJson(json);
 }

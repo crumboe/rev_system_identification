@@ -1,0 +1,149 @@
+name: Multi-Platform Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger'
+        required: false
+        default: 'Manual build'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Determine the next release version ──────────────────────────────
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        shell: bash
+        run: |
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
+          echo "Latest tag: $LATEST"
+          VER="${LATEST#v}"
+          MAJOR=$(echo "$VER" | cut -d. -f1)
+          MINOR=$(echo "$VER" | cut -d. -f2)
+          PATCH=$(echo "$VER" | cut -d. -f3)
+          PATCH=$((PATCH + 1))
+          NEXT="$MAJOR.$MINOR.$PATCH"
+          echo "Next version: $NEXT"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+  # ── Windows build ───────────────────────────────────────────────────
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - run: flutter build windows --release
+
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: |
+          $buildDir = "build\windows\x64\runner\Release"
+          if (-not (Test-Path $buildDir)) {
+            $buildDir = "build\windows\runner\Release"
+          }
+          Compress-Archive -Path "$buildDir\*" -DestinationPath "rev_system_identification-v${{ needs.version.outputs.version }}-windows.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: "rev_system_identification-v${{ needs.version.outputs.version }}-windows.zip"
+
+  # ── Linux build ─────────────────────────────────────────────────────
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev libudev-dev
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - run: flutter build linux --release
+
+      - name: Package Linux tar.gz
+        run: |
+          cd build/linux/x64/release/bundle
+          tar czf "$GITHUB_WORKSPACE/rev_system_identification-v${{ needs.version.outputs.version }}-linux.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: "rev_system_identification-v${{ needs.version.outputs.version }}-linux.tar.gz"
+
+  # ── macOS build ─────────────────────────────────────────────────────
+  build-macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+
+      - run: flutter build macos --release
+
+      - name: Package macOS ZIP
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r "$GITHUB_WORKSPACE/rev_system_identification-v${{ needs.version.outputs.version }}-macos.zip" "rev_system_identification.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: "rev_system_identification-v${{ needs.version.outputs.version }}-macos.zip"
+
+  # ── Create a single GitHub Release with all three artifacts ─────────
+  release:
+    needs: [version, build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: Release v${{ needs.version.outputs.version }}
+          files: artifacts/*
+          generate_release_notes: true
+          make_latest: true

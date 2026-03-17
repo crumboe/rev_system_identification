@@ -7,8 +7,9 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
+
+import 'log_file_writer.dart';
 
 import 'spark_protocol.dart';
 
@@ -153,7 +154,7 @@ class CommsLog {
   // -----------------------------------------------------------------------
 
   String? _logFilePath;
-  IOSink? _logSink;
+  LogFileWriter? _logSink;
 
   /// Path of the currently active log file, or null if not logging to file.
   String? get logFilePath => _logFilePath;
@@ -171,8 +172,7 @@ class CommsLog {
   /// Throws if the file cannot be opened.
   Future<void> startLoggingToFile(String path) async {
     await stopLoggingToFile();
-    final file = File(path);
-    _logSink = file.openWrite();
+    _logSink = await LogFileWriter.open(path);
     _logFilePath = path;
     _logSink!.writeln(_csvHeader);
     // Write entries already in memory.
@@ -187,7 +187,6 @@ class CommsLog {
     _logSink = null;
     _logFilePath = null;
     if (sink != null) {
-      await sink.flush();
       await sink.close();
     }
   }

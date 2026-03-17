@@ -1,9 +1,10 @@
 /// CSV export for test data, compatible with WPILib SysId tool format.
 library;
 
-import 'dart:io';
-
 import 'package:csv/csv.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'file_saver.dart';
 import 'package:file_picker/file_picker.dart';
 
 import 'test_data.dart';
@@ -30,7 +31,7 @@ class CsvExporter {
     ];
 
     final csv = const ListToCsvConverter().convert(rows);
-    await File(path).writeAsString(csv);
+    await writeFileString(path, csv);
     return path;
   }
 
@@ -60,7 +61,7 @@ class CsvExporter {
     ];
 
     final csv = const ListToCsvConverter().convert(rows);
-    await File(path).writeAsString(csv);
+    await writeFileString(path, csv);
     return path;
   }
 
@@ -109,7 +110,7 @@ class CsvExporter {
     }
     sb.write('}\n');
 
-    await File(path).writeAsString(sb.toString());
+    await writeFileString(path, sb.toString());
     return path;
   }
 
@@ -121,6 +122,8 @@ class CsvExporter {
     final name = defaultName ??
         'sysid_${run!.mechanismType.name}_${run.testType.name}_'
             '${run.startTime.toIso8601String().replaceAll(':', '-')}.csv';
+
+    if (kIsWeb) return name;
 
     final result = await FilePicker.platform.saveFile(
       dialogTitle: 'Export Test Data',

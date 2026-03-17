@@ -1,9 +1,10 @@
 /// Engineering notebook markdown exporter.
 library;
 
-import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'file_saver.dart';
 
 import '../mechanisms/mechanism.dart';
 import '../sysid/validation_runner.dart';
@@ -27,17 +28,23 @@ class NotebookExporter {
       validationResult: validationResult,
     );
 
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save Engineering Notebook Entry',
-      fileName:
-          'sysid_notebook_${config.type.displayName.toLowerCase().replaceAll(' ', '_')}.md',
-      type: FileType.custom,
-      allowedExtensions: ['md'],
-    );
-    if (path == null) return null;
+    final defaultName =
+        'sysid_notebook_${config.type.displayName.toLowerCase().replaceAll(' ', '_')}.md';
 
-    final file = File(path);
-    await file.writeAsString(content);
+    final String? path;
+    if (kIsWeb) {
+      path = defaultName;
+    } else {
+      path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Engineering Notebook Entry',
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: ['md'],
+      );
+      if (path == null) return null;
+    }
+
+    await writeFileString(path, content);
     return path;
   }
 

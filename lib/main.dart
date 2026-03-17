@@ -1,4 +1,5 @@
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:system_theme/system_theme.dart';
 
@@ -7,7 +8,9 @@ import 'ui/app_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemTheme.accentColor.load();
+  if (!kIsWeb) {
+    await SystemTheme.accentColor.load();
+  }
   runApp(const ProviderScope(child: RevSysIdApp()));
 }
 
@@ -17,6 +20,9 @@ class RevSysIdApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
+
+    // REV Robotics orange accent for web (system_theme may not work on web).
+    const revOrange = Color(0xFFED1C24);
 
     return FluentApp(
       title: "Crumboe's (unofficial) REV System Identification Tool",
@@ -29,7 +35,9 @@ class RevSysIdApp extends ConsumerWidget {
       ),
       theme: FluentThemeData(
         brightness: Brightness.light,
-        accentColor: SystemTheme.accentColor.accent.toAccentColor(),
+        accentColor: kIsWeb
+            ? revOrange.toAccentColor()
+            : SystemTheme.accentColor.accent.toAccentColor(),
         visualDensity: VisualDensity.standard,
       ),
       home: const AppShell(),

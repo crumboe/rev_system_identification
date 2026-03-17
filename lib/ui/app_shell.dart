@@ -2,9 +2,11 @@
 library;
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/project_file.dart';
+import '../devices/serial_port_factory.dart' show isWebSerialAvailable;
 import '../state/app_state.dart';
 import 'screens/home_screen.dart';
 import 'screens/device_screen.dart';
@@ -115,7 +117,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         (themeMode == ThemeMode.system &&
             MediaQuery.platformBrightnessOf(context) == Brightness.dark);
 
-    return NavigationView(
+    final showWebBanner = kIsWeb && !isWebSerialAvailable;
+
+    final nav = NavigationView(
       pane: NavigationPane(
         selected: selectedIndex,
         onChanged: (index) =>
@@ -185,6 +189,32 @@ class _AppShellState extends ConsumerState<AppShell> {
           ),
         ],
       ),
+    );
+
+    if (!showWebBanner) return nav;
+
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          color: Colors.warningPrimaryColor.withValues(alpha: 0.15),
+          child: Row(
+            children: [
+              const Icon(FluentIcons.warning, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Hardware not supported in this browser \u2014 use Chrome or Edge '
+                  'for USB device access. Simulation mode works fully.',
+                  style: TextStyle(fontSize: 12, color: FluentTheme.of(context).typography.body?.color),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: nav),
+      ],
     );
   }
 }

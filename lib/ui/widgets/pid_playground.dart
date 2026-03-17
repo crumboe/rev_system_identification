@@ -219,7 +219,10 @@ class _PidPlaygroundState extends State<PidPlayground>
       final error = setpoint - velocity;
       integral += error * dt;
       final derivative = (error - prevError) / dt;
-      final pidOutput = _kP * error + _kI * integral + _kD * derivative;
+      // PID gains are in duty-cycle units (divided by V_nom by the
+      // autotuner).  Multiply back to get volts.
+      final pidOutput =
+          (_kP * error + _kI * integral + _kD * derivative) * nominalVoltage;
 
       final setpointSign = setpoint >= 0 ? 1.0 : -1.0;
       final ffOutput = _kS * setpointSign + _kV * setpoint + _kG;
@@ -277,6 +280,10 @@ class _PidPlaygroundState extends State<PidPlayground>
   const normalizedSetpoint = 1.0;
     const nominalVoltage = 12.0;
 
+    // Velocity-to-position rate factor: for flywheel/simple, velocity is in
+    // RPM but position is rotations, so divide by 60 when integrating.
+    final double r = _velocityToPositionRateFactor();
+
     final backlashSeverity = _lowInertiaBacklashSeverity(plant);
     final backlash = 0.3 * backlashSeverity;
     final stictionExtra = 0.45 * backlashSeverity;
@@ -313,7 +320,10 @@ class _PidPlaygroundState extends State<PidPlayground>
       // Position PID D-term uses negative measured velocity (like SPARK).
       final derivative = _firstPositionTick ? 0.0 : -measuredVelocity;
       _firstPositionTick = false;
-      final pidOutput = _kP * error + _kI * integral + _kD * derivative;
+      // PID gains are in duty-cycle units (divided by V_nom by the
+      // autotuner).  Multiply back to get volts.
+      final pidOutput =
+          (_kP * error + _kI * integral + _kD * derivative) * nominalVoltage;
 
       // Position FF: kS·sign(error) + kG (no kV in position mode per REV).
       final ffOutput = _kS * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0))
@@ -343,7 +353,7 @@ class _PidPlaygroundState extends State<PidPlayground>
               plant.kA;
       velocity += acceleration * dt;
       final prevMotorPosition = motorPosition;
-      motorPosition += velocity * dt;
+      motorPosition += (velocity / r) * dt;
       final motorDelta = motorPosition - prevMotorPosition;
 
       if (backlash <= 0 || motorDelta == 0.0) {
@@ -420,6 +430,16 @@ class _PidPlaygroundState extends State<PidPlayground>
   double _quantize(double value, double quantum) {
     if (quantum <= 0) return value;
     return (value / quantum).round() * quantum;
+  }
+
+  /// RPM ÷ (rotations/s) = 60 for flywheel/simple; 1 for arm/elevator.
+  double _velocityToPositionRateFactor() {
+    final config = widget.mechanismConfig;
+    if (config == null) return 1.0;
+    return switch (config.type) {
+      MechanismType.flywheel || MechanismType.simple => 60.0,
+      MechanismType.arm || MechanismType.elevator => 1.0,
+    };
   }
 
   void _resetToAutoTuned() {

@@ -17,7 +17,7 @@ library;
 
 import 'dart:typed_data';
 
-import 'spark_connection.dart';
+import 'interfaces.dart';
 import 'spark_protocol.dart';
 
 class V5DiagnosticReport {
@@ -26,7 +26,7 @@ class V5DiagnosticReport {
 }
 
 class CanDiagnosticV5 {
-  final SparkConnection _conn;
+  final ISparkConnection _conn;
   final void Function(String) _log;
 
   /// How long to capture raw bytes after each command.

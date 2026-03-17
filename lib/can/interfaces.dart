@@ -56,6 +56,14 @@ abstract class ISparkConnection {
   /// Send raw bytes to the serial port.
   void sendRaw(Uint8List packet);
 
+  /// Whether raw byte capture is enabled for diagnostics.
+  bool get rawCaptureEnabled;
+  set rawCaptureEnabled(bool value);
+
+  /// Take a snapshot of captured raw bytes and clear the buffer.
+  /// Returns an empty list if capture is not supported or not enabled.
+  List<int> takeRawCapture();
+
   /// Send a command (arb ID + payload).
   void sendCommand(int arbId, Uint8List payload);
 

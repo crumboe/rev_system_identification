@@ -131,6 +131,12 @@ class SimulatedSparkConnection implements ISparkConnection {
   }
 
   @override
+  bool rawCaptureEnabled = false;
+
+  @override
+  List<int> takeRawCapture() => [];
+
+  @override
   void sendCommand(int arbId, Uint8List payload) {
     // No-op for simulation.
   }
