@@ -111,6 +111,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install macOS build dependencies
+        run: brew install automake libtool
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
