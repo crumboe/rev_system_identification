@@ -143,13 +143,30 @@ class WebSparkConnection implements ISparkConnection {
     final port = _port;
     if (port == null) throw StateError('No serial port assigned');
 
-    await port.open(SerialOptions(
-      baudRate: 115200,
-      dataBits: 8,
-      stopBits: 1,
-      parity: 'none'.toJS,
-      flowControl: 'none'.toJS,
-    )).toDart;
+    // The browser throws InvalidStateError if the port is already open
+    // (e.g. after a disconnect that didn't fully close it). In that case,
+    // close it first and retry.
+    try {
+      await port.open(SerialOptions(
+        baudRate: 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none'.toJS,
+        flowControl: 'none'.toJS,
+      )).toDart;
+    } catch (e) {
+      // Likely InvalidStateError — port already open. Close and retry once.
+      try {
+        await port.close().toDart;
+      } catch (_) {}
+      await port.open(SerialOptions(
+        baudRate: 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none'.toJS,
+        flowControl: 'none'.toJS,
+      )).toDart;
+    }
 
     _writer = port.writable.getWriter();
     _isOpen = true;
@@ -213,6 +230,13 @@ class WebSparkConnection implements ISparkConnection {
 
     _reader = null;
     _writer = null;
+
+    // Close the underlying browser serial port so it can be re-opened later
+    // (by auto-reconnect or a fresh requestPort() call).
+    try {
+      _port?.close().toDart.ignore();
+    } catch (_) {}
+
     _responseController.close();
   }
 

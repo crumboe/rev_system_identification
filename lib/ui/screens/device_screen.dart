@@ -142,14 +142,20 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   Future<void> _autoReconnectWeb() async {
     try {
       final dm = ref.read(deviceManagerProvider);
+      // Skip if a device is already connected (e.g. widget rebuilt).
+      if (dm.devices.isNotEmpty) return;
+
       final ports = await getGrantedWebSerialPorts();
       for (final connection in ports) {
         await connection.open();
         await dm.connectFromConnection(connection, label: 'Leader');
       }
       if (ports.isNotEmpty && mounted) setState(() {});
-    } catch (_) {
-      // Silently ignore — user can manually connect.
+    } catch (e) {
+      // Show the error so the user knows auto-reconnect failed.
+      if (mounted) {
+        setState(() => _errorMessage = 'Auto-reconnect failed: $e');
+      }
     }
   }
 

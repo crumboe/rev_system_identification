@@ -1107,7 +1107,7 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
                       bottom: 4,
                       right: 4,
                       child: Text(
-                        'Scroll to zoom · Right-click to pan',
+                        'Shift+Scroll to zoom · Right-click to pan',
                         style: TextStyle(
                           fontSize: 11,
                           color: FluentTheme.of(context)
