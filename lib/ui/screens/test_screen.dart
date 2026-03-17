@@ -20,6 +20,7 @@ import '../widgets/chart_annotations.dart';
 import '../widgets/elevator_visual.dart';
 import '../widgets/flywheel_visual.dart';
 import '../widgets/jog_panel.dart';
+import '../widgets/logo_header.dart';
 
 class TestScreen extends ConsumerStatefulWidget {
   const TestScreen({super.key});
@@ -167,8 +168,8 @@ class _TestScreenState extends ConsumerState<TestScreen> {
     final canRunReverse = canRun && !atReverseLimit;
 
     return ScaffoldPage(
-      header: PageHeader(
-        title: const Text('Run Tests'),
+      header: LogoPageHeader(
+        title: 'Run Tests',
         commandBar: CommandBar(
           mainAxisAlignment: MainAxisAlignment.end,
           primaryItems: [

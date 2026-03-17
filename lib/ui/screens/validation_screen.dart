@@ -23,6 +23,7 @@ import '../widgets/arm_visual.dart';
 import '../widgets/elevator_visual.dart';
 import '../widgets/flywheel_visual.dart';
 import '../widgets/jog_panel.dart';
+import '../widgets/logo_header.dart';
 
 class ValidationScreen extends ConsumerStatefulWidget {
   const ValidationScreen({super.key});
@@ -154,24 +155,20 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     final posUnit = config.positionUnit;
 
     return ScaffoldPage(
-      header: PageHeader(
-        title: Row(
+      header: LogoPageHeader(
+        title: 'Validation',
+        commandBar: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Validation'),
-            const Spacer(),
-            const SizedBox(width: 12),
-            const Text('Allowed CL Error',style: TextStyle(fontSize: 11),),
+            const Text('Allowed CL Error', style: TextStyle(fontSize: 11)),
             const SizedBox(width: 5),
-            
             SizedBox(
               width: 170,
               child: TextBox(
                 controller: _clErrorCtrl,
                 enabled: !_isRunning,
-                // placeholder: 'Allowed CL Error',
               ),
-            )
-            
+            ),
           ],
         ),
       ),

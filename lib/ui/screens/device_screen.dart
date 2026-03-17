@@ -14,6 +14,7 @@ import '../../devices/serial_port_factory.dart'
 import '../../mechanisms/mechanism.dart';
 import '../../simulation/simulated_device.dart';
 import '../../state/app_state.dart';
+import '../widgets/logo_header.dart';
 
 class DeviceScreen extends ConsumerStatefulWidget {
   const DeviceScreen({super.key});
@@ -231,7 +232,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     ).firstOrNull;
 
     return ScaffoldPage.scrollable(
-      header: const PageHeader(title: Text('Device Setup')),
+      header: const LogoPageHeader(title: 'Device Setup'),
       children: [
         // Auto-connect section
         const Text(

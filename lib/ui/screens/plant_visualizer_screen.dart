@@ -18,6 +18,7 @@ import '../../simulation/flywheel_physics.dart';
 import '../../simulation/arm_physics.dart';
 import '../../simulation/elevator_physics.dart';
 import '../widgets/chart_walkthrough.dart';
+import '../widgets/logo_header.dart';
 
 // ---------------------------------------------------------------------------
 // Data classes
@@ -265,8 +266,8 @@ class _PlantVisualizerScreenState
   @override
   Widget build(BuildContext context) {
     return ScaffoldPage.scrollable(
-      header: PageHeader(
-        title: const Text('Plant Model Visualizer'),
+      header: LogoPageHeader(
+        title: 'Plant Model Visualizer',
         commandBar: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

@@ -5,6 +5,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../state/app_state.dart';
+import '../widgets/logo_header.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -12,7 +13,7 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return ScaffoldPage.scrollable(
-      header: const PageHeader(title: Text('Welcome')),
+      header: const LogoPageHeader(title: 'Welcome'),
       children: [
         const InfoBar(
           title: Text("Crumboe's (unofficial) REV System Identification Tool"),
@@ -25,7 +26,7 @@ class HomeScreen extends ConsumerWidget {
         ),
         FilledButton(
           onPressed: () => launchUrl(
-            Uri.parse('https://paypal.me/crumboe22'),
+            Uri.parse('https://www.paypal.com/donate/?business=X4EXECMESSG5N&no_recurring=1&currency_code=USD'),
             mode: LaunchMode.externalApplication,
           ),
           child: const Row(

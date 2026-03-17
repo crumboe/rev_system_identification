@@ -17,6 +17,7 @@ import '../widgets/concept_panel.dart';
 import '../widgets/elevator_visual.dart';
 import '../widgets/expression_field.dart';
 import '../widgets/jog_panel.dart';
+import '../widgets/logo_header.dart';
 
 class ConfigScreen extends ConsumerStatefulWidget {
   const ConfigScreen({super.key});
@@ -331,7 +332,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     final isConnected = device != null && device.isConnected;
 
     return ScaffoldPage.scrollable(
-      header: const PageHeader(title: Text('Configuration')),
+      header: const LogoPageHeader(title: 'Configuration'),
       children: [
         // Hardware damage warning for gravity-loaded mechanisms
         if (config.type.requiresSoftLimits &&

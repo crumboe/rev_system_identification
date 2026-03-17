@@ -15,6 +15,7 @@ import '../../can/spark_protocol.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
+import '../widgets/logo_header.dart';
 
 // ---------------------------------------------------------------------------
 // Parameter descriptor model
@@ -796,8 +797,8 @@ class _DeviceConfigScreenState extends ConsumerState<DeviceConfigScreen> {
     final isConnected = device != null && device.isConnected;
 
     return ScaffoldPage(
-      header: PageHeader(
-        title: const Text('Device Parameters'),
+      header: LogoPageHeader(
+        title: 'Device Parameters',
         commandBar: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

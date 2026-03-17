@@ -27,6 +27,7 @@ import '../widgets/control_block_diagram.dart';
 import '../widgets/pid_playground.dart';
 import '../widgets/pole_zero_map.dart';
 import '../widgets/matrix_equation_visual.dart';
+import '../widgets/logo_header.dart';
 
 class ResultsScreen extends ConsumerStatefulWidget {
   const ResultsScreen({super.key});
@@ -59,8 +60,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final canAnalyze = qsRuns.isNotEmpty && dynRuns.isNotEmpty;
 
     return ScaffoldPage.scrollable(
-      header: PageHeader(
-        title: const Text('Results'),
+      header: LogoPageHeader(
+        title: 'Results',
         commandBar: CommandBar(
           mainAxisAlignment: MainAxisAlignment.end,
           overflowBehavior: CommandBarOverflowBehavior.dynamicOverflow,

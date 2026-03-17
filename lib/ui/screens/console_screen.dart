@@ -13,6 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../can/comms_log.dart';
 import '../../state/app_state.dart';
+import '../widgets/logo_header.dart';
 
 class ConsoleScreen extends ConsumerStatefulWidget {
   const ConsoleScreen({super.key});
@@ -110,8 +111,8 @@ class _ConsoleScreenState extends ConsumerState<ConsoleScreen> {
     final filtered = _filtered;
 
     return ScaffoldPage(
-      header: PageHeader(
-        title: const Text('Console'),
+      header: LogoPageHeader(
+        title: 'Console',
         commandBar: CommandBar(
           mainAxisAlignment: MainAxisAlignment.end,
           compactBreakpointWidth: 600,

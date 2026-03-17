@@ -4,6 +4,7 @@ library;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../data/project_file.dart';
 import '../devices/serial_port_factory.dart' show isWebSerialAvailable;
@@ -169,6 +170,14 @@ class _AppShellState extends ConsumerState<AppShell> {
 
         ],
         footerItems: [
+          PaneItemAction(
+            icon: const Icon(FluentIcons.heart),
+            title: const Text('Leave a Tip'),
+            onTap: () => launchUrl(
+              Uri.parse('https://www.paypal.com/donate/?business=X4EXECMESSG5N&no_recurring=1&currency_code=USD'),
+              mode: LaunchMode.externalApplication,
+            ),
+          ),
           PaneItemAction(
             icon: const Icon(FluentIcons.save),
             title: const Text('Save Project'),
