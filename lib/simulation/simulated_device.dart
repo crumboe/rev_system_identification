@@ -72,11 +72,19 @@ class SimulatedSparkConnection implements ISparkConnection {
     );
   }
 
-  void _tick() {
-    // Run closed-loop PID+FF controller before physics step.
-    controlApi?.tick(0.010);
+  /// Number of 1 ms sub-steps per timer tick.
+  /// Matches the real SPARK MAX/Flex 1 kHz PID loop rate.
+  static const _subStepsPerTick = 10;
+  static const _subStepDt = 0.001; // 1 ms
 
-    physics.step(physics.commandedVoltage, 0.010);
+  void _tick() {
+    // Subdivide the 10 ms tick into 1 ms sub-steps so the PID runs at 1 kHz,
+    // matching real SPARK firmware and eliminating discretisation-induced
+    // oscillation that occurs at 100 Hz.
+    for (var i = 0; i < _subStepsPerTick; i++) {
+      controlApi?.tick(_subStepDt);
+      physics.step(physics.commandedVoltage, _subStepDt);
+    }
 
     // Compute the applied output (duty cycle) from commanded voltage.
     final appliedOutput = physics.nominalVoltage > 0
@@ -234,6 +242,12 @@ class SimulatedPidFfController {
     kParamSlot2IZone,
     kParamSlot3IZone,
   ];
+  static const List<int> _pidDFilterBySlot = [
+    kParamSlot0DFilter,
+    kParamSlot1DFilter,
+    kParamSlot2DFilter,
+    kParamSlot3DFilter,
+  ];
   static const List<int> _pidMaxOutBySlot = [
     kParamSlot0MaxOutput,
     kParamSlot1MaxOutput,
@@ -287,6 +301,7 @@ class SimulatedPidFfController {
 
   double _integralAccum = 0.0;
   double _prevError = 0.0;
+  double _filteredDerivative = 0.0;
   double _prevVelocitySetpointRpm = 0.0;
   bool _firstVelocityTick = true;
   bool _firstTick = true;
@@ -297,6 +312,7 @@ class SimulatedPidFfController {
   void reset() {
     _integralAccum = 0.0;
     _prevError = 0.0;
+    _filteredDerivative = 0.0;
     _prevVelocitySetpointRpm = 0.0;
     _firstVelocityTick = true;
     _firstTick = true;
@@ -312,6 +328,7 @@ class SimulatedPidFfController {
     final kP = _params.getParamSync(_pidPBySlot[s]);
     final kI = _params.getParamSync(_pidIBySlot[s]);
     final kD = _params.getParamSync(_pidDBySlot[s]);
+    final dFilterAlpha = _params.getParamSync(_pidDFilterBySlot[s]);
     final iZone = _params.getParamSync(_pidIZoneBySlot[s]);
     final maxOut = _params.getParamSync(_pidMaxOutBySlot[s]);
     final minOut = _params.getParamSync(_pidMinOutBySlot[s]);
@@ -345,9 +362,15 @@ class SimulatedPidFfController {
     }
 
     // Derivative (skip first tick to avoid spike)
-    final derivative = _firstTick ? 0.0 : (error - _prevError) / dtSeconds;
+    double derivative = _firstTick ? 0.0 : (error - _prevError) / dtSeconds;
     _prevError = error;
     _firstTick = false;
+
+    // Apply D-filter EMA: filtered = (1-α)·raw + α·prev_filtered
+    if (dFilterAlpha > 0.0 && dFilterAlpha < 1.0) {
+      _filteredDerivative = (1.0 - dFilterAlpha) * derivative + dFilterAlpha * _filteredDerivative;
+      derivative = _filteredDerivative;
+    }
 
     // PID output is in duty-cycle units (autotuner divides by nominalVoltage).
     // Convert to volts so it can be summed with feedforward (which is in volts).
@@ -384,6 +407,7 @@ class SimulatedPidFfController {
     final kP = _params.getParamSync(_pidPBySlot[s]);
     final kI = _params.getParamSync(_pidIBySlot[s]);
     final kD = _params.getParamSync(_pidDBySlot[s]);
+    final dFilterAlpha = _params.getParamSync(_pidDFilterBySlot[s]);
     final iZone = _params.getParamSync(_pidIZoneBySlot[s]);
     final maxOut = _params.getParamSync(_pidMaxOutBySlot[s]);
     final minOut = _params.getParamSync(_pidMinOutBySlot[s]);
@@ -410,9 +434,15 @@ class SimulatedPidFfController {
 
     // Derivative: SPARK position PID uses measured velocity for the D term.
     // Convert raw velocity to user units via VCF.
-    final derivative = _firstTick ? 0.0 : -_physics.noisyVelocityRpm * vcf;
+    double derivative = _firstTick ? 0.0 : -_physics.noisyVelocityRpm * vcf;
     _prevError = error;
     _firstTick = false;
+
+    // Apply D-filter EMA: filtered = (1-α)·raw + α·prev_filtered
+    if (dFilterAlpha > 0.0 && dFilterAlpha < 1.0) {
+      _filteredDerivative = (1.0 - dFilterAlpha) * derivative + dFilterAlpha * _filteredDerivative;
+      derivative = _filteredDerivative;
+    }
 
     // PID output is in duty-cycle units (autotuner divides by nominalVoltage).
     // Convert to volts so it can be summed with feedforward (which is in volts).

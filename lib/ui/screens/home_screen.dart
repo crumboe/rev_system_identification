@@ -3,7 +3,7 @@ library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 import '../../state/app_state.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -22,6 +22,20 @@ class HomeScreen extends ConsumerWidget {
           ),
           severity: InfoBarSeverity.info,
           isLong: true,
+        ),
+        FilledButton(
+          onPressed: () => launchUrl(
+            Uri.parse('https://paypal.me/crumboe22'),
+            mode: LaunchMode.externalApplication,
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(FluentIcons.heart, size: 16),
+              SizedBox(width: 8),
+              Text('Leave a Tip'),
+            ],
+          ),
         ),
         const SizedBox(height: 24),
         const Text(

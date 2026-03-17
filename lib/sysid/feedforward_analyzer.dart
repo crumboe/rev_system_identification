@@ -85,7 +85,10 @@ class FeedforwardAnalyzer {
         kA = stage2.kA;
         kG = stage2.kG;
       } else {
-        kA = _regressDynamicKa(dynData, kS, kV, 0.0, false);
+        // Try exponential time-constant fit first (more robust at low
+        // voltages where finite-difference acceleration is noisy).
+        final kaExp = _estimateKaFromTimeConstant(dynamicRuns, kS, kV);
+        kA = kaExp ?? _regressDynamicKa(dynData, kS, kV, 0.0, false);
       }
     }
 
@@ -159,6 +162,91 @@ class FeedforwardAnalyzer {
       kV: beta[1],
       kG: hasGravity ? beta[2] : 0.0,
     );
+  }
+
+  /// Estimate kA from exponential time-constant fitting on dynamic runs.
+  ///
+  /// For a step input V, the first-order motor model predicts:
+  ///   v(t) = v_ss · (1 − e^{−t/τ})
+  /// where v_ss = (|V| − kS) / kV and τ = kA / kV.
+  ///
+  /// Linearising: ln(1 − |v|/v_ss) = −(1/τ)·t, so a linear regression
+  /// on the transformed data yields τ, and kA = τ·kV.
+  ///
+  /// Returns null if the fit fails (too few points, bad slope, etc.),
+  /// signalling the caller to fall back to finite-difference regression.
+  static double? _estimateKaFromTimeConstant(
+    List<TestRun> dynamicRuns,
+    double kS,
+    double kV,
+  ) {
+    if (kV <= 0) return null;
+
+    final tauEstimates = <double>[];
+
+    for (final run in dynamicRuns) {
+      final data = run.data;
+      if (data.length < 20) continue;
+
+      // Determine the actual applied step voltage from the data.
+      // Dynamic runs apply a constant voltage, so use the median |V|.
+      final voltages = data.map((pt) => pt.voltage.abs()).toList()..sort();
+      final stepVoltage = voltages[voltages.length ~/ 2];
+      if (stepVoltage < kS) continue; // motor won't overcome friction
+
+      final sign = run.testType.isForward ? 1.0 : -1.0;
+
+      // Steady-state velocity this step should approach.
+      final vSs = (stepVoltage - kS) / kV;
+      if (vSs <= 0) continue; // motor won't move
+
+      // Find t₀: the first timestamp where the step voltage is actually
+      // applied. Use the first sample as t₀.
+      final t0 = data.first.timestamp;
+
+      // Collect (t, y) pairs where y = ln(1 − |v|/v_ss).
+      final ts = <double>[];
+      final ys = <double>[];
+
+      for (final pt in data) {
+        final v = sign * pt.velocity; // always positive for a valid run
+        final ratio = v / vSs;
+        // Trim: skip breakaway region and near-saturation region
+        if (ratio < 0.01 || ratio > 0.95) continue;
+
+        final y = math.log(1.0 - ratio);
+        ts.add(pt.timestamp - t0);
+        ys.add(y);
+      }
+
+      if (ts.length < 10) continue;
+
+      // Simple linear regression: y = slope·t + intercept
+      // slope = −1/τ
+      var sumT = 0.0, sumY = 0.0, sumTT = 0.0, sumTY = 0.0;
+      final n = ts.length;
+      for (var i = 0; i < n; i++) {
+        sumT += ts[i];
+        sumY += ys[i];
+        sumTT += ts[i] * ts[i];
+        sumTY += ts[i] * ys[i];
+      }
+      final denom = n * sumTT - sumT * sumT;
+      if (denom.abs() < 1e-20) continue;
+
+      final slope = (n * sumTY - sumT * sumY) / denom;
+      // slope must be negative (τ must be positive)
+      if (slope >= 0) continue;
+
+      final tau = -1.0 / slope;
+      tauEstimates.add(tau);
+    }
+
+    if (tauEstimates.isEmpty) return null;
+
+    final tau = _median(tauEstimates);
+    final kA = tau * kV;
+    return kA > 0 ? kA : null;
   }
 
   /// Stage 2 (no gravity): simple linear regression V_residual = kA · α.

@@ -453,6 +453,7 @@ class ValidationRunner {
       i: pid.kI,
       d: pid.kD,
       f: 0.0,
+      dFilter: pid.dFilter,
     );
     await device.parameters.setAllowedClosedLoopError0(
         pid.allowedClosedLoopError);

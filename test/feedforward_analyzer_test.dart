@@ -247,6 +247,133 @@ void main() {
   });
 
   // =========================================================================
+  // Flywheel: exponential time-constant kA estimator
+  // =========================================================================
+
+  group('Flywheel exponential kA (low voltage)', () {
+    const trueKs = 0.14;
+    const trueKv = 0.0185;
+    const trueKa = 0.003;
+
+    late FeedforwardGains gains;
+
+    setUpAll(() {
+      final qsFwd = _generateQuasistatic(
+        kS: trueKs, kV: trueKv, kG: 0, mechType: MechanismType.flywheel,
+        forward: true,
+      );
+      final qsRev = _generateQuasistatic(
+        kS: trueKs, kV: trueKv, kG: 0, mechType: MechanismType.flywheel,
+        forward: false,
+      );
+      // Use a LOW step voltage (2V) where finite-difference kA is noisy
+      final dynFwd = _generateDynamic(
+        kS: trueKs, kV: trueKv, kA: trueKa, kG: 0,
+        mechType: MechanismType.flywheel, forward: true,
+        stepVoltage: 2.0, durationSeconds: 3.0,
+      );
+      final dynRev = _generateDynamic(
+        kS: trueKs, kV: trueKv, kA: trueKa, kG: 0,
+        mechType: MechanismType.flywheel, forward: false,
+        stepVoltage: 2.0, durationSeconds: 3.0,
+      );
+
+      gains = FeedforwardAnalyzer.analyze(
+        quasistaticRuns: [qsFwd, qsRev],
+        dynamicRuns: [dynFwd, dynRev],
+        mechanismType: MechanismType.flywheel,
+      );
+    });
+
+    test('kA is recovered at low voltage', () {
+      expect(gains.kA, closeTo(trueKa, trueKa * 0.10));
+    });
+
+    test('kV is recovered at low voltage', () {
+      expect(gains.kV, closeTo(trueKv, trueKv * 0.10));
+    });
+
+    test('kS is recovered at low voltage', () {
+      expect(gains.kS, closeTo(trueKs, trueKs * 0.15 + 0.06));
+    });
+  });
+
+  group('Flywheel exponential kA (noisy data)', () {
+    const trueKs = 0.14;
+    const trueKv = 0.0185;
+    const trueKa = 0.003;
+
+    late FeedforwardGains gains;
+
+    setUpAll(() {
+      final rng = math.Random(42);
+
+      final qsFwd = _generateQuasistatic(
+        kS: trueKs, kV: trueKv, kG: 0, mechType: MechanismType.flywheel,
+        forward: true,
+      );
+      final qsRev = _generateQuasistatic(
+        kS: trueKs, kV: trueKv, kG: 0, mechType: MechanismType.flywheel,
+        forward: false,
+      );
+
+      // Generate dynamic runs and add velocity noise
+      TestRun addNoise(TestRun run, double noiseStdDev) {
+        final noisyData = run.data.map((pt) {
+          final noise = noiseStdDev * _gaussianNoise(rng);
+          return DataPoint(
+            timestamp: pt.timestamp,
+            voltage: pt.voltage,
+            velocity: pt.velocity + noise,
+            position: pt.position,
+            current: pt.current,
+          );
+        }).toList();
+        return TestRun(
+          id: run.id,
+          startTime: run.startTime,
+          mechanismType: run.mechanismType,
+          testType: run.testType,
+          data: noisyData,
+          durationSeconds: run.durationSeconds,
+          testParams: run.testParams,
+        );
+      }
+
+      final dynFwd = addNoise(
+        _generateDynamic(
+          kS: trueKs, kV: trueKv, kA: trueKa, kG: 0,
+          mechType: MechanismType.flywheel, forward: true,
+          stepVoltage: 7.0, durationSeconds: 3.0,
+        ),
+        5.0, // noise stddev in RPM
+      );
+      final dynRev = addNoise(
+        _generateDynamic(
+          kS: trueKs, kV: trueKv, kA: trueKa, kG: 0,
+          mechType: MechanismType.flywheel, forward: false,
+          stepVoltage: 7.0, durationSeconds: 3.0,
+        ),
+        5.0,
+      );
+
+      gains = FeedforwardAnalyzer.analyze(
+        quasistaticRuns: [qsFwd, qsRev],
+        dynamicRuns: [dynFwd, dynRev],
+        mechanismType: MechanismType.flywheel,
+      );
+    });
+
+    test('kA is recovered despite noise', () {
+      expect(gains.kA, closeTo(trueKa, trueKa * 0.25));
+    });
+
+    test('R-squared is above 0.8', () {
+      expect(gains.rSquared, greaterThan(0.8));
+    });
+  });
+
+  // =========================================================================
   // Edge cases
   // =========================================================================
 
@@ -313,4 +440,11 @@ void main() {
       expect(gains.rSquared, equals(0.0));
     });
   });
+}
+
+/// Box-Muller transform to generate Gaussian noise from uniform RNG.
+double _gaussianNoise(math.Random rng) {
+  final u1 = rng.nextDouble();
+  final u2 = rng.nextDouble();
+  return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2);
 }

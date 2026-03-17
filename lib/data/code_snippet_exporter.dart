@@ -118,6 +118,8 @@ class CodeSnippetExporter {
     final kA = _fmt(ff.kA);
     final kG = _fmt(ff.kG);
     final hasGravity = config.type.hasGravity;
+    final posDFilter = positionPid != null && positionPid.dFilter > 0
+        ? _fmt(positionPid.dFilter) : null;
 
     final gravityLine = hasGravity ? '\n                .kG($kG)' : '';
 
@@ -134,11 +136,13 @@ class CodeSnippetExporter {
                 .kA($kA)$gravityLine;''' : '';
 
     // Position PID — Slot 1
+    final posDFilterLine = posDFilter != null
+        ? '\n                .dFilter($posDFilter)' : '';
     final posSlot = positionPid != null ? '''
 
         // --- Position PID (Slot 1) ---
         config.closedLoop.slot1
-                .pid($posP, $posI, $posD);
+                .pid($posP, $posI, $posD)$posDFilterLine;
         config.closedLoop.slot1.feedForward
                 .kS($kS)
                 .kV($kV)
@@ -254,6 +258,8 @@ $velSlot$posSlot$javaSoftLimits
     final posP = positionPid != null ? _fmt(positionPid.kP) : '0.000000';
     final posI = positionPid != null ? _fmt(positionPid.kI) : '0.000000';
     final posD = positionPid != null ? _fmt(positionPid.kD) : '0.000000';
+    final pyPosDFilter = positionPid != null && positionPid.dFilter > 0
+        ? _fmt(positionPid.dFilter) : null;
 
     final kS = _fmt(ff.kS);
     final kV = _fmt(ff.kV);
@@ -286,7 +292,7 @@ $ffLines''' : '';
     final posSection = positionPid != null ? '''
 
         # --- Position PID (Slot 1) ---
-        config.closedLoop.slot1.pid($posP, $posI, $posD)
+        config.closedLoop.slot1.pid($posP, $posI, $posD)${pyPosDFilter != null ? '\n        config.closedLoop.slot1.dFilter($pyPosDFilter)' : ''}
 $ffLinesSlot1''' : '';
 
     final pySoftLimits = config.hasSoftLimits ? '''
@@ -395,6 +401,8 @@ $velSection$posSection$pySoftLimits
     final kA = _fmt(ff.kA);
     final kG = _fmt(ff.kG);
     final hasGravity = config.type.hasGravity;
+    final cppPosDFilter = positionPid != null && positionPid.dFilter > 0
+        ? _fmt(positionPid.dFilter) : null;
 
     final ffLines = StringBuffer()
       ..writeln('    config.closedLoop.feedForward.kS($kS);')
@@ -421,7 +429,7 @@ $ffLines''' : '';
     final posSection = positionPid != null ? '''
 
     // --- Position PID (Slot 1) ---
-    config.closedLoop.slot1.Pid($posP, $posI, $posD);
+    config.closedLoop.slot1.Pid($posP, $posI, $posD);${cppPosDFilter != null ? '\n    config.closedLoop.slot1.DFilter($cppPosDFilter);' : ''}
 $ffLinesSlot1''' : '';
 
     final cppSoftLimits = config.hasSoftLimits ? '''

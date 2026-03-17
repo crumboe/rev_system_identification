@@ -118,8 +118,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           children: [
             FilledButton(
               onPressed:
-                  canAnalyze ? () => _runAnalysis(qsRuns, dynRuns, config,
-                      tuningParams: ref.read(pidTuningParamsProvider)) : null,
+                  canAnalyze ? () => _runAnalysis(qsRuns, dynRuns, config) : null,
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Text('Compute Feedforward & PID'),
@@ -652,15 +651,24 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   void _runAnalysis(
     List<TestRun> qsRuns,
     List<TestRun> dynRuns,
-    MechanismConfig config, {
-    PidTuningParams tuningParams = const PidTuningParams(),
-  }) {
+    MechanismConfig config,
+  ) {
     try {
       final ff = FeedforwardAnalyzer.analyze(
         quasistaticRuns: qsRuns,
         dynamicRuns: dynRuns,
         mechanismType: config.type,
       );
+
+      // Compute and apply plant-optimal defaults.  If the user hasn't
+      // changed the sliders, this updates them to match the plant.
+      final (optTau, optBw) = PidAutoTuner.optimalDefaults(ff);
+      ref.read(pidTuningParamsProvider.notifier).setOptimalDefaults(
+        optTau, optBw,
+      );
+
+      // Read the (possibly updated) tuning params.
+      final tuningParams = ref.read(pidTuningParamsProvider);
 
       final velPid = PidAutoTuner.tuneVelocity(
         ff: ff,
@@ -735,6 +743,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             i: _posPid!.kI,
             d: _posPid!.kD,
             f: 0.0,
+            dFilter: _posPid!.dFilter,
           );
           await device.parameters.setAllowedClosedLoopError0(
               _posPid!.allowedClosedLoopError);
@@ -1284,10 +1293,16 @@ class _TuningParametersPanelState
   @override
   Widget build(BuildContext context) {
     final params = ref.watch(pidTuningParamsProvider);
+    final notifier = ref.read(pidTuningParamsProvider.notifier);
     final theme = FluentTheme.of(context);
-    final isDefault = params.velocityTimeConstantMs == 100.0 &&
-        params.positionBandwidthHz == 5.0 &&
-        params.dampingRatio == 1.0;
+    final isDefault = notifier.isAtDefaults;
+
+    // Sync text controllers when state changes externally (e.g. optimal
+    // defaults set after feedforward analysis).
+    final tauText = params.velocityTimeConstantMs.round().toString();
+    if (_tauController.text != tauText) _tauController.text = tauText;
+    final bwText = params.positionBandwidthHz.toStringAsFixed(1);
+    if (_bwController.text != bwText) _bwController.text = bwText;
 
     return Expander(
       header: Row(
@@ -1371,7 +1386,7 @@ class _TuningParametersPanelState
             padding: const EdgeInsets.only(left: 200),
             child: Text(
               'Smaller → faster velocity response, less stability margin. '
-              'Default: 100 ms.',
+              'Optimal: ${notifier.optimalTauMs.round()} ms.',
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
@@ -1422,7 +1437,7 @@ class _TuningParametersPanelState
             padding: const EdgeInsets.only(left: 200),
             child: Text(
               'Higher → faster position response, more sensitive to noise. '
-              'Default: 5.0 Hz.',
+              'Optimal: ${notifier.optimalBwHz.toStringAsFixed(1)} Hz.',
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
@@ -1437,13 +1452,12 @@ class _TuningParametersPanelState
             Button(
               onPressed: () {
                 ref.read(pidTuningParamsProvider.notifier).reset();
-                final defaults = const PidTuningParams();
                 _tauController.text =
-                    defaults.velocityTimeConstantMs.toStringAsFixed(0);
+                    notifier.optimalTauMs.round().toString();
                 _bwController.text =
-                    defaults.positionBandwidthHz.toStringAsFixed(1);
+                    notifier.optimalBwHz.toStringAsFixed(1);
               },
-              child: const Text('Reset to Defaults'),
+              child: const Text('Reset to Optimal'),
             ),
         ],
       ),
@@ -1559,6 +1573,9 @@ class _PidCardState extends State<_PidCard> {
             tooltip: _pidUnitNote),
           _GainRow('kI', widget.pid.kI.toStringAsFixed(6)),
           _GainRow('kD', widget.pid.kD.toStringAsFixed(6)),
+          if (widget.mode == _PidMode.position && widget.pid.dFilter > 0)
+            _GainRow('D Filter', widget.pid.dFilter.toStringAsFixed(4),
+              tooltip: 'EMA low-pass on derivative (0=off, higher=more smoothing)'),
           const SizedBox(height: 8),
           SizedBox(
             width: 260,
@@ -1691,6 +1708,11 @@ class _PidCardState extends State<_PidCard> {
               Text('   = ${widget.pid.kD.toStringAsFixed(6)}  ${widget.pid.kD == 0 ? "(clamped \u2265 0)" : ""}', style: monoStyle),
               const SizedBox(height: 4),
               Text('kI = 0  (not needed for position)', style: monoStyle),
+              if (widget.pid.dFilter > 0) ...[
+                const SizedBox(height: 4),
+                Text('D Filter = 1 / (1 + 2\u03c0 \u00b7 8 \u00b7 BW \u00b7 T\u209b)', style: monoStyle),
+                Text('        = ${widget.pid.dFilter.toStringAsFixed(4)}  (EMA \u03b1 on derivative)', style: monoStyle),
+              ],
             ],
           ),
         ),

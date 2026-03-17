@@ -142,20 +142,22 @@ void main() {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
 
     test('velocity PID kP scales inversely with time constant', () {
+      // Plant τ = kA/kV ≈ 162 ms.  Use values above plant τ to avoid
+      // clamping so we can test the pure scaling relationship.
       final pidDefault = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 100.0,
+        desiredTimeConstantMs: 250.0,
       );
       final pidFast = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 50.0,
+        desiredTimeConstantMs: 200.0,
       );
       final pidSlow = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 200.0,
+        desiredTimeConstantMs: 400.0,
       );
 
       // Faster time constant → higher kP.
@@ -163,29 +165,34 @@ void main() {
       // Slower time constant → lower kP.
       expect(pidSlow.kP, lessThan(pidDefault.kP));
       // kP should be exactly kA/tau/12.
-      expect(pidFast.kP, closeTo(ff.kA / 0.050 / 12.0, 1e-9));
-      expect(pidSlow.kP, closeTo(ff.kA / 0.200 / 12.0, 1e-9));
+      expect(pidFast.kP, closeTo(ff.kA / 0.200 / 12.0, 1e-9));
+      expect(pidSlow.kP, closeTo(ff.kA / 0.400 / 12.0, 1e-9));
       // Tuning parameter is stored in result.
-      expect(pidFast.velocityTimeConstantMs, equals(50.0));
-      expect(pidSlow.velocityTimeConstantMs, equals(200.0));
-      expect(pidDefault.velocityTimeConstantMs, equals(100.0));
+      expect(pidFast.velocityTimeConstantMs, equals(200.0));
+      expect(pidSlow.velocityTimeConstantMs, equals(400.0));
+      expect(pidDefault.velocityTimeConstantMs, equals(250.0));
     });
 
     test('position PID gains scale with bandwidth', () {
+      // Plant τ ≈ 162 ms → BW cap ≈ 1.97 Hz.  Use values below the cap
+      // and disable transport delay to isolate the bandwidth scaling.
       final pidDefault = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 5.0,
+        desiredBandwidthHz: 1.0,
+        transportDelaySec: 0,
       );
       final pidFast = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 10.0,
+        desiredBandwidthHz: 1.5,
+        transportDelaySec: 0,
       );
       final pidSlow = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 2.0,
+        desiredBandwidthHz: 0.5,
+        transportDelaySec: 0,
       );
 
       // Higher bandwidth → higher kP (ω² scales quadratically).
@@ -194,13 +201,13 @@ void main() {
 
       // Verify exact kP = r * kA * ω² / 12     (r=60 for flywheel).
       const pi = 3.14159265;
-      final omega10 = 2.0 * pi * 10.0;
-      expect(pidFast.kP, closeTo(60.0 * ff.kA * omega10 * omega10 / 12.0, 1e-4));
+      final omega1_5 = 2.0 * pi * 1.5;
+      expect(pidFast.kP, closeTo(60.0 * ff.kA * omega1_5 * omega1_5 / 12.0, 1e-4));
 
       // Tuning parameter is stored in result.
-      expect(pidFast.positionBandwidthHz, equals(10.0));
-      expect(pidSlow.positionBandwidthHz, equals(2.0));
-      expect(pidDefault.positionBandwidthHz, equals(5.0));
+      expect(pidFast.positionBandwidthHz, equals(1.5));
+      expect(pidSlow.positionBandwidthHz, equals(0.5));
+      expect(pidDefault.positionBandwidthHz, equals(1.0));
     });
 
     test('default tuning params match original hardcoded values', () {

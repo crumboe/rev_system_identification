@@ -8,10 +8,12 @@ library;
 import 'dart:math' as math;
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/gestures.dart' show PointerScrollEvent, PointerSignalEvent;
 import 'package:flutter/material.dart' show Material;
 
 import '../../data/test_data.dart';
 import '../../mechanisms/mechanism.dart' show MechanismType;
+import '../../sysid/pid_autotuner.dart' show PidAutoTuner;
 import 'chart_walkthrough.dart';
 
 // ──────────────────────────────────────────────────────────────────────
@@ -69,6 +71,8 @@ class _PoleZeroMapState extends State<PoleZeroMap>
     super.build(context);
     final pid = _activePid;
     final poles = _computePoles(widget.ff, pid, _mode, widget.mechanismType);
+    final delayPoles = _computeDelayAdjustedPoles(
+        widget.ff, pid, _mode, widget.mechanismType);
 
     final chart = Card(
       child: Column(
@@ -147,6 +151,7 @@ class _PoleZeroMapState extends State<PoleZeroMap>
           Expanded(
             child: _SPlaneCanvas(
               poles: poles,
+              delayPoles: delayPoles,
               ff: widget.ff,
               pid: pid,
               mode: _mode,
@@ -169,7 +174,8 @@ class _PoleZeroMapState extends State<PoleZeroMap>
       spacing: 14,
       runSpacing: 4,
       children: [
-        _legendMarker(color: _stablePoleColor, label: 'Closed-loop pole', isX: true),
+        _legendMarker(color: _stablePoleColor, label: 'Closed-loop pole (ideal)', isX: true),
+        _legendMarker(color: _delayPoleColor, label: 'With transport delay', isX: true),
         _legendMarker(color: _openLoopPoleColor, label: 'Open-loop pole', isX: false),
         _colorBox(
             color: _rootLocusColor.withValues(alpha: 0.7),
@@ -286,16 +292,6 @@ List<_Complex> _computePoles(
       return _solveQuadratic(kA, kV + kPv, kIv);
 
     case PoleZeroMode.position:
-      // The plant from voltage to position (user units) is:
-      //   G(s) = 1 / (r·kA·s² + r·kV·s)
-      // where r = velocity-to-position rate factor (60 for flywheel, 1 for arm).
-      //
-      // SPARK PID output: V = V_nom·(kP·pos_error − kD·velocity)
-      //
-      // Closed-loop characteristic (with PID+I):
-      //   r·kA·s³ + r·(kV + kD_v)·s² + kP_v·s + kI_v = 0
-      // When kI = 0 (PD):
-      //   r·kA·s² + r·(kV + kD_v)·s + kP_v = 0
       final r = _velocityToPositionRateFactor(mechanismType);
       final kPv = (pid?.kP ?? 0.0) * nomV;
       final kDv = (pid?.kD ?? 0.0) * nomV;
@@ -305,6 +301,83 @@ List<_Complex> _computePoles(
         return _solveQuadratic(r * kA, r * (kV + kDv), kPv);
       }
       return _solveCubic(r * kA, r * (kV + kDv), kPv, kIv);
+  }
+}
+
+/// Compute closed-loop poles WITH a first-order Padé transport delay.
+///
+/// The Padé approximation e^{-sT} ≈ (1 − sT/2) / (1 + sT/2) adds one
+/// pole and one zero to the loop gain, raising the characteristic equation
+/// order by one.  This reveals oscillatory behaviour that the ideal
+/// (delay-free) poles miss.
+///
+/// For example, the position PD loop (normally 2nd-order) becomes
+/// 3rd-order, and the additional pole may have a complex part — exactly
+/// the oscillation the user observes on real hardware.
+List<_Complex> _computeDelayAdjustedPoles(
+    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
+    [MechanismType? mechanismType,
+    double transportDelaySec = PidAutoTuner.defaultTransportDelaySec]) {
+  final kA = ff.kA;
+  final kV = ff.kV;
+  if (kA <= 0 || transportDelaySec <= 0) return [];
+  if (pid == null) return [];
+
+  const nomV = 12.0;
+  final h = transportDelaySec / 2.0; // half-delay for Padé
+
+  switch (mode) {
+    case PoleZeroMode.velocity:
+      // Ideal: kA·s + kV + kPv = 0 (1st order, single real pole)
+      // With Padé delay on the controller:
+      //   (kA·s + kV)(1 + hs) + kPv(1 - hs) = 0
+      //   kA·h·s² + (kA + kV·h - kPv·h)·s + (kV + kPv) = 0
+      final kPv = pid.kP * nomV;
+      return _solveQuadratic(
+        kA * h,
+        kA + kV * h - kPv * h,
+        kV + kPv,
+      );
+
+    case PoleZeroMode.position:
+      final r = _velocityToPositionRateFactor(mechanismType);
+      final kPv = pid.kP * nomV;
+      final kDv = pid.kD * nomV;
+      final kIv = pid.kI * nomV;
+
+      if (kIv.abs() < 1e-12) {
+        // PD case: ideal is 2nd-order → delay makes 3rd-order
+        // (r·kA·s² + r·kV·s)(1 + hs) + (kPv + kDv·s)(1 - hs) = 0
+        // s³: r·kA·h
+        // s²: r·kA + r·kV·h − kDv·h
+        // s¹: r·kV − kPv·h + kDv
+        // s⁰: kPv
+        return _solveCubic(
+          r * kA * h,
+          r * kA + r * kV * h - kDv * h,
+          r * kV - kPv * h + kDv,
+          kPv,
+        );
+      }
+      // PID case: ideal is 3rd-order → delay makes 4th-order
+      // (r·kA·s³ + r·(kV+kDv)·s² + kPv·s + kIv)(1 + hs)
+      //   but we need the full closed-loop expansion with Padé.
+      // Plant denominator: D(s) = r·kA·s² + r·kV·s
+      // Controller: C(s) = kPv + kDv·s + kIv/s
+      // With Padé: 1 + C(s)/D(s) · (1-hs)/(1+hs) = 0
+      // → D(s)(1+hs) + [kPv·s + kDv·s² + kIv](1-hs) = 0
+      // s⁴: r·kA·h
+      // s³: r·kA + r·kV·h − kDv·h
+      // s²: r·kV − kPv·h + kDv
+      // s¹: kPv − kIv·h
+      // s⁰: kIv
+      return _solveQuartic(
+        r * kA * h,
+        r * kA + r * kV * h - kDv * h,
+        r * kV - kPv * h + kDv,
+        kPv - kIv * h,
+        kIv,
+      );
   }
 }
 
@@ -389,6 +462,68 @@ List<_Complex> _solveCubic(double a, double b, double c, double d) {
   }
 }
 
+/// Solve a quartic equation ax⁴ + bx³ + cx² + dx + e = 0.
+///
+/// Uses the companion-matrix eigenvalue approach via the cubic resolvent
+/// (Ferrari's method).  Falls back to cubic/quadratic for degenerate cases.
+List<_Complex> _solveQuartic(
+    double a, double b, double c, double d, double e) {
+  if (a.abs() < 1e-15) return _solveCubic(b, c, d, e);
+
+  // Normalize: x⁴ + Bx³ + Cx² + Dx + E = 0
+  final B = b / a;
+  final C = c / a;
+  final D = d / a;
+  final E = e / a;
+
+  // Depressed quartic via substitution x = t - B/4:
+  //   t⁴ + pt² + qt + r = 0
+  final p = C - 3 * B * B / 8;
+  final q = D - B * C / 2 + B * B * B / 8;
+  final r = E - B * D / 4 + B * B * C / 16 - 3 * B * B * B * B / 256;
+
+  // Resolvent cubic: y³ + (p/2)y² + ((p²-4r)/16)y - q²/64 = 0
+  // We need one real root y₁ to factor the depressed quartic.
+  final cubicRoots = _solveCubic(
+    1.0,
+    p / 2,
+    (p * p - 4 * r) / 16,
+    -q * q / 64,
+  );
+
+  // Pick the largest real root from the cubic resolvent.
+  double y1 = 0;
+  for (final root in cubicRoots) {
+    if (root.im.abs() < 1e-10 && root.re > y1) {
+      y1 = root.re;
+    }
+  }
+  // Ensure y1 is non-negative for the sqrt (numerical guard).
+  if (y1 < 0) y1 = 0;
+
+  final sqrtY1 = math.sqrt(y1);
+  final shift = -B / 4;
+
+  // Factor into two quadratics:
+  //   t² + sqrt(2y₁)·t + (y₁ + p/2 + q/(4·sqrt(2y₁))) = 0
+  //   t² - sqrt(2y₁)·t + (y₁ + p/2 - q/(4·sqrt(2y₁))) = 0
+  // (guard against sqrtY1 ≈ 0)
+  final s2y = math.sqrt(2) * sqrtY1;
+  final qTerm = (s2y.abs() > 1e-12) ? q / (4 * s2y) : 0.0;
+
+  final c1 = y1 + p / 2 + qTerm;
+  final c2 = y1 + p / 2 - qTerm;
+
+  final roots1 = _solveQuadratic(1, s2y, c1);
+  final roots2 = _solveQuadratic(1, -s2y, c2);
+
+  // Shift back from depressed form.
+  return [
+    for (final root in [...roots1, ...roots2])
+      _Complex(root.re + shift, root.im),
+  ];
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // s-plane CustomPainter
 // ──────────────────────────────────────────────────────────────────────
@@ -397,6 +532,8 @@ const Color _stableRegionColor = Color(0xFF44AA44);
 const Color _unstableRegionColor = Color(0xFFAA4444);
 const Color _stablePoleColor = Color(0xFF22BB22);
 const Color _unstablePoleColor = Color(0xFFDD3333);
+const Color _delayPoleColor = Color(0xFFDDAA00);
+const Color _delayPoleUnstableColor = Color(0xFFFF6622);
 const Color _rootLocusColor = Color(0xFFFF8800);
 const Color _openLoopPoleColor = Color(0xFF6688CC);
 const Color _dampingLineColor = Color(0xFF888888);
@@ -407,12 +544,14 @@ const Color _labelColor = Color(0xFFDDDDDD);
 
 class _SPlaneCanvas extends StatefulWidget {
   final List<_Complex> poles;
+  final List<_Complex> delayPoles;
   final FeedforwardGains ff;
   final PidResult? pid;
   final PoleZeroMode mode;
 
   const _SPlaneCanvas({
     required this.poles,
+    this.delayPoles = const [],
     required this.ff,
     this.pid,
     required this.mode,
@@ -426,10 +565,12 @@ class _SPlaneCanvas extends StatefulWidget {
 class _HoverableElement {
   final _Complex value;
   final bool isClosedLoop;
+  final bool isDelayAdjusted;
   final int multiplicity;
   const _HoverableElement({
     required this.value,
     required this.isClosedLoop,
+    this.isDelayAdjusted = false,
     this.multiplicity = 1,
   });
 }
@@ -438,6 +579,25 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
   Offset? _mousePosition;
   _HoverableElement? _hoveredElement;
   OverlayEntry? _overlayEntry;
+
+  // ── Zoom & pan state ──────────────────────────────────────────────
+  double _zoomLevel = 1.0; // 1.0 = auto-fit
+  Offset _panOffset = Offset.zero; // world-space (Re, Im) offset
+  bool _isPanning = false;
+  Offset? _panStartPixel;
+  Offset? _panOffsetStart;
+
+  @override
+  void didUpdateWidget(covariant _SPlaneCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Auto-reset view when poles change, unless user has manually zoomed.
+    if (_zoomLevel == 1.0 && _panOffset == Offset.zero) return;
+    final polesChanged = widget.poles.length != oldWidget.poles.length ||
+        widget.delayPoles.length != oldWidget.delayPoles.length;
+    if (polesChanged && _zoomLevel == 1.0) {
+      _panOffset = Offset.zero;
+    }
+  }
 
   @override
   void dispose() {
@@ -477,9 +637,11 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
 
     final element = _hoveredElement!;
     final description = _describeElement(element);
-    final borderColor = element.isClosedLoop
-        ? (element.value.isStable ? _stablePoleColor : _unstablePoleColor)
-        : _openLoopPoleColor;
+    final borderColor = element.isDelayAdjusted
+        ? (element.value.isStable ? _delayPoleColor : _delayPoleUnstableColor)
+        : element.isClosedLoop
+            ? (element.value.isStable ? _stablePoleColor : _unstablePoleColor)
+            : _openLoopPoleColor;
 
     _overlayEntry = OverlayEntry(
       builder: (_) => Positioned(
@@ -522,26 +684,55 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
     Overlay.of(context).insert(_overlayEntry!);
   }
 
-  double _computeMaxAbs() {
-    double maxAbs = 50.0;
+  double _autoFitMaxAbs() {
+    // Collect the extent (max of |Re|, |Im|) of every pole.
+    final extents = <double>[];
     for (final p in widget.poles) {
-      final extent = math.max(p.re.abs(), p.im.abs());
-      if (extent > maxAbs) maxAbs = extent * 1.3;
+      extents.add(math.max(p.re.abs(), p.im.abs()));
+    }
+    for (final p in widget.delayPoles) {
+      extents.add(math.max(p.re.abs(), p.im.abs()));
+    }
+    if (extents.isEmpty) return 50.0;
+
+    extents.sort();
+
+    // Use the median pole extent as the "dominant" reference.  If a pole is
+    // more than 4× the median, it's an outlier (much faster pole that would
+    // waste screen space) and is excluded from the auto-fit range.
+    final median = extents[extents.length ~/ 2];
+    final threshold = math.max(median * 4.0, 50.0);
+
+    double maxAbs = 50.0;
+    for (final e in extents) {
+      final clamped = math.min(e, threshold);
+      if (clamped * 1.3 > maxAbs) maxAbs = clamped * 1.3;
     }
     return (maxAbs * 1.2).ceilToDouble();
   }
 
+  /// Compute the visible world extents, applying zoom and pan.
+  ({double realMin, double realMax, double imagMin, double imagMax})
+      _viewExtents() {
+    final baseMaxAbs = _autoFitMaxAbs();
+    final halfRange = baseMaxAbs / _zoomLevel;
+    final cx = _panOffset.dx;
+    final cy = _panOffset.dy;
+    return (
+      realMin: cx - halfRange,
+      realMax: cx + halfRange,
+      imagMin: cy - halfRange,
+      imagMax: cy + halfRange,
+    );
+  }
+
   _HoverableElement? _hitTest(Offset localPosition, Size size) {
-    final maxAbs = _computeMaxAbs();
-    final realMin = -maxAbs;
-    final realMax = maxAbs;
-    final imagMin = -maxAbs;
-    final imagMax = maxAbs;
+    final ext = _viewExtents();
 
     double toX(double re) =>
-        (re - realMin) / (realMax - realMin) * size.width;
+        (re - ext.realMin) / (ext.realMax - ext.realMin) * size.width;
     double toY(double im) =>
-        (1 - (im - imagMin) / (imagMax - imagMin)) * size.height;
+        (1 - (im - ext.imagMin) / (ext.imagMax - ext.imagMin)) * size.height;
 
     const hitRadius = 12.0;
 
@@ -600,6 +791,34 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
       }
     }
 
+    // Check delay-adjusted poles
+    final dpDrawn = <int>{};
+    for (int i = 0; i < widget.delayPoles.length; i++) {
+      if (dpDrawn.contains(i)) continue;
+      final dp = widget.delayPoles[i];
+      int mult = 1;
+      for (int j = i + 1; j < widget.delayPoles.length; j++) {
+        if (!dpDrawn.contains(j) &&
+            (dp.re - widget.delayPoles[j].re).abs() < 1e-3 &&
+            (dp.im - widget.delayPoles[j].im).abs() < 1e-3) {
+          mult++;
+          dpDrawn.add(j);
+        }
+      }
+      dpDrawn.add(i);
+
+      final px = toX(dp.re);
+      final py = toY(dp.im);
+      if ((localPosition - Offset(px, py)).distance < hitRadius) {
+        return _HoverableElement(
+          value: dp,
+          isClosedLoop: true,
+          isDelayAdjusted: true,
+          multiplicity: mult,
+        );
+      }
+    }
+
     return null;
   }
 
@@ -609,9 +828,19 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
     final buf = StringBuffer();
 
     if (el.isClosedLoop) {
-      buf.writeln('Closed-Loop Pole$multStr');
-      buf.writeln('s = $p');
-      buf.writeln('');
+      if (el.isDelayAdjusted) {
+        buf.writeln('Delay-Adjusted Pole$multStr');
+        buf.writeln('s = $p');
+        buf.writeln('');
+        buf.writeln('This pole includes the effect of ~${(PidAutoTuner.defaultTransportDelaySec * 1000).round()} ms on-controller '
+            'transport delay (sensor → PID → PWM) using a first-order '
+            'Padé approximation. This is what the REAL system sees.');
+        buf.writeln('');
+      } else {
+        buf.writeln('Closed-Loop Pole$multStr (ideal, no delay)');
+        buf.writeln('s = $p');
+        buf.writeln('');
+      }
 
       if (!p.isStable) {
         buf.writeln('This pole is in the RIGHT half-plane (Re > 0), '
@@ -718,50 +947,181 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
     return buf.toString().trimRight();
   }
 
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      // Find the canvas RenderBox to get size for coordinate conversion.
+      final renderBox = context.findRenderObject() as RenderBox?;
+      if (renderBox == null) return;
+      final size = renderBox.size;
+      final local = renderBox.globalToLocal(event.position);
+
+      final ext = _viewExtents();
+
+      // World coordinate under the cursor BEFORE zoom.
+      final worldReBefore =
+          ext.realMin + (local.dx / size.width) * (ext.realMax - ext.realMin);
+      final worldImBefore =
+          ext.imagMax - (local.dy / size.height) * (ext.imagMax - ext.imagMin);
+
+      // Apply zoom.
+      final factor = event.scrollDelta.dy > 0 ? 0.85 : 1.18;
+      final newZoom = (_zoomLevel * factor).clamp(0.25, 50.0);
+
+      // World coordinate under the cursor AFTER zoom (with old panOffset).
+      final baseMaxAbs = _autoFitMaxAbs();
+      final newHalf = baseMaxAbs / newZoom;
+      final worldReAfter =
+          (_panOffset.dx - newHalf) + (local.dx / size.width) * 2.0 * newHalf;
+      final worldImAfter =
+          (_panOffset.dy + newHalf) - (local.dy / size.height) * 2.0 * newHalf;
+
+      // Shift pan so the world point under cursor doesn't move.
+      setState(() {
+        _zoomLevel = newZoom;
+        _panOffset = Offset(
+          _panOffset.dx + (worldReBefore - worldReAfter),
+          _panOffset.dy + (worldImBefore - worldImAfter),
+        );
+      });
+    }
+  }
+
+  void _onPointerDown(PointerDownEvent event) {
+    // Middle button (4) or right button (2) start panning.
+    if (event.buttons == 4 || event.buttons == 2) {
+      _isPanning = true;
+      _panStartPixel = event.localPosition;
+      _panOffsetStart = _panOffset;
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    if (!_isPanning || _panStartPixel == null || _panOffsetStart == null) {
+      return;
+    }
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final size = renderBox.size;
+
+    final ext = _viewExtents();
+    final worldPerPixelX = (ext.realMax - ext.realMin) / size.width;
+    final worldPerPixelY = (ext.imagMax - ext.imagMin) / size.height;
+
+    final dx = event.localPosition.dx - _panStartPixel!.dx;
+    final dy = event.localPosition.dy - _panStartPixel!.dy;
+
+    setState(() {
+      _panOffset = Offset(
+        _panOffsetStart!.dx - dx * worldPerPixelX,
+        _panOffsetStart!.dy + dy * worldPerPixelY,
+      );
+    });
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    _isPanning = false;
+    _panStartPixel = null;
+    _panOffsetStart = null;
+  }
+
+  void _resetView() {
+    setState(() {
+      _zoomLevel = 1.0;
+      _panOffset = Offset.zero;
+    });
+  }
+
+  bool get _isViewModified => _zoomLevel != 1.0 || _panOffset != Offset.zero;
+
   @override
   Widget build(BuildContext context) {
+    final ext = _viewExtents();
+
     return SizedBox.expand(
-      child: MouseRegion(
-        onHover: (event) {
-          setState(() {
-            _mousePosition = event.localPosition;
-          });
-          // Refresh overlay on next frame after setState hit-tests
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _showOverlayTooltip(context);
-          });
-        },
-        onExit: (_) {
-          setState(() {
-            _mousePosition = null;
-            _hoveredElement = null;
-          });
-          _removeOverlay();
-        },
-        cursor: _hoveredElement != null
-            ? SystemMouseCursors.click
-            : SystemMouseCursors.basic,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final size = Size(constraints.maxWidth, constraints.maxHeight);
-
-            // Update hovered element based on current mouse position
-            if (_mousePosition != null) {
-              _hoveredElement = _hitTest(_mousePosition!, size);
-            } else {
-              _hoveredElement = null;
-            }
-
-            return CustomPaint(
-              size: size,
-              painter: _SPlanePainter(
-                poles: widget.poles,
-                ff: widget.ff,
-                pid: widget.pid,
-                mode: widget.mode,
-              ),
-            );
+      child: Listener(
+        onPointerSignal: _onPointerSignal,
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        child: MouseRegion(
+          onHover: (event) {
+            if (_isPanning) return;
+            setState(() {
+              _mousePosition = event.localPosition;
+            });
+            // Refresh overlay on next frame after setState hit-tests
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _showOverlayTooltip(context);
+            });
           },
+          onExit: (_) {
+            setState(() {
+              _mousePosition = null;
+              _hoveredElement = null;
+            });
+            _removeOverlay();
+          },
+          cursor: _isPanning
+              ? SystemMouseCursors.grabbing
+              : _hoveredElement != null
+                  ? SystemMouseCursors.click
+                  : SystemMouseCursors.basic,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final size = Size(constraints.maxWidth, constraints.maxHeight);
+
+              // Update hovered element based on current mouse position
+              if (_mousePosition != null && !_isPanning) {
+                _hoveredElement = _hitTest(_mousePosition!, size);
+              } else {
+                _hoveredElement = null;
+              }
+
+              return Stack(
+                children: [
+                  CustomPaint(
+                    size: size,
+                    painter: _SPlanePainter(
+                      poles: widget.poles,
+                      delayPoles: widget.delayPoles,
+                      ff: widget.ff,
+                      pid: widget.pid,
+                      mode: widget.mode,
+                      realMin: ext.realMin,
+                      realMax: ext.realMax,
+                      imagMin: ext.imagMin,
+                      imagMax: ext.imagMax,
+                    ),
+                  ),
+                  if (_isViewModified)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: IconButton(
+                        icon: const Icon(FluentIcons.reset, size: 14),
+                        onPressed: _resetView,
+                      ),
+                    ),
+                  if (!_isViewModified)
+                    Positioned(
+                      bottom: 4,
+                      right: 4,
+                      child: Text(
+                        'Scroll to zoom · Right-click to pan',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: FluentTheme.of(context)
+                              .typography
+                              .caption
+                              ?.color
+                              ?.withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -797,34 +1157,31 @@ List<_Complex> _computeOpenLoopPolesFor(
 
 class _SPlanePainter extends CustomPainter {
   final List<_Complex> poles;
+  final List<_Complex> delayPoles;
   final FeedforwardGains ff;
   final PidResult? pid;
   final PoleZeroMode mode;
+  final double realMin;
+  final double realMax;
+  final double imagMin;
+  final double imagMax;
 
   const _SPlanePainter({
     required this.poles,
+    this.delayPoles = const [],
     required this.ff,
     this.pid,
     required this.mode,
+    required this.realMin,
+    required this.realMax,
+    required this.imagMin,
+    required this.imagMax,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
     canvas.clipRect(Offset.zero & size);
-
-    // Determine the axis extents based on where the poles are.
-    double maxAbs = 50.0; // minimum range
-    for (final p in poles) {
-      final extent = math.max(p.re.abs(), p.im.abs());
-      if (extent > maxAbs) maxAbs = extent * 1.3;
-    }
-    maxAbs = (maxAbs * 1.2).ceilToDouble();
-
-    final realMin = -maxAbs;
-    final realMax = maxAbs;
-    final imagMin = -maxAbs;
-    final imagMax = maxAbs;
 
     // Coordinate helpers
     double toX(double re) =>
@@ -854,11 +1211,19 @@ class _SPlanePainter extends CustomPainter {
       ..strokeWidth = 0.5
       ..style = PaintingStyle.stroke;
 
-    final step = _niceStep(maxAbs);
-    for (double v = -maxAbs; v <= maxAbs + step * 0.1; v += step) {
+    final halfRange = (realMax - realMin) / 2.0;
+    final step = _niceStep(halfRange);
+    // Find grid-aligned start/end for visible range.
+    final gridStartRe = (realMin / step).floor() * step;
+    final gridEndRe = (realMax / step).ceil() * step;
+    final gridStartIm = (imagMin / step).floor() * step;
+    final gridEndIm = (imagMax / step).ceil() * step;
+    for (double v = gridStartRe; v <= gridEndRe + step * 0.1; v += step) {
       final px = toX(v);
-      final py = toY(v);
       canvas.drawLine(Offset(px, 0), Offset(px, size.height), gridPaint);
+    }
+    for (double v = gridStartIm; v <= gridEndIm + step * 0.1; v += step) {
+      final py = toY(v);
       canvas.drawLine(Offset(0, py), Offset(size.width, py), gridPaint);
     }
 
@@ -875,12 +1240,22 @@ class _SPlanePainter extends CustomPainter {
     // ── Axis labels ───────────────────────────────────────────────────
     final labelStyle = TextStyle(
         color: _labelColor, fontSize: 9, fontFamily: 'monospace');
-    for (double v = -maxAbs; v <= maxAbs + step * 0.1; v += step) {
+    // Label format: use decimals when zoomed in enough
+    String fmtLabel(double v) {
+      if (halfRange < 2) return v.toStringAsFixed(1);
+      return v.toStringAsFixed(0);
+    }
+    for (double v = gridStartRe; v <= gridEndRe + step * 0.1; v += step) {
       if (v.abs() < step * 0.1) continue; // skip zero
-      _drawLabel(canvas, v.toStringAsFixed(0),
-          Offset(toX(v), originY + 4), labelStyle, TextAlign.center);
-      _drawLabel(canvas, v.toStringAsFixed(0),
-          Offset(originX + 4, toY(v)), labelStyle, TextAlign.left);
+      final py = originY.clamp(0.0, size.height - 12);
+      _drawLabel(canvas, fmtLabel(v),
+          Offset(toX(v), py + 4), labelStyle, TextAlign.center);
+    }
+    for (double v = gridStartIm; v <= gridEndIm + step * 0.1; v += step) {
+      if (v.abs() < step * 0.1) continue;
+      final px = originX.clamp(0.0, size.width - 30);
+      _drawLabel(canvas, fmtLabel(v),
+          Offset(px + 4, toY(v)), labelStyle, TextAlign.left);
     }
 
     // Axis name labels
@@ -909,11 +1284,13 @@ class _SPlanePainter extends CustomPainter {
         color: _dampingLineColor.withValues(alpha: 0.6),
         fontSize: 8,
         fontStyle: FontStyle.italic);
+    // Use diagonal extent to ensure lines reach corners when panned.
+    final diagExtent = math.sqrt(halfRange * halfRange * 2) * 1.2;
     for (final zeta in [0.3, 0.5, 0.707, 0.9]) {
       // ζ = cos(θ) where θ is angle from negative real axis
       final theta = math.acos(zeta);
       // Draw line from origin at angle π-θ and π+θ (both upper and lower)
-      final lineLen = maxAbs * 1.1;
+      final lineLen = diagExtent;
       final reEnd = -lineLen * math.cos(theta);
       final imEnd = lineLen * math.sin(theta);
       // Upper half (only in LHP)
@@ -940,12 +1317,15 @@ class _SPlanePainter extends CustomPainter {
       ..color = _wnCircleColor.withValues(alpha: 0.2)
       ..strokeWidth = 0.6
       ..style = PaintingStyle.stroke;
-    final wnStep = _niceStep(maxAbs);
-    for (double wn = wnStep; wn < maxAbs; wn += wnStep) {
-      final r = (wn / maxAbs) * (size.width / 2);
+    final wnStep = _niceStep(halfRange);
+    // Draw arcs for natural frequency values in the visible range.
+    final maxVisibleWn = diagExtent;
+    for (double wn = wnStep; wn < maxVisibleWn; wn += wnStep) {
+      // Convert wn (world radius) to pixel radius.
+      final rPx = wn / halfRange * (size.width / 2);
       // Draw arc only in LHP (from 90° to 270° i.e. left semicircle)
       canvas.drawArc(
-        Rect.fromCircle(center: Offset(originX, originY), radius: r),
+        Rect.fromCircle(center: Offset(originX, originY), radius: rPx),
         math.pi / 2, // start at bottom of LHP
         math.pi,     // sweep 180° through LHP
         false,
@@ -1033,15 +1413,57 @@ class _SPlanePainter extends CustomPainter {
       }
     }
 
+    // ── Delay-adjusted poles ──────────────────────────────────────────
+    final dpDrawn = <int>{};
+    for (int i = 0; i < delayPoles.length; i++) {
+      if (dpDrawn.contains(i)) continue;
+      final dp = delayPoles[i];
+      int mult = 1;
+      for (int j = i + 1; j < delayPoles.length; j++) {
+        if (!dpDrawn.contains(j) &&
+            (dp.re - delayPoles[j].re).abs() < 1e-3 &&
+            (dp.im - delayPoles[j].im).abs() < 1e-3) {
+          mult++;
+          dpDrawn.add(j);
+        }
+      }
+      dpDrawn.add(i);
+
+      final px = toX(dp.re);
+      final py = toY(dp.im);
+      final color =
+          dp.isStable ? _delayPoleColor : _delayPoleUnstableColor;
+      _drawXMarker(canvas, Offset(px, py), color, dashed: true);
+
+      if (dp.im.abs() > 1e-6 && dp.im > 0) {
+        final dampingRatio = dp.zeta;
+        final multStr = mult > 1 ? ' (×$mult)' : '';
+        final annotation = 'delay$multStr\nz=${dampingRatio.toStringAsFixed(2)}';
+        final annotStyle = TextStyle(
+            color: color.withValues(alpha: 0.85), fontSize: 9);
+        _drawLabel(canvas, annotation, Offset(px + 8, py + 4), annotStyle,
+            TextAlign.left);
+      } else if (dp.im.abs() <= 1e-6) {
+        final multStr = mult > 1 ? ' (×$mult)' : '';
+        _drawLabel(
+            canvas,
+            'delay$multStr ${dp.re.toStringAsFixed(1)}',
+            Offset(px + 8, py + 4),
+            TextStyle(color: color.withValues(alpha: 0.85), fontSize: 9),
+            TextAlign.left);
+      }
+    }
+
     canvas.restore();
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
-  void _drawXMarker(Canvas canvas, Offset center, Color color) {
+  void _drawXMarker(Canvas canvas, Offset center, Color color,
+      {bool dashed = false}) {
     final paint = Paint()
       ..color = color
-      ..strokeWidth = 2.5
+      ..strokeWidth = dashed ? 2.0 : 2.5
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     const r = 6.0;
@@ -1049,6 +1471,14 @@ class _SPlanePainter extends CustomPainter {
         paint);
     canvas.drawLine(center + const Offset(r, -r), center + const Offset(-r, r),
         paint);
+    // Draw a small circle around dashed markers to distinguish them.
+    if (dashed) {
+      final ringPaint = Paint()
+        ..color = color.withValues(alpha: 0.5)
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke;
+      canvas.drawCircle(center, r + 3, ringPaint);
+    }
   }
 
   void _drawLabel(Canvas canvas, String text, Offset offset, TextStyle style,
@@ -1161,7 +1591,10 @@ class _SPlanePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SPlanePainter old) =>
-      old.poles != poles || old.ff != ff || old.pid != pid || old.mode != mode;
+      old.poles != poles || old.delayPoles != delayPoles ||
+      old.ff != ff || old.pid != pid || old.mode != mode ||
+      old.realMin != realMin || old.realMax != realMax ||
+      old.imagMin != imagMin || old.imagMax != imagMax;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1197,7 +1630,11 @@ List<WalkthroughStep> _poleZeroWalkthroughSteps(
           'sit before any controller is applied.\n\n'
           'GREEN/RED crosses (X) = closed-loop poles: where the poles '
           'move to after applying your PID gains. The PID controller '
-          'shifts the poles to control speed and stability.',
+          'shifts the poles to control speed and stability.\n\n'
+          'YELLOW/ORANGE ringed crosses = delay-adjusted poles: where '
+          'the poles actually end up when transport delay (~10 ms from '
+          'CAN bus, PWM, current loop) is included. These are what the '
+          'real hardware experiences.',
       icon: FluentIcons.trending12,
     ),
     const WalkthroughStep(

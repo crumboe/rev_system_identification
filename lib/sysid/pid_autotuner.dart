@@ -16,6 +16,48 @@ class PidAutoTuner {
   /// nonlinearities like backlash and stiction.
   static const _lowInertiaTauThreshold = 0.075; // 75 ms
 
+  /// Default transport delay (seconds) for on-controller PID running at
+  /// 1 kHz: sensor-to-actuation pipeline (~1 ms) + filtering (~1 ms).
+  static const defaultTransportDelaySec = 0.002; // 2 ms
+
+  /// Maximum ω·τ_plant product for position control.  Beyond this, the
+  /// controller bandwidth exceeds what the plant dynamics can linearly
+  /// track, amplifying stiction and backlash nonlinearities.
+  static const _maxOmegaTauProduct = 2.0;
+
+  /// SPARK controller internal loop period (seconds).
+  static const _sparkControlPeriodSec = 0.001; // 1 ms
+
+  /// Multiplier for D-filter cutoff relative to closed-loop bandwidth.
+  /// The filter cutoff is set at N× the bandwidth to reject noise while
+  /// adding minimal phase lag at frequencies the controller cares about.
+  static const _dFilterBandwidthMultiplier = 8.0;
+
+  /// Compute plant-optimal default tuning parameters from feedforward gains.
+  ///
+  /// Returns (velocityTimeConstantMs, positionBandwidthHz) representing the
+  /// fastest safe values that won't trigger any internal clamping:
+  ///   - Velocity τ = τ_plant (or 3×τ_plant for low-inertia)
+  ///   - Position BW = ω_max / 2π  where ω_max = [_maxOmegaTauProduct] / τ_plant
+  static (double tauMs, double bwHz) optimalDefaults(FeedforwardGains ff) {
+    if (ff.kA <= 0 || ff.kV <= 0) return (100.0, 5.0);
+
+    final plantTau = ff.kA / ff.kV; // seconds
+
+    // Velocity: fastest τ_cl the plant can track linearly.
+    double tauMs = plantTau * 1000.0;
+    if (plantTau < _lowInertiaTauThreshold) {
+      tauMs = plantTau * 3.0 * 1000.0; // 3× de-rating for low inertia
+    }
+    tauMs = tauMs.clamp(20.0, 500.0);
+
+    // Position: fastest bandwidth satisfying ω·τ ≤ _maxOmegaTauProduct.
+    double bwHz = _maxOmegaTauProduct / (2.0 * math.pi * plantTau);
+    bwHz = bwHz.clamp(1.0, 20.0);
+
+    return (tauMs, bwHz);
+  }
+
   /// Compute PID gains for velocity control.
   ///
   /// The plant transfer function from voltage to velocity is approximately:
@@ -32,24 +74,38 @@ class PidAutoTuner {
     required MechanismType mechanismType,
     double desiredTimeConstantMs = 100.0,
     double controlPeriodMs = 1.0,
+    double transportDelaySec = defaultTransportDelaySec,
   }) {
     const nominalVoltage = 12.0;
 
     var tau = desiredTimeConstantMs / 1000.0; // desired time constant
     final warnings = <String>[];
 
-    // Low-inertia robustness: when the plant time constant (kA/kV) is very
-    // small, the system has negligible inertia and nonlinearities (backlash,
-    // stiction) dominate the response.  Ensure the desired CL time constant
-    // is at least 3× the plant time constant so the controller doesn't try
-    // to be faster than the physical system can linearly track.
     if (ff.kA > 0 && ff.kV > 0) {
       final plantTau = ff.kA / ff.kV;
+
+      // Ensure the closed-loop time constant is at least as large as the
+      // plant time constant.  Commanding faster than the plant can respond
+      // linearly causes actuator saturation and amplifies nonlinearities.
+      final minTau = plantTau;
+      if (tau < minTau) {
+        final oldTauMs = tau * 1000.0;
+        tau = minTau;
+        warnings.add(
+          'Plant \u03c4 = ${(plantTau * 1000).toStringAsFixed(1)} ms. '
+          'Velocity time constant increased from '
+          '${oldTauMs.toStringAsFixed(0)} ms to '
+          '${(tau * 1000).toStringAsFixed(0)} ms (cannot be faster '
+          'than the plant).');
+      }
+
+      // Additional low-inertia de-rating: when the plant time constant is
+      // very short, nonlinearities (stiction, backlash) dominate.
       if (plantTau < _lowInertiaTauThreshold) {
-        final minTau = plantTau * 3.0;
-        if (tau < minTau) {
+        final robustMin = plantTau * 3.0;
+        if (tau < robustMin) {
           final oldTauMs = tau * 1000.0;
-          tau = minTau;
+          tau = robustMin;
           warnings.add(
             'Low inertia detected (plant \u03c4 = '
             '${(plantTau * 1000).toStringAsFixed(1)} ms). '
@@ -96,6 +152,7 @@ class PidAutoTuner {
     double dampingRatio = 1.0,
     double controlPeriodMs = 1.0,
     double? maxVelocity,
+    double transportDelaySec = defaultTransportDelaySec,
   }) {
     const nominalVoltage = 12.0;
     var omega = 2.0 * math.pi * desiredBandwidthHz; // rad/s
@@ -104,32 +161,56 @@ class PidAutoTuner {
 
     final double r = _velocityToPositionRateFactor(mechanismType);
 
-    // Low-inertia robustness: when the plant time constant is small,
-    // nonlinearities (backlash, stiction) dominate.  Reduce bandwidth and
-    // increase damping so the controller doesn't drive the system through
-    // dead zones at high speed.
     if (ff.kA > 0 && ff.kV > 0) {
       final plantTau = ff.kA / ff.kV;
-      if (plantTau < _lowInertiaTauThreshold) {
-        // Cap bandwidth: don't command faster than 1/(2·τ_plant) rad/s.
-        final maxOmega = 1.0 / (2.0 * plantTau);
-        if (omega > maxOmega) {
-          omega = maxOmega;
+
+      // ── Bandwidth cap based on plant dynamics ─────────────────────
+      // Cap ω so that ω·τ_plant ≤ _maxOmegaTauProduct.  Beyond this the
+      // controller asks the plant to respond faster than its linear
+      // dynamics allow, which amplifies stiction and backlash.
+      final maxOmegaTau = _maxOmegaTauProduct / plantTau;
+      if (omega > maxOmegaTau) {
+        final oldBw = omega / (2.0 * math.pi);
+        omega = maxOmegaTau;
+        warnings.add(
+          'Plant \u03c4 = ${(plantTau * 1000).toStringAsFixed(1)} ms. '
+          'Position bandwidth reduced from '
+          '${oldBw.toStringAsFixed(1)} Hz to '
+          '${(omega / (2.0 * math.pi)).toStringAsFixed(1)} Hz '
+          '(\u03c9\u00b7\u03c4 \u2264 ${_maxOmegaTauProduct.toStringAsFixed(1)}).');
+      }
+
+      // ── Transport-delay damping compensation ───────────────────────
+      // A delay T adds phase lag ω·T (radians).  For a second-order
+      // system this reduces effective damping by approximately ω·T/2.
+      // Compensate by boosting ζ so the actual closed-loop damping
+      // stays close to the requested value.
+      if (transportDelaySec > 0) {
+        final phaseLag = omega * transportDelaySec; // radians
+        final zetaLoss = phaseLag / 2.0;
+        if (zetaLoss > 0.01) {
+          final oldZeta = zeta;
+          zeta += zetaLoss;
           warnings.add(
-            'Low inertia detected (plant \u03c4 = '
-            '${(plantTau * 1000).toStringAsFixed(1)} ms). '
-            'Position bandwidth reduced from '
-            '${desiredBandwidthHz.toStringAsFixed(1)} Hz to '
-            '${(omega / (2.0 * math.pi)).toStringAsFixed(1)} Hz.');
+            'Transport delay \u2248 ${(transportDelaySec * 1000).toStringAsFixed(0)} ms '
+            'reduces effective damping. \u03b6 increased from '
+            '${oldZeta.toStringAsFixed(2)} to ${zeta.toStringAsFixed(2)} '
+            'to compensate.');
         }
-        // Increase damping proportionally to the inertia deficit.
+      }
+
+      // ── Additional low-inertia de-rating ───────────────────────────
+      if (plantTau < _lowInertiaTauThreshold) {
         final dampingBoost =
             (_lowInertiaTauThreshold / plantTau).clamp(1.0, 2.5);
         if (dampingBoost > 1.01) {
-          zeta = dampingRatio * dampingBoost;
+          final oldZeta = zeta;
+          zeta *= dampingBoost;
           warnings.add(
-            'Damping ratio increased from ${dampingRatio.toStringAsFixed(2)} '
-            'to ${zeta.toStringAsFixed(2)} for low-inertia robustness.');
+            'Low inertia detected (plant \u03c4 = '
+            '${(plantTau * 1000).toStringAsFixed(1)} ms). '
+            'Damping ratio increased from ${oldZeta.toStringAsFixed(2)} '
+            'to ${zeta.toStringAsFixed(2)} for robustness.');
         }
       }
     }
@@ -155,10 +236,15 @@ class PidAutoTuner {
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
     const kI = 0.0;
 
+    // Compute D-filter coefficient for the SPARK's EMA low-pass filter.
+    // Set cutoff at N× the closed-loop bandwidth (omega / 2π).
+    final dFilter = kD > 0 ? computeDFilter(omega / (2.0 * math.pi)) : 0.0;
+
     return PidResult(
       kP: kP,
       kI: kI,
       kD: kD,
+      dFilter: dFilter,
       positionBandwidthHz: omega / (2.0 * math.pi),
       warnings: warnings,
     );
@@ -174,5 +260,23 @@ class PidAutoTuner {
       MechanismType.flywheel || MechanismType.simple => 60.0,
       MechanismType.arm || MechanismType.elevator => 1.0,
     };
+  }
+
+  /// Compute the SPARK D-filter EMA coefficient for a given closed-loop
+  /// bandwidth.
+  ///
+  /// The filter cutoff is placed at [_dFilterBandwidthMultiplier]× the
+  /// bandwidth to reject high-frequency noise while preserving phase
+  /// margin at the crossover frequency.
+  ///
+  /// Returns α in [0, 1) where:
+  ///   D_filtered[n] = (1-α)·D_raw[n] + α·D_filtered[n-1]
+  ///   α = 1 / (1 + 2π·f_c·T_s)
+  static double computeDFilter(double bandwidthHz) {
+    if (bandwidthHz <= 0) return 0.0;
+    final fc = _dFilterBandwidthMultiplier * bandwidthHz;
+    final alpha = 1.0 / (1.0 + 2.0 * math.pi * fc * _sparkControlPeriodSec);
+    // Clamp to avoid extreme values; 0.0 means no filter.
+    return alpha < 0.05 ? 0.0 : alpha.clamp(0.0, 0.99);
   }
 }

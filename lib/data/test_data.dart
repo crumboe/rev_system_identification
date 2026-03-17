@@ -212,6 +212,12 @@ class PidResult {
   final double kI;
   final double kD;
 
+  /// SPARK derivative filter coefficient (EMA alpha, 0.0–1.0).
+  ///
+  /// 0.0 = no filtering (default).  Higher values = more smoothing.
+  /// The SPARK applies: D_filtered[n] = (1-α)·D_raw[n] + α·D_filtered[n-1]
+  final double dFilter;
+
   /// The velocity time constant (ms) used during auto-tuning, if applicable.
   final double? velocityTimeConstantMs;
 
@@ -230,6 +236,7 @@ class PidResult {
     this.kP = 0.0,
     this.kI = 0.0,
     this.kD = 0.0,
+    this.dFilter = 0.0,
     this.allowedClosedLoopError = 0.0,
     this.velocityTimeConstantMs,
     this.positionBandwidthHz,
@@ -240,6 +247,7 @@ class PidResult {
     double? kP,
     double? kI,
     double? kD,
+    double? dFilter,
     double? allowedClosedLoopError,
     double? velocityTimeConstantMs,
     double? positionBandwidthHz,
@@ -249,6 +257,7 @@ class PidResult {
       kP: kP ?? this.kP,
       kI: kI ?? this.kI,
       kD: kD ?? this.kD,
+      dFilter: dFilter ?? this.dFilter,
       allowedClosedLoopError: allowedClosedLoopError ?? this.allowedClosedLoopError,
       velocityTimeConstantMs: velocityTimeConstantMs ?? this.velocityTimeConstantMs,
       positionBandwidthHz: positionBandwidthHz ?? this.positionBandwidthHz,
@@ -260,6 +269,7 @@ class PidResult {
         'kP': kP,
         'kI': kI,
         'kD': kD,
+        if (dFilter != 0.0) 'dFilter': dFilter,
         if (allowedClosedLoopError != 0.0)
           'allowedClosedLoopError': allowedClosedLoopError,
         if (velocityTimeConstantMs != null)
@@ -273,6 +283,7 @@ class PidResult {
         kP: (json['kP'] as num?)?.toDouble() ?? 0.0,
         kI: (json['kI'] as num?)?.toDouble() ?? 0.0,
         kD: (json['kD'] as num?)?.toDouble() ?? 0.0,
+        dFilter: (json['dFilter'] as num?)?.toDouble() ?? 0.0,
         allowedClosedLoopError:
             (json['allowedClosedLoopError'] as num?)?.toDouble() ?? 0.0,
         velocityTimeConstantMs:

@@ -34,13 +34,18 @@ jobs:
         shell: bash
         run: |
           LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
-          if [ -z "$LATEST" ]; then LATEST="v0.0.0"; fi
+          if [ -z "$LATEST" ]; then LATEST="v2.0.0"; fi
           echo "Latest tag: $LATEST"
           VER="${LATEST#v}"
           MAJOR=$(echo "$VER" | cut -d. -f1)
           MINOR=$(echo "$VER" | cut -d. -f2)
           PATCH=$(echo "$VER" | cut -d. -f3)
-          PATCH=$((PATCH + 1))
+          # Ensure we're at least on v2
+          if [ "$MAJOR" -lt 2 ]; then
+            MAJOR=2; MINOR=0; PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
           NEXT="$MAJOR.$MINOR.$PATCH"
           echo "Next version: $NEXT"
           echo "version=$NEXT" >> "$GITHUB_OUTPUT"

@@ -17,9 +17,12 @@ void main() {
 
   group('PidAutoTuner.tuneVelocity', () {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
+    // Plant tau = 0.003 / 0.0185 ≈ 162 ms.
+    final plantTauMs = (ff.kA / ff.kV) * 1000.0;
 
-    test('kP is kA / tau / nomV', () {
-      const tau = 100.0; // ms
+    test('kP is kA / tau / nomV when tau >= plant tau', () {
+      // Request 200 ms, which is above the plant tau (~162 ms).
+      const tau = 200.0;
       final pid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
@@ -27,6 +30,17 @@ void main() {
       );
       final expected = ff.kA / (tau / 1000.0) / 12.0;
       expect(pid.kP, closeTo(expected, 1e-9));
+    });
+
+    test('tau is clamped to plant tau when requested is smaller', () {
+      // Request 100 ms, plant tau is ~162 ms → clamp to 162.
+      final pid = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredTimeConstantMs: 100.0,
+      );
+      expect(pid.velocityTimeConstantMs!, closeTo(plantTauMs, 0.1));
+      expect(pid.warnings, isNotEmpty);
     });
 
     test('kI and kD are zero', () {
@@ -39,25 +53,27 @@ void main() {
     });
 
     test('stores velocityTimeConstantMs in result', () {
+      // Request a tau well above plant tau so no clamping occurs.
       final pid = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 150.0,
+        desiredTimeConstantMs: 250.0,
       );
-      expect(pid.velocityTimeConstantMs, equals(150.0));
+      expect(pid.velocityTimeConstantMs, equals(250.0));
       expect(pid.positionBandwidthHz, isNull);
     });
 
-    test('smaller time constant gives larger kP', () {
+    test('smaller time constant gives larger kP (both above plant tau)', () {
+      // Both requested values are above plant tau, no clamping.
       final pidFast = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 50.0,
+        desiredTimeConstantMs: 200.0,
       );
       final pidSlow = PidAutoTuner.tuneVelocity(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 200.0,
+        desiredTimeConstantMs: 500.0,
       );
       expect(pidFast.kP, greaterThan(pidSlow.kP));
     });
@@ -78,45 +94,70 @@ void main() {
 
   group('PidAutoTuner.tunePosition', () {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
+    // plantTau = 0.003/0.0185 ≈ 162 ms
+    // maxOmega = 2.0 / 0.162 ≈ 12.3 rad/s ≈ 1.96 Hz
+    final plantTau = ff.kA / ff.kV;
+    final maxOmega = 2.0 / plantTau;
+    final maxBwHz = maxOmega / (2.0 * math.pi);
 
-    test('kP includes velocity-to-position-rate factor (r=60 for flywheel)', () {
-      const bw = 5.0; // Hz
+    test('bandwidth is capped by omega*tau <= 2 for flywheel', () {
+      // Request 5 Hz, plant tau ≈ 162 ms → cap to ~1.96 Hz
       final pid = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: bw,
+        desiredBandwidthHz: 5.0,
+        transportDelaySec: 0, // isolate bandwidth cap
       );
-      final omega = 2.0 * math.pi * bw;
-      // For flywheel: kP = r * kA * omega^2 / nomV, where r=60
+      expect(pid.positionBandwidthHz!, closeTo(maxBwHz, 0.1));
+      expect(pid.warnings.any((w) => w.contains('bandwidth')), isTrue);
+    });
+
+    test('kP formula correct at capped bandwidth (r=60 flywheel)', () {
+      final pid = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredBandwidthHz: 5.0,
+        transportDelaySec: 0, // isolate bandwidth cap
+      );
+      final omega = 2.0 * math.pi * pid.positionBandwidthHz!;
+      // kP = r * kA * omega^2 / nomV, damping is still 1.0 since no
+      // low-inertia boost (plantTau > 75ms) and delay = 0.
       final expected = 60.0 * ff.kA * omega * omega / 12.0;
       expect(pid.kP, closeTo(expected, 1e-6));
     });
 
     test('kP has r=1 for arm (velocity is time derivative of position)', () {
-      const bw = 5.0;
+      // Use a small bandwidth that won't trigger the cap.
       const armFf = FeedforwardGains(kS: 0.20, kV: 0.018, kA: 0.002, kG: 0.80);
+      const bw = 1.0; // Hz, well below any cap
       final pid = PidAutoTuner.tunePosition(
         ff: armFf,
         mechanismType: MechanismType.arm,
         desiredBandwidthHz: bw,
+        transportDelaySec: 0,
       );
       final omega = 2.0 * math.pi * bw;
-      // For arm: r=1, so kP = kA * omega^2 / nomV
       final expected = armFf.kA * omega * omega / 12.0;
       expect(pid.kP, closeTo(expected, 1e-9));
     });
 
-    test('kD is (2*kA*omega - kV) / nomV, clamped >= 0', () {
-      const bw = 5.0;
-      final pid = PidAutoTuner.tunePosition(
+    test('delay compensation increases damping ratio', () {
+      // Use a larger delay to verify the compensation mechanism works.
+      final pidNoDelay = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: bw,
+        desiredBandwidthHz: 1.5,
+        transportDelaySec: 0,
       );
-      final omega = 2.0 * math.pi * bw;
-      final kDVolts = 2.0 * ff.kA * omega - ff.kV;
-      final expected = kDVolts > 0 ? kDVolts / 12.0 : 0.0;
-      expect(pid.kD, closeTo(expected, 1e-9));
+      final pidDelay = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: MechanismType.flywheel,
+        desiredBandwidthHz: 1.5,
+        transportDelaySec: 0.010,
+      );
+      // With delay, kD should be larger (higher effective zeta).
+      expect(pidDelay.kD, greaterThan(pidNoDelay.kD));
+      expect(pidDelay.warnings.any((w) => w.contains('delay')), isTrue);
     });
 
     test('kI is zero', () {
@@ -127,26 +168,28 @@ void main() {
       expect(pid.kI, equals(0.0));
     });
 
-    test('stores positionBandwidthHz in result', () {
+    test('no cap when requested bandwidth is below limit', () {
       final pid = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 8.0,
+        desiredBandwidthHz: 1.0,
+        transportDelaySec: 0,
       );
-      expect(pid.positionBandwidthHz, equals(8.0));
-      expect(pid.velocityTimeConstantMs, isNull);
+      expect(pid.positionBandwidthHz!, closeTo(1.0, 0.01));
     });
 
-    test('higher bandwidth gives larger kP', () {
+    test('higher bandwidth gives larger kP (both below cap)', () {
       final pidNarrow = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 3.0,
+        desiredBandwidthHz: 0.5,
+        transportDelaySec: 0,
       );
       final pidWide = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 10.0,
+        desiredBandwidthHz: 1.5,
+        transportDelaySec: 0,
       );
       expect(pidWide.kP, greaterThan(pidNarrow.kP));
     });
@@ -204,21 +247,34 @@ void main() {
       final pid = PidAutoTuner.tuneVelocity(
         ff: lowFf,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 100.0,
+        desiredTimeConstantMs: 10.0, // well below plant tau (~49 ms)
       );
-      // plantTau ≈ 49 ms, minTau = 3 × 49 ≈ 147 ms > 100 ms
+      // plantTau ≈ 49 ms. First clamp to plantTau, then 3× for low inertia = 147 ms.
       expect(pid.velocityTimeConstantMs!, greaterThan(100.0));
       expect(pid.warnings, isNotEmpty);
-      expect(pid.warnings.first, contains('Low inertia'));
+      expect(pid.warnings.any((w) => w.contains('Low inertia')), isTrue);
     });
 
-    test('velocity: no adjustment for normal-inertia plant', () {
+    test('velocity: normal plant still clamped to plant tau', () {
+      // normalFf: plantTau ≈ 162 ms. Request 100 ms → clamp to 162 ms.
       final pid = PidAutoTuner.tuneVelocity(
         ff: normalFf,
         mechanismType: MechanismType.flywheel,
         desiredTimeConstantMs: 100.0,
       );
-      expect(pid.velocityTimeConstantMs, equals(100.0));
+      final plantTau = normalFf.kA / normalFf.kV;
+      expect(pid.velocityTimeConstantMs!, closeTo(plantTau * 1000, 0.1));
+      expect(pid.warnings, isNotEmpty);
+    });
+
+    test('velocity: no adjustment when tau already large enough', () {
+      // Request well above plant tau.
+      final pid = PidAutoTuner.tuneVelocity(
+        ff: normalFf,
+        mechanismType: MechanismType.flywheel,
+        desiredTimeConstantMs: 500.0,
+      );
+      expect(pid.velocityTimeConstantMs, closeTo(500.0, 0.1));
       expect(pid.warnings, isEmpty);
     });
 
@@ -226,10 +282,10 @@ void main() {
       final pidLow = PidAutoTuner.tuneVelocity(
         ff: lowFf,
         mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 100.0,
+        desiredTimeConstantMs: 10.0,
       );
       // What kP would be without adjustment:
-      final kpUnadjusted = lowFf.kA / 0.1 / 12.0;
+      final kpUnadjusted = lowFf.kA / 0.01 / 12.0;
       expect(pidLow.kP, lessThan(kpUnadjusted));
     });
 
@@ -237,10 +293,11 @@ void main() {
       final pid = PidAutoTuner.tunePosition(
         ff: lowFf,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 5.0,
+        desiredBandwidthHz: 50.0, // very high to guarantee cap triggers
+        transportDelaySec: 0,
       );
-      // plantTau ≈ 49 ms → maxOmega = 1/(2×0.049) ≈ 10.25 rad/s → ≈1.6 Hz
-      expect(pid.positionBandwidthHz!, lessThan(5.0));
+      // plantTau ≈ 49 ms → maxOmega = 2.0/0.049 ≈ 40.8 rad/s → ≈6.5 Hz
+      expect(pid.positionBandwidthHz!, lessThan(50.0));
       expect(pid.warnings, isNotEmpty);
       expect(pid.warnings.any((w) => w.contains('bandwidth')), isTrue);
     });
@@ -251,61 +308,51 @@ void main() {
         mechanismType: MechanismType.flywheel,
         desiredBandwidthHz: 5.0,
         dampingRatio: 1.0,
+        transportDelaySec: 0, // isolate low-inertia effect
       );
-      expect(pid.warnings.any((w) => w.contains('Damping')), isTrue);
-      // kD should reflect the increased damping (higher than undamped formula).
-      // With just ζ=1.0 at the reduced bandwidth, kD would be smaller.
-      // The boost makes kD larger than it would be with ζ=1.0 at that ω.
+      expect(pid.warnings.any((w) => w.contains('Low inertia')), isTrue);
+      // kD should reflect the increased damping.
       final omega = 2.0 * math.pi * pid.positionBandwidthHz!;
       final kDNoBoostedZeta = (2.0 * 1.0 * lowFf.kA * omega - lowFf.kV) / 12.0;
-      // With boosted ζ, the actual kD should be larger.
       expect(pid.kD, greaterThan(kDNoBoostedZeta.clamp(0, double.infinity)));
     });
 
-    test('position: no adjustment for normal-inertia plant', () {
+    test('position: normal-inertia plant is still bandwidth-capped', () {
+      // normalFf: plantTau ≈ 162 ms → maxBw = 2.0/(2π×0.162) ≈ 1.96 Hz
       final pid = PidAutoTuner.tunePosition(
         ff: normalFf,
         mechanismType: MechanismType.flywheel,
         desiredBandwidthHz: 5.0,
+        transportDelaySec: 0,
       );
-      expect(pid.positionBandwidthHz, closeTo(5.0, 0.01));
-      expect(pid.warnings, isEmpty);
+      expect(pid.positionBandwidthHz!, lessThan(5.0));
+      expect(pid.warnings.any((w) => w.contains('bandwidth')), isTrue);
     });
 
     test('position: gains are more conservative with low inertia', () {
       final pidLow = PidAutoTuner.tunePosition(
         ff: lowFf,
         mechanismType: MechanismType.flywheel,
-        desiredBandwidthHz: 5.0,
+        desiredBandwidthHz: 50.0,
+        transportDelaySec: 0,
       );
-      // Unadjusted kP at 5 Hz:
-      final omega5 = 2.0 * math.pi * 5.0;
-      final kpUnadjusted = 60.0 * lowFf.kA * omega5 * omega5 / 12.0;
+      // Unadjusted kP at 50 Hz:
+      final omega50 = 2.0 * math.pi * 50.0;
+      final kpUnadjusted = 60.0 * lowFf.kA * omega50 * omega50 / 12.0;
       expect(pidLow.kP, lessThan(kpUnadjusted));
     });
 
-    test('velocity: no adjustment when tau already large enough', () {
-      final pid = PidAutoTuner.tuneVelocity(
-        ff: lowFf,
-        mechanismType: MechanismType.flywheel,
-        desiredTimeConstantMs: 500.0, // much larger than 3×plantTau
-      );
-      expect(pid.velocityTimeConstantMs, closeTo(500.0, 0.1));
-      expect(pid.warnings, isEmpty);
-    });
-
-    test('position: no adjustment when bandwidth already low enough', () {
-      // maxOmega = 1/(2×0.049) ≈ 10.25 rad/s → 1.63 Hz
-      // Requesting 1 Hz is already below the cap.
+    test('position: no bandwidth reduction when already low enough', () {
+      // plantTau ≈ 49 ms → maxBw ≈ 6.5 Hz. Request 1 Hz → no cap.
       final pid = PidAutoTuner.tunePosition(
         ff: lowFf,
         mechanismType: MechanismType.flywheel,
         desiredBandwidthHz: 1.0,
+        transportDelaySec: 0,
       );
-      // Bandwidth should not be reduced (1.0 < 1.63).
       expect(pid.positionBandwidthHz!, closeTo(1.0, 0.1));
       // But damping should still be boosted (plantTau < threshold).
-      expect(pid.warnings.any((w) => w.contains('Damping')), isTrue);
+      expect(pid.warnings.any((w) => w.contains('Low inertia')), isTrue);
     });
   });
 }

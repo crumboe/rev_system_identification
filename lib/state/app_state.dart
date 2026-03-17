@@ -316,6 +316,40 @@ final pidTuningParamsProvider =
 class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
   PidTuningParamsNotifier() : super(const PidTuningParams());
 
+  /// Plant-optimal defaults (updated after feedforward analysis).
+  double _optimalTauMs = 100.0;
+  double _optimalBwHz = 5.0;
+
+  /// Current plant-optimal velocity time constant (ms).
+  double get optimalTauMs => _optimalTauMs;
+
+  /// Current plant-optimal position bandwidth (Hz).
+  double get optimalBwHz => _optimalBwHz;
+
+  /// Whether the current values match the plant-optimal defaults.
+  bool get isAtDefaults =>
+      (state.velocityTimeConstantMs - _optimalTauMs).abs() < 0.01 &&
+      (state.positionBandwidthHz - _optimalBwHz).abs() < 0.01 &&
+      (state.dampingRatio - 1.0).abs() < 0.01;
+
+  /// Set plant-optimal defaults from identified feedforward gains.
+  ///
+  /// If the current values are still at the previous defaults, they are
+  /// automatically updated to the new optimal values.  If the user has
+  /// manually adjusted the sliders, their choices are preserved.
+  void setOptimalDefaults(double tauMs, double bwHz) {
+    final wasAtDefaults = isAtDefaults;
+    _optimalTauMs = PidTuningParams.clampVelocityTau(tauMs);
+    _optimalBwHz = PidTuningParams.clampPositionBw(bwHz);
+    if (wasAtDefaults) {
+      state = PidTuningParams(
+        velocityTimeConstantMs: _optimalTauMs,
+        positionBandwidthHz: _optimalBwHz,
+        dampingRatio: state.dampingRatio,
+      );
+    }
+  }
+
   void setVelocityTimeConstant(double ms) {
     state = state.copyWith(
       velocityTimeConstantMs: PidTuningParams.clampVelocityTau(ms),
@@ -335,6 +369,9 @@ class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
   }
 
   void reset() {
-    state = const PidTuningParams();
+    state = PidTuningParams(
+      velocityTimeConstantMs: _optimalTauMs,
+      positionBandwidthHz: _optimalBwHz,
+    );
   }
 }

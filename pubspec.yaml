@@ -57,6 +57,9 @@ dependencies:
   ml_linalg: ^13.12.0
   pdf: ^3.11.3
 
+  # URL launching
+  url_launcher: ^6.3.0
+
   # Web interop (for Web Serial API on browser targets)
   web: ^1.1.0
 
