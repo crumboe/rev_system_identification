@@ -26,7 +26,7 @@ class HomeScreen extends ConsumerWidget {
         ),
         FilledButton(
           onPressed: () => launchUrl(
-            Uri.parse('https://www.paypal.com/donate/?business=X4EXECMESSG5N&no_recurring=1&currency_code=USD'),
+            Uri.parse('https://github.com/sponsors/crumboe'),
             mode: LaunchMode.externalApplication,
           ),
           child: const Row(
