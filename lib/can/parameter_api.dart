@@ -63,9 +63,40 @@ class ParameterWriteException implements Exception {
 }
 
 /// Provides typed access to SPARK controller parameters.
+///
+/// All read and write operations are serialized through an internal queue
+/// so that at most one CAN request/response exchange is in flight at a
+/// time.  A minimum gap of [_kMinOpGapMs] ms is enforced between the
+/// completion of one operation and the start of the next, giving the
+/// controller time to process each command.
 class ParameterApi implements IParameterApi {
   final ISparkConnection _conn;
   final int _deviceId;
+
+  /// Minimum milliseconds between the end of one operation and the start
+  /// of the next.  Prevents flooding the controller when many parameters
+  /// are written back-to-back (e.g. during _prepareController).
+  static const int _kMinOpGapMs = 15;
+
+  /// Chains pending operations so they execute one at a time.
+  Future<void> _opQueue = Future<void>.value();
+
+  /// Serialize [fn] through the operation queue.
+  ///
+  /// Ensures [fn] does not start until all previously queued operations
+  /// have completed, and that at least [_kMinOpGapMs] ms have elapsed
+  /// since the previous operation finished.
+  Future<T> _enqueue<T>(Future<T> Function() fn) {
+    final future = _opQueue.then((_) => fn()).then((result) async {
+      // Enforce a minimum gap before the next queued operation starts.
+      await Future<void>.delayed(const Duration(milliseconds: _kMinOpGapMs));
+      return result;
+    });
+    // Update the queue head, swallowing errors so a single failure doesn't
+    // permanently stall subsequent operations.
+    _opQueue = future.then((_) {}, onError: (_) {});
+    return future;
+  }
 
   ParameterApi(this._conn, {int deviceId = 0}) : _deviceId = deviceId;
 
@@ -221,7 +252,21 @@ class ParameterApi implements IParameterApi {
   /// Uses API Class=7, Index=1.
   /// Request:  [paramId, 0, 0, 0, 0, 0, 0, 0]
   /// Response: [paramId, 0xFF, value(4), typeTag, 0x00]
-  Future<ParamReadResult> readParameterRaw(int paramId) async {
+  ///
+  /// If the read times out, waits 300 ms and retries once before throwing.
+  Future<ParamReadResult> readParameterRaw(int paramId) {
+    return _enqueue(() => _readParameterRawAttempt(paramId).catchError(
+      (_) async {
+        // Wait 300ms then retry once.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        return _readParameterRawAttempt(paramId);
+      },
+      test: (e) => e is TimeoutException,
+    ));
+  }
+
+  /// Single attempt to read a parameter (no retry).
+  Future<ParamReadResult> _readParameterRawAttempt(int paramId) async {
     final arbId = buildArbId(
       apiClass: kApiClassParam,
       apiIndex: kParamIndexRead,
@@ -295,50 +340,59 @@ class ParameterApi implements IParameterApi {
   ///
   /// Throws [ParameterWriteException] if the ACK indicates a mismatch.
   @override
-  Future<SparkResponse> setParameter(int paramId, double value) async {
-    // --- Step 1: Read to discover the device's actual type tag ---
-    final preRead = await readParameterRaw(paramId);
-    final typeTag = preRead.typeTag; // already resolved by readParameterRaw
+  Future<SparkResponse> setParameter(int paramId, double value) {
+    // The entire read→write→ACK sequence runs as a single queued
+    // operation so the pre-read and the write are never interleaved
+    // with other operations.
+    return _enqueue(() async {
+      // --- Step 1: Read to discover the device's actual type tag ---
+      // Call the raw attempt directly (not readParameterRaw) to avoid
+      // double-queuing.  Retry logic is inlined here.
+      ParamReadResult preRead;
+      try {
+        preRead = await _readParameterRawAttempt(paramId);
+      } on TimeoutException {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        preRead = await _readParameterRawAttempt(paramId);
+      }
+      final typeTag = preRead.typeTag;
 
-    // --- Step 2: Encode and write (cls=0x0E, idx=0x00, 5-byte payload) ---
-    final valueBytes = _encodeValue(value, typeTag);
-    final requestArb = buildArbId(
-      apiClass: kApiClassParameterWrite,
-      apiIndex: kParamWriteIndexRequest,
-      deviceId: _deviceId,
-    );
-    final payload = buildParamWritePayload(paramId, valueBytes);
-    _conn.sendCommand(requestArb, payload);
-
-    // --- Step 3: Wait for ACK on cls=0x0E, idx=0x01 ---
-    final ack = await _conn.responses
-        .where((r) {
-          final cls = extractApiClass(r.arbId);
-          final idx = extractApiIndex(r.arbId);
-          final dev = extractDeviceId(r.arbId);
-          return cls == kApiClassParameterWrite &&
-              idx == kParamWriteIndexResponse &&
-              dev == _deviceId &&
-              r.payload[0] == (paramId & 0xFF);
-        })
-        .first
-        .timeout(const Duration(milliseconds: 500));
-
-    // Verify the ACK echoes the correct type tag (data[1]).
-    final ackTypeTag = ack.payload[1];
-    if (ackTypeTag != typeTag) {
-      throw ParameterWriteException(
-        paramId: paramId,
-        sentValue: value,
-        readBackValue: double.nan,
+      // --- Step 2: Encode and write (cls=0x0E, idx=0x00, 5-byte payload) ---
+      final valueBytes = _encodeValue(value, typeTag);
+      final requestArb = buildArbId(
+        apiClass: kApiClassParameterWrite,
+        apiIndex: kParamWriteIndexRequest,
+        deviceId: _deviceId,
       );
-    }
+      final payload = buildParamWritePayload(paramId, valueBytes);
+      _conn.sendCommand(requestArb, payload);
 
-    // Small delay between successive writes to prevent device timeouts
-    // when many parameters are written back-to-back.
-    await Future<void>.delayed(const Duration(milliseconds: 5));
+      // --- Step 3: Wait for ACK on cls=0x0E, idx=0x01 ---
+      final ack = await _conn.responses
+          .where((r) {
+            final cls = extractApiClass(r.arbId);
+            final idx = extractApiIndex(r.arbId);
+            final dev = extractDeviceId(r.arbId);
+            return cls == kApiClassParameterWrite &&
+                idx == kParamWriteIndexResponse &&
+                dev == _deviceId &&
+                r.payload[0] == (paramId & 0xFF);
+          })
+          .first
+          .timeout(const Duration(milliseconds: 500));
 
-    return ack;
+      // Verify the ACK echoes the correct type tag (data[1]).
+      final ackTypeTag = ack.payload[1];
+      if (ackTypeTag != typeTag) {
+        throw ParameterWriteException(
+          paramId: paramId,
+          sentValue: value,
+          readBackValue: double.nan,
+        );
+      }
+
+      return ack;
+    });
   }
 
   /// Get a parameter by ID. Returns the numeric value from the response.
@@ -348,6 +402,7 @@ class ParameterApi implements IParameterApi {
   ///   0x00=bool, 0x02=int, 0x03=float, 0x04=uint
   @override
   Future<double> getParameter(int paramId) async {
+    // readParameterRaw is already queued, so no double-queuing here.
     final result = await readParameterRaw(paramId);
     return result.value;
   }

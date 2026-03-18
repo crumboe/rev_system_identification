@@ -263,7 +263,18 @@ class TestRunner {
     const overCurrentThreshold = 5; // ~50ms at 10ms loop rate
 
     try {
-      await _prepareController();
+      // Prepare the controller — retry once on timeout since the first
+      // attempt after connection can fail if the controller is still
+      // initializing (e.g. status frame enables take time to process).
+      try {
+        await _prepareController();
+      } catch (e) {
+        // Brief pause then retry — the first attempt may have partially
+        // configured the controller, making the second attempt succeed.
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (_abortRequested) rethrow;
+        await _prepareController();
+      }
 
       // Clear faults before starting.
       await device.control.clearFaults();
@@ -271,8 +282,29 @@ class TestRunner {
       // Start heartbeat with motor enabled.
       device.heartbeat.start(enabled: true);
 
-      // Wait for status frames to start arriving.
+      // Send a zero-voltage command immediately so the controller sees
+      // a valid setpoint alongside the first enabled heartbeats.  Some
+      // firmware revisions won't fully arm until they receive both.
+      device.control.setVoltage(0.0);
+
+      // Wait for the controller to process the heartbeat and arm.
       await Future.delayed(const Duration(milliseconds: 200));
+
+      // Verify status frames are flowing — if the controller didn't
+      // start sending telemetry, the test would log zero data.
+      if (!device.isSimulated) {
+        var waitedMs = 0;
+        while (device.connection.lastStatus1 == null && waitedMs < 500) {
+          await Future.delayed(const Duration(milliseconds: 50));
+          waitedMs += 50;
+        }
+        if (device.connection.lastStatus1 == null) {
+          throw StateError(
+            'No status frames received from controller after 700 ms. '
+            'Check the USB connection and try again.',
+          );
+        }
+      }
 
       stopwatch.start();
 

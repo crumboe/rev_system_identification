@@ -496,7 +496,8 @@ class _TestScreenState extends ConsumerState<TestScreen> {
             onProgress: _onProgress,
           );
 
-    if (result.testRun != null) {
+    // Only save runs that actually collected data.
+    if (result.testRun != null && result.testRun!.data.isNotEmpty) {
       ref.read(testRunsProvider.notifier).addRun(result.testRun!);
     }
 
@@ -511,8 +512,9 @@ class _TestScreenState extends ConsumerState<TestScreen> {
           : result.stopReason == TestStopReason.currentLimitTripped
               ? '\u26A0 Current limit tripped! Motor stopped for safety.'
                   '${result.errorMessage != null ? " ${result.errorMessage}" : ""}'
-              : 'Test stopped: ${result.stopReason.name}'
-                  '${result.errorMessage != null ? " — ${result.errorMessage}" : ""}';
+              : '\u26A0 Test failed: ${result.stopReason.name}'
+                  '${result.errorMessage != null ? " — ${result.errorMessage}" : ""}'
+                  '. Press the button to try again.';
     });
   }
 
