@@ -16,6 +16,7 @@ import 'screens/config_screen.dart';
 import 'screens/test_screen.dart';
 import 'screens/results_screen.dart';
 import 'screens/validation_screen.dart';
+import 'screens/deploy_screen.dart';
 import 'screens/console_screen.dart';
 
 
@@ -161,6 +162,11 @@ class _AppShellState extends ConsumerState<AppShell> {
             icon: const Icon(FluentIcons.test_beaker),
             title: const Text('Validation'),
             body: const ValidationScreen(),
+          ),
+          PaneItem(
+            icon: const Icon(FluentIcons.rocket),
+            title: const Text('Deploy'),
+            body: const DeployScreen(),
           ),
           PaneItem(
             icon: const Icon(FluentIcons.command_prompt),

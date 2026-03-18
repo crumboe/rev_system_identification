@@ -5,13 +5,10 @@ library;
 import 'dart:math' as math;
 
 import 'package:fluent_ui/fluent_ui.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 
-import '../../can/parameter_api.dart';
 import '../../data/test_data.dart';
-import '../../data/code_snippet_exporter.dart';
 import '../../data/csv_exporter.dart';
 import '../../data/notebook_exporter.dart';
 import '../../data/report_generator.dart';
@@ -37,7 +34,9 @@ class ResultsScreen extends ConsumerStatefulWidget {
 }
 
 class _ResultsScreenState extends ConsumerState<ResultsScreen> {
-  FeedforwardGains? _ff;
+  FeedforwardGains? _ff; // unloaded (or single) FF gains
+  FeedforwardGains? _ffLoaded; // loaded FF gains (null if no loaded data)
+  FeedforwardGains? _ffBlended; // blended FF for controller (null if single)
   PidResult? _velPid;
   PidResult? _posPid;
   String? _analysisError;
@@ -100,10 +99,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   : null,
             ),
             CommandBarButton(
-              icon: const Icon(FluentIcons.code),
-              label: const Text('Export Code Snippets'),
+              icon: const Icon(FluentIcons.rocket),
+              label: const Text('Go to Deploy'),
               onPressed: _ff != null
-                  ? () => _showCodeExportDialog(config)
+                  ? () => ref.read(selectedPageProvider.notifier).state = 7
                   : null,
             ),
           ],
@@ -162,7 +161,15 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
-          _GainsTable(ff: _ff!, config: config),
+          if (_ffLoaded != null && _ffBlended != null) ...[
+            _DualGainsTable(
+              ffUnloaded: _ff!,
+              ffLoaded: _ffLoaded!,
+              ffBlended: _ffBlended!,
+              config: config,
+            ),
+          ] else
+            _GainsTable(ff: _ff!, config: config),
 
           // Regression walkthrough
           const SizedBox(height: 16),
@@ -241,26 +248,6 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                 )),
             ],
           ),
-
-          const SizedBox(height: 16),
-
-          // Write to controller buttons
-          if (ref.read(deviceManagerProvider).leader != null)
-            Row(
-              children: [
-                FilledButton(
-                  onPressed: () => _writeGainsToController(
-                    ref, config.type, _WriteMode.velocity),
-                  child: const Text('Write Velocity Gains'),
-                ),
-                const SizedBox(width: 12),
-                FilledButton(
-                  onPressed: () => _writeGainsToController(
-                    ref, config.type, _WriteMode.position),
-                  child: const Text('Write Position Gains'),
-                ),
-              ],
-            ),
 
           const SizedBox(height: 24),
 
@@ -379,6 +366,19 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                           '${run.durationSeconds.toStringAsFixed(1)}s',
                         ),
                       ),
+                      if (run.loadCondition != null) ...[
+                        InfoBadge(
+                          source: Text(
+                            run.loadCondition == LoadCondition.loaded
+                                ? 'LOADED'
+                                : 'UNLOADED',
+                          ),
+                          color: run.loadCondition == LoadCondition.loaded
+                              ? Colors.orange
+                              : Colors.green,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       Button(
                         onPressed: () {
                           ref.read(testRunsProvider.notifier).removeRun(run.id);
@@ -655,37 +655,106 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     MechanismConfig config,
   ) {
     try {
-      final ff = FeedforwardAnalyzer.analyze(
-        quasistaticRuns: qsRuns,
-        dynamicRuns: dynRuns,
-        mechanismType: config.type,
-      );
+      // Partition runs by load condition (arm/elevator only).
+      final hasLoadTags = qsRuns.any((r) => r.loadCondition != null) ||
+          dynRuns.any((r) => r.loadCondition != null);
+      final isGravityMech = config.type == MechanismType.arm ||
+          config.type == MechanismType.elevator;
 
-      // Compute and apply plant-optimal defaults.  If the user hasn't
-      // changed the sliders, this updates them to match the plant.
-      final (optTau, optBw) = PidAutoTuner.optimalDefaults(ff);
+      FeedforwardGains ff;
+      FeedforwardGains? ffLoaded;
+      FeedforwardGains? ffBlended;
+
+      if (hasLoadTags && isGravityMech) {
+        // Split into unloaded and loaded sets.
+        final qsUnloaded = qsRuns
+            .where((r) =>
+                r.loadCondition == null ||
+                r.loadCondition == LoadCondition.unloaded)
+            .toList();
+        final dynUnloaded = dynRuns
+            .where((r) =>
+                r.loadCondition == null ||
+                r.loadCondition == LoadCondition.unloaded)
+            .toList();
+        final qsLoaded = qsRuns
+            .where((r) => r.loadCondition == LoadCondition.loaded)
+            .toList();
+        final dynLoaded = dynRuns
+            .where((r) => r.loadCondition == LoadCondition.loaded)
+            .toList();
+
+        // Analyze unloaded set (always available — may include legacy runs).
+        ff = FeedforwardAnalyzer.analyze(
+          quasistaticRuns: qsUnloaded.isNotEmpty ? qsUnloaded : qsRuns,
+          dynamicRuns: dynUnloaded.isNotEmpty ? dynUnloaded : dynRuns,
+          mechanismType: config.type,
+        );
+
+        // Analyze loaded set if sufficient data exists.
+        if (qsLoaded.isNotEmpty && dynLoaded.isNotEmpty) {
+          ffLoaded = FeedforwardAnalyzer.analyze(
+            quasistaticRuns: qsLoaded,
+            dynamicRuns: dynLoaded,
+            mechanismType: config.type,
+          );
+          ffBlended = PidAutoTuner.blendFeedforward(ff, ffLoaded);
+        }
+      } else {
+        // Single-condition analysis (legacy / flywheel / no tags).
+        ff = FeedforwardAnalyzer.analyze(
+          quasistaticRuns: qsRuns,
+          dynamicRuns: dynRuns,
+          mechanismType: config.type,
+        );
+      }
+
+      // Compute and apply plant-optimal defaults.
+      final primaryFF = ffBlended ?? ff;
+      final (optTau, optBw) = PidAutoTuner.optimalDefaults(primaryFF);
       ref.read(pidTuningParamsProvider.notifier).setOptimalDefaults(
         optTau, optBw,
       );
 
-      // Read the (possibly updated) tuning params.
       final tuningParams = ref.read(pidTuningParamsProvider);
 
-      final velPid = PidAutoTuner.tuneVelocity(
-        ff: ff,
-        mechanismType: config.type,
-        desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
-      );
+      PidResult velPid;
+      PidResult posPid;
 
-      final posPid = PidAutoTuner.tunePosition(
-        ff: ff,
-        mechanismType: config.type,
-        desiredBandwidthHz: tuningParams.positionBandwidthHz,
-        dampingRatio: tuningParams.dampingRatio,
-      );
+      if (ffLoaded != null) {
+        // Robust PID: stable for both unloaded and loaded conditions.
+        velPid = PidAutoTuner.tuneRobustVelocity(
+          ffUnloaded: ff,
+          ffLoaded: ffLoaded,
+          mechanismType: config.type,
+          desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
+        );
+        posPid = PidAutoTuner.tuneRobustPosition(
+          ffUnloaded: ff,
+          ffLoaded: ffLoaded,
+          mechanismType: config.type,
+          desiredBandwidthHz: tuningParams.positionBandwidthHz,
+          dampingRatio: tuningParams.dampingRatio,
+        );
+      } else {
+        // Single-condition PID (existing behavior).
+        velPid = PidAutoTuner.tuneVelocity(
+          ff: primaryFF,
+          mechanismType: config.type,
+          desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
+        );
+        posPid = PidAutoTuner.tunePosition(
+          ff: primaryFF,
+          mechanismType: config.type,
+          desiredBandwidthHz: tuningParams.positionBandwidthHz,
+          dampingRatio: tuningParams.dampingRatio,
+        );
+      }
 
       setState(() {
         _ff = ff;
+        _ffLoaded = ffLoaded;
+        _ffBlended = ffBlended;
         _velPid = velPid;
         _posPid = posPid;
         _analyzed = true;
@@ -693,150 +762,14 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       });
 
       // Store in global state for other screens.
-      ref.read(feedforwardGainsProvider.notifier).state = ff;
+      ref.read(feedforwardGainsProvider.notifier).state = ffBlended ?? ff;
+      ref.read(loadedFeedforwardGainsProvider.notifier).state = ffLoaded;
       ref.read(pidResultProvider.notifier).state = velPid;
       ref.read(posPidResultProvider.notifier).state = posPid;
     } catch (e) {
       setState(() {
         _analysisError = e.toString();
       });
-    }
-  }
-
-  Future<void> _writeGainsToController(
-    WidgetRef ref, MechanismType mechType, _WriteMode writeMode,
-  ) async {
-    final device = ref.read(deviceManagerProvider).leader;
-    final config = ref.read(mechanismConfigProvider);
-    if (device == null || _ff == null) return;
-
-    // Write the user's conversion factors to the controller so the
-    // SPARK firmware handles unit conversion internally.
-    final pcf = config.positionConversionFactor;
-
-    final errors = <String>[];
-
-    try {
-      // Write conversion factors first.
-      await device.parameters.setPositionConversionFactor(pcf);
-      await device.parameters.setVelocityConversionFactor(
-          config.velocityConversionFactor);
-
-      if (writeMode == _WriteMode.velocity && _velPid != null) {
-        // Write velocity PID gains in user units (onboard CFs handle scaling).
-        try {
-          await device.parameters.setPidSlot0(
-            p: _velPid!.kP,
-            i: _velPid!.kI,
-            d: _velPid!.kD,
-            f: 0.0,
-          );
-          await device.parameters.setAllowedClosedLoopError0(
-              _velPid!.allowedClosedLoopError);
-        } on ParameterWriteException catch (e) {
-          errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
-        }
-      } else if (writeMode == _WriteMode.position && _posPid != null) {
-        // Write position PID gains in user units (onboard CFs handle scaling).
-        try {
-          await device.parameters.setPidSlot0(
-            p: _posPid!.kP,
-            i: _posPid!.kI,
-            d: _posPid!.kD,
-            f: 0.0,
-            dFilter: _posPid!.dFilter,
-          );
-          await device.parameters.setAllowedClosedLoopError0(
-              _posPid!.allowedClosedLoopError);
-        } on ParameterWriteException catch (e) {
-          errors.add('PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
-        }
-      } else {
-        return;
-      }
-
-      // Write feedforward gains in user units (onboard CFs handle scaling).
-      // kS, kG, kCos are in Volts — no scaling needed.
-      double kG = 0.0;
-      double kCos = 0.0;
-      // kCosRatio converts user-unit position (degrees) to the angle for
-      // the cosine gravity term: cos(posDeg * kCosRatio * 2π).
-      // With position in degrees: kCosRatio = 1/360.
-      double kCosRatio = 0.0;
-
-      if (mechType == MechanismType.elevator) {
-        kG = _ff!.kG;
-      } else if (mechType == MechanismType.arm) {
-        kCos = _ff!.kG; // sysid kG maps to kCos for arms
-        kCosRatio = 1.0 / 360.0;
-      }
-
-      try {
-        await device.parameters.setFeedForwardSlot0(
-          kS: _ff!.kS,
-          kV: _ff!.kV,
-          kA: _ff!.kA,
-          kG: kG,
-          kCos: kCos,
-          kCosRatio: kCosRatio,
-        );
-      } on ParameterWriteException catch (e) {
-        errors.add('FF param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
-      }
-
-      // Disable extra status frames before persisting to reduce CAN traffic
-      // on the real robot — keep only Status 0 force-enabled.
-      await device.parameters.disableExtraStatusFrames();
-
-      await device.parameters.burnFlash(heartbeat: device.heartbeat);
-
-      if (mounted) {
-        final modeLabel = writeMode == _WriteMode.velocity
-            ? 'Velocity' : 'Position';
-        if (errors.isNotEmpty) {
-          await displayInfoBar(context, builder: (ctx, close) {
-            return InfoBar(
-              title: const Text('Write Error'),
-              content: Text(
-                '$modeLabel gains — some failed to write:\n${errors.join('\n')}',
-              ),
-              severity: InfoBarSeverity.error,
-              action: IconButton(
-                icon: const Icon(FluentIcons.clear),
-                onPressed: close,
-              ),
-            );
-          });
-        } else {
-          await displayInfoBar(context, builder: (ctx, close) {
-            return InfoBar(
-              title: const Text('Success'),
-              content: Text(
-                '$modeLabel PID + FeedForward gains written to controller and saved to flash.',
-              ),
-              severity: InfoBarSeverity.success,
-              action: IconButton(
-                icon: const Icon(FluentIcons.clear),
-                onPressed: close,
-              ),
-            );
-          });
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        await displayInfoBar(context, builder: (ctx, close) {
-          return InfoBar(
-            title: const Text('Error'),
-            content: Text('Failed to write gains: $e'),
-            severity: InfoBarSeverity.error,
-            action: IconButton(
-              icon: const Icon(FluentIcons.clear),
-              onPressed: close,
-            ),
-          );
-        });
-      }
     }
   }
 
@@ -938,19 +871,6 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         );
       });
     }
-  }
-
-  void _showCodeExportDialog(MechanismConfig config) {
-    final snippets = CodeSnippetExporter.generate(
-      config: config,
-      ff: _ff!,
-      velocityPid: _velPid,
-      positionPid: _posPid,
-    );
-    showDialog(
-      context: context,
-      builder: (ctx) => _CodeExportDialog(snippets: snippets),
-    );
   }
 }
 
@@ -1076,6 +996,89 @@ class _GainsTable extends StatelessWidget {
   }
 }
 
+class _DualGainsTable extends StatelessWidget {
+  final FeedforwardGains ffUnloaded;
+  final FeedforwardGains ffLoaded;
+  final FeedforwardGains ffBlended;
+  final MechanismConfig config;
+
+  const _DualGainsTable({
+    required this.ffUnloaded,
+    required this.ffLoaded,
+    required this.ffBlended,
+    required this.config,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isArm = config.type == MechanismType.arm;
+    final isElevator = config.type == MechanismType.elevator;
+    final velUnit = config.velocityUnit;
+
+    Widget row(String label, double u, double l, double b, String unit) {
+      final diff = u != 0 ? ((l - u).abs() / u.abs()) : 0.0;
+      final highlight = diff > 0.10;
+      final style = TextStyle(
+        fontWeight: FontWeight.w600,
+        fontFamily: 'Consolas',
+        color: highlight ? Colors.warningPrimaryColor : null,
+      );
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            SizedBox(width: 160, child: Text(label)),
+            SizedBox(width: 140, child: Text('${u.toStringAsFixed(5)} $unit', style: style)),
+            SizedBox(width: 140, child: Text('${l.toStringAsFixed(5)} $unit', style: style)),
+            SizedBox(
+              width: 140,
+              child: Text(
+                '${b.toStringAsFixed(5)} $unit',
+                style: style.copyWith(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              children: [
+                const SizedBox(width: 160, child: Text('Parameter', style: TextStyle(fontWeight: FontWeight.bold))),
+                const SizedBox(width: 140, child: Text('Unloaded', style: TextStyle(fontWeight: FontWeight.bold))),
+                const SizedBox(width: 140, child: Text('Loaded', style: TextStyle(fontWeight: FontWeight.bold))),
+                const SizedBox(width: 140, child: Text('Blended', style: TextStyle(fontWeight: FontWeight.bold))),
+              ],
+            ),
+          ),
+          const Divider(),
+          row('kS (Static Friction)', ffUnloaded.kS, ffLoaded.kS, ffBlended.kS, 'V'),
+          row('kV (Velocity)', ffUnloaded.kV, ffLoaded.kV, ffBlended.kV, 'V/$velUnit'),
+          row('kA (Acceleration)', ffUnloaded.kA, ffLoaded.kA, ffBlended.kA, 'V·s/$velUnit'),
+          if (isArm || isElevator)
+            row('kG (Gravity)', ffUnloaded.kG, ffLoaded.kG, ffBlended.kG, 'V'),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text(
+              'Blended gains (arithmetic mean) are written to the controller. '
+              'Parameters with >10% difference are highlighted.',
+              style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _GainRow extends StatelessWidget {
   final String label;
   final String value;
@@ -1132,7 +1135,6 @@ class _GainRow extends StatelessWidget {
 }
 
 enum _PidMode { velocity, position }
-enum _WriteMode { velocity, position }
 
 /// Preset damping options with label, value, and explanation.
 class _DampingPreset {
@@ -1577,6 +1579,10 @@ class _PidCardState extends State<_PidCard> {
           if (widget.mode == _PidMode.position && widget.pid.dFilter > 0)
             _GainRow('D Filter', widget.pid.dFilter.toStringAsFixed(4),
               tooltip: 'EMA low-pass on derivative (0=off, higher=more smoothing)'),
+          if (widget.pid.iZone > 0)
+            _GainRow('I-Zone', widget.pid.iZone.toStringAsFixed(4),
+              tooltip: 'Limits integral accumulation to prevent windup. '
+                  'Integral only accumulates when error is within this zone.'),
           const SizedBox(height: 8),
           SizedBox(
             width: 260,
@@ -2164,153 +2170,4 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
     );
   }
 }
-
-// ---------------------------------------------------------------------------
-// Code Export Dialog
-// ---------------------------------------------------------------------------
-
-/// Modal dialog that shows FRC code snippets in Java, Python, and C++ tabs.
-class _CodeExportDialog extends StatefulWidget {
-  final CodeSnippets snippets;
-
-  const _CodeExportDialog({required this.snippets});
-
-  @override
-  State<_CodeExportDialog> createState() => _CodeExportDialogState();
-}
-
-class _CodeExportDialogState extends State<_CodeExportDialog> {
-  int _tabIndex = 0;
-
-  static const _tabs = ['Java', 'Python', 'C++'];
-
-  String get _currentCode => switch (_tabIndex) {
-        0 => widget.snippets.java,
-        1 => widget.snippets.python,
-        _ => widget.snippets.cpp,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = FluentTheme.of(context);
-
-    return ContentDialog(
-      constraints: const BoxConstraints(maxWidth: 800, maxHeight: 660),
-      title: const Row(
-        children: [
-          Icon(FluentIcons.code, size: 16),
-          SizedBox(width: 8),
-          Text('Export FRC Code Snippets'),
-        ],
-      ),
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Copy the snippet for your preferred language into your robot project. '
-            'Each snippet configures a SPARK MAX with your identified PID/feedforward gains, '
-            'conversion factors, ramp rate, and inversion setting.',
-            style: TextStyle(
-              fontSize: 12,
-              color: theme.typography.body?.color?.withValues(alpha: 0.7),
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Language selector row
-          Row(
-            children: [
-              for (var i = 0; i < _tabs.length; i++) ...[
-                if (i > 0) const SizedBox(width: 6),
-                _LanguageTab(
-                  label: _tabs[i],
-                  selected: _tabIndex == i,
-                  onPressed: () => setState(() => _tabIndex = i),
-                ),
-              ],
-              const Spacer(),
-              Button(
-                onPressed: () => _copyToClipboard(context, _currentCode),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(FluentIcons.copy, size: 14),
-                    SizedBox(width: 6),
-                    Text('Copy to Clipboard'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          // Code display
-          Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: theme.micaBackgroundColor.withValues(alpha: 0.5),
-                border: Border.all(
-                  color: theme.accentColor.withValues(alpha: 0.2),
-                ),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(12),
-                child: SelectableText(
-                  _currentCode,
-                  style: const TextStyle(
-                    fontFamily: 'Consolas',
-                    fontSize: 12,
-                    height: 1.5,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-      actions: [
-        Button(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
-    );
-  }
-
-  void _copyToClipboard(BuildContext context, String text) {
-    Clipboard.setData(ClipboardData(text: text));
-    displayInfoBar(context, builder: (ctx, close) {
-      return InfoBar(
-        title: Text('${_tabs[_tabIndex]} snippet copied'),
-        content: const Text('Paste it into your robot project.'),
-        severity: InfoBarSeverity.success,
-        action: IconButton(
-          icon: const Icon(FluentIcons.chrome_close),
-          onPressed: close,
-        ),
-      );
-    });
-  }
-}
-
-/// A single language-selector tab button.
-class _LanguageTab extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onPressed;
-
-  const _LanguageTab({
-    required this.label,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (selected) {
-      return FilledButton(onPressed: onPressed, child: Text(label));
-    }
-    return Button(onPressed: onPressed, child: Text(label));
-  }
-}
-
 

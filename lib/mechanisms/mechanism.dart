@@ -173,6 +173,21 @@ class MechanismConfig {
   /// When null, simulation falls back to identified-gain heuristics.
   final double? simulatedArmLengthIn;
 
+  /// Optional simulated flywheel mass (kg) used to scale simulation inertia.
+  final double? simulatedFlywheelMassKg;
+
+  /// Optional simulated flywheel radius (m) used to scale simulation inertia.
+  final double? simulatedFlywheelRadiusM;
+
+  /// Optional simulated elevator carriage mass (kg) used to scale simulation.
+  final double? simulatedElevatorCarriageMassKg;
+
+  /// Optional simulated load mass (kg) applied during "loaded" tests.
+  ///
+  /// Converted to [loadTorqueVolts] on the physics model using the kG ratio.
+  /// Only meaningful for arm and elevator simulations.
+  final double? simulatedLoadMassKg;
+
   /// Position unit for the current config (respects [useImperialUnits]).
   String get positionUnit => useImperialUnits
       ? type.positionUnitImperial
@@ -197,6 +212,10 @@ class MechanismConfig {
     this.feedbackSensor = FeedbackSensor.primaryEncoder,
     this.simulatedArmMassLbs,
     this.simulatedArmLengthIn,
+    this.simulatedFlywheelMassKg,
+    this.simulatedFlywheelRadiusM,
+    this.simulatedElevatorCarriageMassKg,
+    this.simulatedLoadMassKg,
   });
 
   Map<String, dynamic> toJson() => {
@@ -215,6 +234,14 @@ class MechanismConfig {
           'simulatedArmMassLbs': simulatedArmMassLbs,
         if (simulatedArmLengthIn != null)
           'simulatedArmLengthIn': simulatedArmLengthIn,
+        if (simulatedFlywheelMassKg != null)
+          'simulatedFlywheelMassKg': simulatedFlywheelMassKg,
+        if (simulatedFlywheelRadiusM != null)
+          'simulatedFlywheelRadiusM': simulatedFlywheelRadiusM,
+        if (simulatedElevatorCarriageMassKg != null)
+          'simulatedElevatorCarriageMassKg': simulatedElevatorCarriageMassKg,
+        if (simulatedLoadMassKg != null)
+          'simulatedLoadMassKg': simulatedLoadMassKg,
       };
 
   factory MechanismConfig.fromJson(Map<String, dynamic> json) =>
@@ -241,6 +268,14 @@ class MechanismConfig {
           (json['simulatedArmMassLbs'] as num?)?.toDouble(),
         simulatedArmLengthIn:
           (json['simulatedArmLengthIn'] as num?)?.toDouble(),
+        simulatedFlywheelMassKg:
+          (json['simulatedFlywheelMassKg'] as num?)?.toDouble(),
+        simulatedFlywheelRadiusM:
+          (json['simulatedFlywheelRadiusM'] as num?)?.toDouble(),
+        simulatedElevatorCarriageMassKg:
+          (json['simulatedElevatorCarriageMassKg'] as num?)?.toDouble(),
+        simulatedLoadMassKg:
+          (json['simulatedLoadMassKg'] as num?)?.toDouble(),
       );
 
   /// Whether soft limits are fully configured.
@@ -286,6 +321,10 @@ class MechanismConfig {
     FeedbackSensor? feedbackSensor,
     double? Function()? simulatedArmMassLbs,
     double? Function()? simulatedArmLengthIn,
+    double? Function()? simulatedFlywheelMassKg,
+    double? Function()? simulatedFlywheelRadiusM,
+    double? Function()? simulatedElevatorCarriageMassKg,
+    double? Function()? simulatedLoadMassKg,
   }) {
     return MechanismConfig(
       type: type ?? this.type,
@@ -307,6 +346,18 @@ class MechanismConfig {
       simulatedArmLengthIn: simulatedArmLengthIn != null
           ? simulatedArmLengthIn()
           : this.simulatedArmLengthIn,
+      simulatedFlywheelMassKg: simulatedFlywheelMassKg != null
+          ? simulatedFlywheelMassKg()
+          : this.simulatedFlywheelMassKg,
+      simulatedFlywheelRadiusM: simulatedFlywheelRadiusM != null
+          ? simulatedFlywheelRadiusM()
+          : this.simulatedFlywheelRadiusM,
+      simulatedElevatorCarriageMassKg: simulatedElevatorCarriageMassKg != null
+          ? simulatedElevatorCarriageMassKg()
+          : this.simulatedElevatorCarriageMassKg,
+      simulatedLoadMassKg: simulatedLoadMassKg != null
+          ? simulatedLoadMassKg()
+          : this.simulatedLoadMassKg,
     );
   }
 }

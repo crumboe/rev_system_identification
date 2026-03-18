@@ -73,6 +73,8 @@ class TestRunner {
   final SparkDevice device;
   final MechanismConfig mechanismConfig;
   final SysIdTestParams testParams;
+  final LoadCondition? loadCondition;
+  final double? loadMassKg;
 
   bool _abortRequested = false;
   bool _isRunning = false;
@@ -86,6 +88,8 @@ class TestRunner {
     required this.device,
     required this.mechanismConfig,
     required this.testParams,
+    this.loadCondition,
+    this.loadMassKg,
   });
 
   /// Request the current test to abort.
@@ -326,6 +330,8 @@ class TestRunner {
         }
 
         // Check soft limits (skip first 0.5s to let mechanism start).
+        // Only check the limit in the test's travel direction — the
+        // mechanism starts at/near one limit and moves toward the other.
         if (mechanismConfig.hasSoftLimits && elapsedSeconds > 0.5) {
           final pos = device.connection.lastStatus2?.positionRotations;
           final vel = device.connection.lastStatus1?.velocityRpm;
@@ -337,9 +343,12 @@ class TestRunner {
             final revLimit = mechanismConfig.reverseSoftLimit!;
             final margin = (fwdLimit - revLimit).abs() * 0.05; // 5% margin
 
-            // Only stop if moving toward the limit.
-            if ((userPos >= fwdLimit - margin && userVel > 0) ||
-                (userPos <= revLimit + margin && userVel < 0)) {
+            final hitForward = userPos >= fwdLimit - margin && userVel > 0;
+            final hitReverse = userPos <= revLimit + margin && userVel < 0;
+
+            // Forward tests end at the forward limit; reverse at reverse.
+            if ((testType.isForward && hitForward) ||
+                (!testType.isForward && hitReverse)) {
               stopReason = TestStopReason.softLimitReached;
               break;
             }
@@ -433,6 +442,8 @@ class TestRunner {
       data: data,
       durationSeconds: stopwatch.elapsedMilliseconds / 1000.0,
       testParams: testParams,
+      loadCondition: loadCondition,
+      loadMassKg: loadMassKg,
     );
 
     return TestExecutionResult(

@@ -11,6 +11,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
+import '../../simulation/project_physics_factory.dart';
 import '../../simulation/simulated_device.dart';
 import '../../state/app_state.dart';
 import '../../sysid/test_runner.dart';
@@ -57,6 +58,9 @@ class _TestScreenState extends ConsumerState<TestScreen> {
   /// Used to coalesce rapid [_onProgress] callbacks into at most one
   /// [setState] per animation frame.
   bool _progressRebuildScheduled = false;
+
+  /// Simulated load mass (kg) for arm/elevator loaded tests.
+  double? _simulatedLoadMassKg;
 
   /// Colors assigned to successive test segments.
   static final _segmentColors = [
@@ -206,6 +210,43 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                   : InfoBarSeverity.info,
             ),
             const SizedBox(height: 16),
+
+            // Simulated load mass input (arm/elevator sim only)
+            if (device != null &&
+                device.isSimulated &&
+                (config.type == MechanismType.arm ||
+                    config.type == MechanismType.elevator))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    const Text('Simulated load mass (kg): '),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 120,
+                      child: NumberBox<double>(
+                        value: _simulatedLoadMassKg,
+                        onChanged: (v) =>
+                            setState(() => _simulatedLoadMassKg = v),
+                        smallChange: 0.1,
+                        min: 0,
+                        max: 100,
+                        clearButton: false,
+                        placeholder: '0',
+                      ),
+                    ),
+                    if (_simulatedLoadMassKg != null &&
+                        _simulatedLoadMassKg! > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12),
+                        child: InfoBadge(
+                          source: const Text('LOADED'),
+                          color: Colors.orange,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
 
             // Test buttons
             Wrap(
@@ -480,10 +521,28 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       _statusMessage = 'Running ${testType.displayName}...';
     });
 
+    // Apply simulated load to physics before test.
+    final loadMass = _simulatedLoadMassKg;
+    final isLoaded = loadMass != null && loadMass > 0;
+    double previousLoadVolts = 0.0;
+    if (isLoaded && device.isSimulated) {
+      final conn = device.connection;
+      if (conn is SimulatedSparkConnection) {
+        previousLoadVolts = conn.physics.loadTorqueVolts;
+        conn.physics.loadTorqueVolts = computeLoadTorqueVolts(
+          loadMassKg: loadMass,
+          config: config,
+          physics: conn.physics,
+        );
+      }
+    }
+
     _runner = TestRunner(
       device: device,
       mechanismConfig: config,
       testParams: testParams,
+      loadCondition: isLoaded ? LoadCondition.loaded : LoadCondition.unloaded,
+      loadMassKg: isLoaded ? loadMass : null,
     );
 
     final result = testType.isQuasistatic
@@ -495,6 +554,14 @@ class _TestScreenState extends ConsumerState<TestScreen> {
             testType,
             onProgress: _onProgress,
           );
+
+    // Restore previous load after test.
+    if (isLoaded && device.isSimulated) {
+      final conn = device.connection;
+      if (conn is SimulatedSparkConnection) {
+        conn.physics.loadTorqueVolts = previousLoadVolts;
+      }
+    }
 
     // Only save runs that actually collected data.
     if (result.testRun != null && result.testRun!.data.isNotEmpty) {
@@ -538,10 +605,28 @@ class _TestScreenState extends ConsumerState<TestScreen> {
       _startNewSegment();
     });
 
+    // Apply simulated load to physics before test.
+    final loadMass = _simulatedLoadMassKg;
+    final isLoaded = loadMass != null && loadMass > 0;
+    double previousLoadVolts = 0.0;
+    if (isLoaded && device.isSimulated) {
+      final conn = device.connection;
+      if (conn is SimulatedSparkConnection) {
+        previousLoadVolts = conn.physics.loadTorqueVolts;
+        conn.physics.loadTorqueVolts = computeLoadTorqueVolts(
+          loadMassKg: loadMass,
+          config: config,
+          physics: conn.physics,
+        );
+      }
+    }
+
     _runner = TestRunner(
       device: device,
       mechanismConfig: config,
       testParams: testParams,
+      loadCondition: isLoaded ? LoadCondition.loaded : LoadCondition.unloaded,
+      loadMassKg: isLoaded ? loadMass : null,
     );
 
     final results = await _runner!.runFullCharacterization(
@@ -558,6 +643,14 @@ class _TestScreenState extends ConsumerState<TestScreen> {
         });
       },
     );
+
+    // Restore previous load after test.
+    if (isLoaded && device.isSimulated) {
+      final conn = device.connection;
+      if (conn is SimulatedSparkConnection) {
+        conn.physics.loadTorqueVolts = previousLoadVolts;
+      }
+    }
 
     final successCount = results.where((r) => r.success).length;
 

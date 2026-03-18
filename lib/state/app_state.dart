@@ -112,6 +112,29 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
     );
   }
 
+  void setSimulatedFlywheelMassKg(double? massKg) {
+    state = state.copyWith(simulatedFlywheelMassKg: () => massKg);
+  }
+
+  void setSimulatedFlywheelRadiusM(double? radiusM) {
+    state = state.copyWith(simulatedFlywheelRadiusM: () => radiusM);
+  }
+
+  void setSimulatedFlywheelSpec({double? massKg, double? radiusM}) {
+    state = state.copyWith(
+      simulatedFlywheelMassKg: () => massKg,
+      simulatedFlywheelRadiusM: () => radiusM,
+    );
+  }
+
+  void setSimulatedElevatorCarriageMassKg(double? massKg) {
+    state = state.copyWith(simulatedElevatorCarriageMassKg: () => massKg);
+  }
+
+  void setSimulatedLoadMassKg(double? massKg) {
+    state = state.copyWith(simulatedLoadMassKg: () => massKg);
+  }
+
   void setConfig(MechanismConfig config) {
     state = config;
   }
@@ -198,6 +221,10 @@ final pidResultProvider = StateProvider<PidResult?>((ref) => null);
 
 /// Computed position PID gains (null until analysis is run).
 final posPidResultProvider = StateProvider<PidResult?>((ref) => null);
+
+/// Computed feedforward gains from loaded tests (null if no loaded data).
+final loadedFeedforwardGainsProvider =
+    StateProvider<FeedforwardGains?>((ref) => null);
 
 /// Complete sysid results (null until analysis is run).
 final sysIdResultsProvider = StateProvider<SysIdResults?>((ref) => null);

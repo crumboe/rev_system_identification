@@ -8,6 +8,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../can/status_parser.dart';
+import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../devices/serial_port_factory.dart'
     show isWebSerialAvailable, requestWebSerialPort, getGrantedWebSerialPorts;
@@ -487,6 +488,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         ],
 
         const SizedBox(height: 24),
+
+        // Simulation parameters section (only for simulated devices)
+        if (devices.any((d) => d.isSimulated)) ...[
+          _SimParamsPanel(
+            onReloadSim: () => setState(() {}),
+          ),
+          const SizedBox(height: 24),
+        ],
 
         // Faults & Warnings section
         if (devices.isNotEmpty) ...[
@@ -979,6 +988,288 @@ class _FollowerConfigPanelState extends State<_FollowerConfigPanel> {
         _result = 'Error: $e';
       });
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Simulation Parameters panel — configure physical properties for sim.
+// ---------------------------------------------------------------------------
+
+class _SimParamsPanel extends ConsumerStatefulWidget {
+  final VoidCallback onReloadSim;
+  const _SimParamsPanel({required this.onReloadSim});
+
+  @override
+  ConsumerState<_SimParamsPanel> createState() => _SimParamsPanelState();
+}
+
+class _SimParamsPanelState extends ConsumerState<_SimParamsPanel> {
+  bool _applying = false;
+
+  Future<void> _applyAndReload() async {
+    setState(() => _applying = true);
+    try {
+      final dm = ref.read(deviceManagerProvider);
+      final device = dm.leader;
+      if (device == null || !device.isSimulated) return;
+
+      final config = ref.read(mechanismConfigProvider);
+      final gains =
+          ref.read(feedforwardGainsProvider) ?? _referenceGainsForConfig(config);
+
+      dm.disconnect(device);
+      await dm.connectSimulatedFromProject(gains: gains, config: config);
+
+      // Write conversion factors to match.
+      final newDevice = dm.leader;
+      if (newDevice != null) {
+        newDevice.parameters.setPositionConversionFactor(
+            config.positionConversionFactor);
+        newDevice.parameters.setVelocityConversionFactor(
+            config.velocityConversionFactor);
+      }
+
+      // Clear test runs collected under old physics.
+      ref.read(testRunsProvider.notifier).clear();
+      ref.read(feedforwardGainsProvider.notifier).state = null;
+      ref.read(pidResultProvider.notifier).state = null;
+      ref.read(posPidResultProvider.notifier).state = null;
+      ref.read(sysIdResultsProvider.notifier).state = null;
+      ref.read(validationResultProvider.notifier).state = null;
+
+      widget.onReloadSim();
+    } finally {
+      if (mounted) setState(() => _applying = false);
+    }
+  }
+
+  FeedforwardGains _referenceGainsForConfig(MechanismConfig config) {
+    final vcf = config.velocityConversionFactor;
+    final pcf = config.positionConversionFactor;
+    return switch (config.type) {
+      MechanismType.arm => () {
+          final inv = vcf > 0 ? 6.0 / vcf : 1.0;
+          return FeedforwardGains(
+              kS: 0.20, kV: 0.018 * inv, kA: 0.002 * inv, kG: 0.80);
+        }(),
+      MechanismType.elevator => () {
+          final scale = (vcf > 0 && pcf > 0) ? vcf * 60.0 / pcf : 1.0;
+          final inv = scale > 0 ? 1.0 / scale : 1.0;
+          return FeedforwardGains(
+              kS: 0.18, kV: 0.12 * inv, kA: 0.015 * inv, kG: 0.55);
+        }(),
+      MechanismType.flywheel || MechanismType.simple => () {
+          final inv = vcf > 0 ? 1.0 / vcf : 1.0;
+          return FeedforwardGains(
+              kS: 0.14, kV: 0.0185 * inv, kA: 0.003 * inv, kG: 0.0);
+        }(),
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    final config = ref.watch(mechanismConfigProvider);
+    final configNotifier = ref.read(mechanismConfigProvider.notifier);
+
+    return Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(FluentIcons.settings, color: theme.accentColor),
+              const SizedBox(width: 8),
+              Text(
+                'Simulation Physical Properties',
+                style: theme.typography.subtitle,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const InfoBar(
+            title: Text('Customize the simulated mechanism'),
+            content: Text(
+              'Adjust the physical properties below to change the simulated '
+              'mechanism\'s behavior. Click "Apply & Reload" to rebuild the '
+              'simulation with the new parameters. Previous test data will '
+              'be cleared.',
+            ),
+            severity: InfoBarSeverity.info,
+            isLong: true,
+          ),
+          const SizedBox(height: 12),
+
+          // Flywheel params
+          if (config.type == MechanismType.flywheel ||
+              config.type == MechanismType.simple) ...[
+            _simParamRow(
+              label: 'Flywheel Mass (kg)',
+              value: config.simulatedFlywheelMassKg,
+              placeholder: '1.0 (default)',
+              onChanged: (v) => configNotifier.setSimulatedFlywheelMassKg(v),
+            ),
+            _simParamRow(
+              label: 'Flywheel Radius (m)',
+              value: config.simulatedFlywheelRadiusM,
+              placeholder: '0.05 (default)',
+              onChanged: (v) => configNotifier.setSimulatedFlywheelRadiusM(v),
+            ),
+            _scaleInfoRow(
+              'Inertia scale',
+              _flywheelInertiaScale(config),
+            ),
+          ],
+
+          // Arm params
+          if (config.type == MechanismType.arm) ...[
+            _simParamRow(
+              label: 'Arm Mass (lbs)',
+              value: config.simulatedArmMassLbs,
+              placeholder: '10.0 (default)',
+              onChanged: (v) => configNotifier.setSimulatedArmMassLbs(v),
+            ),
+            _simParamRow(
+              label: 'Arm Length (in)',
+              value: config.simulatedArmLengthIn,
+              placeholder: '20.0 (default)',
+              onChanged: (v) => configNotifier.setSimulatedArmLengthIn(v),
+            ),
+            Builder(builder: (_) {
+              final scales = _armDynamicScales(config);
+              return _scaleInfoRow(
+                'Dynamics',
+                scales == null
+                    ? 'kA \u00d71.00, kG \u00d71.00, kS \u00d71.00'
+                    : 'kA \u00d7${scales.kAScale.toStringAsFixed(2)}, '
+                        'kG \u00d7${scales.kGScale.toStringAsFixed(2)}, '
+                        'kS \u00d7${scales.kSScale.toStringAsFixed(2)}',
+              );
+            }),
+          ],
+
+          // Elevator params
+          if (config.type == MechanismType.elevator) ...[
+            _simParamRow(
+              label: 'Carriage Mass (kg)',
+              value: config.simulatedElevatorCarriageMassKg,
+              placeholder: '5.0 (default)',
+              onChanged: (v) =>
+                  configNotifier.setSimulatedElevatorCarriageMassKg(v),
+            ),
+            Builder(builder: (_) {
+              final scale = _elevatorMassScale(config);
+              return _scaleInfoRow(
+                'Mass scale',
+                scale == null
+                    ? 'kA \u00d71.00, kG \u00d71.00'
+                    : 'kA \u00d7${scale.toStringAsFixed(2)}, '
+                        'kG \u00d7${scale.toStringAsFixed(2)}',
+              );
+            }),
+          ],
+
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: _applying ? null : _applyAndReload,
+            child: _applying
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: ProgressRing(strokeWidth: 2),
+                  )
+                : const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FluentIcons.refresh, size: 14),
+                      SizedBox(width: 6),
+                      Text('Apply & Reload Simulation'),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _simParamRow({
+    required String label,
+    required double? value,
+    required String placeholder,
+    required ValueChanged<double?> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 180,
+            child: Text(label),
+          ),
+          SizedBox(
+            width: 180,
+            child: NumberBox<double>(
+              value: value,
+              placeholder: placeholder,
+              onChanged: onChanged,
+              clearButton: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _scaleInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          SizedBox(width: 180, child: Text(label)),
+          Text(
+            value,
+            style: TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 12,
+              color: FluentTheme.of(context).inactiveColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _flywheelInertiaScale(MechanismConfig config) {
+    final m = config.simulatedFlywheelMassKg;
+    final r = config.simulatedFlywheelRadiusM;
+    if (m == null && r == null) return 'kA \u00d71.00';
+    final mass = (m != null && m > 0) ? m : 1.0;
+    final radius = (r != null && r > 0) ? r : 0.05;
+    final massRatio = mass / 1.0;
+    final radiusRatio = radius / 0.05;
+    final scale = (massRatio * radiusRatio * radiusRatio).clamp(0.1, 50.0);
+    return 'kA \u00d7${scale.toStringAsFixed(2)}';
+  }
+
+  ({double kAScale, double kGScale, double kSScale})?
+      _armDynamicScales(MechanismConfig config) {
+    final massLbs = config.simulatedArmMassLbs;
+    final lengthIn = config.simulatedArmLengthIn;
+    if (massLbs == null || lengthIn == null || massLbs <= 0 || lengthIn <= 0) {
+      return null;
+    }
+    final massRatio = massLbs / 10.0;
+    final lengthRatio = lengthIn / 20.0;
+    final kAScale = (massRatio * lengthRatio * lengthRatio).clamp(0.2, 12.0);
+    final kGScale = (massRatio * lengthRatio).clamp(0.2, 12.0);
+    final kSScale = (0.85 + 0.15 * kGScale).clamp(0.6, 2.0);
+    return (kAScale: kAScale, kGScale: kGScale, kSScale: kSScale);
+  }
+
+  double? _elevatorMassScale(MechanismConfig config) {
+    final m = config.simulatedElevatorCarriageMassKg;
+    if (m != null && m > 0) return (m / 5.0).clamp(0.1, 20.0);
+    return null;
   }
 }
 

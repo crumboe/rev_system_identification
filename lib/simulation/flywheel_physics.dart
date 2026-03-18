@@ -79,6 +79,9 @@ class FlywheelPhysics implements SimulatedPhysics {
   /// Last commanded voltage.
   double commandedVoltage = 0.0;
 
+  @override
+  double loadTorqueVolts = 0.0;
+
   /// Voltage after transport delay, used by plant dynamics.
   double _appliedVoltage = 0.0;
 
@@ -153,7 +156,8 @@ class FlywheelPhysics implements SimulatedPhysics {
       frictionTerm = delayed; // friction absorbs all voltage
     }
 
-    final netVoltage = delayed - frictionTerm - kV * velocityRpm;
+    final loadTerm = loadTorqueVolts * velocityRpm.sign;
+    final netVoltage = delayed - frictionTerm - kV * velocityRpm - loadTerm;
     final accelerationRpmPerS = kA > 0 ? netVoltage / kA : 0.0;
 
     // Integrate velocity and position.

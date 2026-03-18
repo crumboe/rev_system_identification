@@ -50,4 +50,13 @@ abstract class SimulatedPhysics {
 
   /// Ground-truth kG for verification (0 for flywheel).
   double get kG;
+
+  /// External load torque expressed as an equivalent voltage (V).
+  ///
+  /// Positive values oppose positive motion (drag / resistance).
+  /// For flywheels this simulates friction or a load on the wheel.
+  /// For arms/elevators this simulates extra weight.
+  /// Default is 0 (no external load).
+  double get loadTorqueVolts;
+  set loadTorqueVolts(double v);
 }

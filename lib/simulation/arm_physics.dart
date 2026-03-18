@@ -77,6 +77,9 @@ class ArmPhysics implements SimulatedPhysics {
   @override
   double commandedVoltage = 0.0;
 
+  @override
+  double loadTorqueVolts = 0.0;
+
   final Random _rng;
   final double noiseLevel;
 
@@ -123,27 +126,30 @@ class ArmPhysics implements SimulatedPhysics {
     final angleRad = _angleDeg * pi / 180.0;
     final gravityVoltage = kG * cos(angleRad);
 
+    // Load acts like additional gravity (angle-dependent, like kG·cos(θ)).
+    final totalGravity = gravityVoltage + loadTorqueVolts * cos(angleRad);
+
     // Friction term.
     final double frictionTerm;
     if (_velocityDegPerS.abs() > 0.5) {
       frictionTerm = kS * _velocityDegPerS.sign;
-    } else if ((commandedVoltage - gravityVoltage).abs() > kS) {
-      frictionTerm = kS * (commandedVoltage - gravityVoltage).sign;
+    } else if ((commandedVoltage - totalGravity).abs() > kS) {
+      frictionTerm = kS * (commandedVoltage - totalGravity).sign;
     } else {
-      frictionTerm = commandedVoltage - gravityVoltage;
+      frictionTerm = commandedVoltage - totalGravity;
     }
 
     // V = kS·sign(ω) + kG·cos(θ) + kV·ω + kA·α
     // α = (V - kS·sign(ω) - kG·cos(θ) - kV·ω) / kA
     final netVoltage =
-        commandedVoltage - frictionTerm - gravityVoltage - kV * _velocityDegPerS;
+        commandedVoltage - frictionTerm - totalGravity - kV * _velocityDegPerS;
     final effectiveKA = kA * (inertiaMultiplier > 0 ? inertiaMultiplier : 1.0);
     final accel = effectiveKA > 0 ? netVoltage / effectiveKA : 0.0;
 
     _velocityDegPerS += accel * dtSeconds;
 
     // Friction stall.
-    if ((commandedVoltage - gravityVoltage).abs() < kS &&
+    if ((commandedVoltage - totalGravity).abs() < kS &&
         _velocityDegPerS.abs() < 0.5) {
       _velocityDegPerS = 0.0;
     }

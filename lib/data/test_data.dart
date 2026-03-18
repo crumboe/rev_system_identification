@@ -87,6 +87,12 @@ extension TestTypeX on TestType {
   double get voltageSign => isForward ? 1.0 : -1.0;
 }
 
+/// Whether the test was run with or without an external load.
+enum LoadCondition {
+  unloaded,
+  loaded,
+}
+
 /// A complete test run with metadata and recorded data.
 class TestRun {
   /// Unique ID for this test run.
@@ -110,6 +116,14 @@ class TestRun {
   /// Test parameters used.
   final SysIdTestParams testParams;
 
+  /// Whether this run was performed with or without an external load.
+  ///
+  /// Null for legacy runs recorded before load-condition tagging.
+  final LoadCondition? loadCondition;
+
+  /// The load mass (kg) applied during this run (metadata).
+  final double? loadMassKg;
+
   TestRun({
     required this.id,
     required this.startTime,
@@ -118,6 +132,8 @@ class TestRun {
     required this.data,
     required this.durationSeconds,
     required this.testParams,
+    this.loadCondition,
+    this.loadMassKg,
   });
 
   Map<String, dynamic> toJson() => {
@@ -128,6 +144,8 @@ class TestRun {
         'durationSeconds': durationSeconds,
         'testParams': testParams.toJson(),
         'data': data.map((d) => d.toJson()).toList(),
+        if (loadCondition != null) 'loadCondition': loadCondition!.name,
+        if (loadMassKg != null) 'loadMassKg': loadMassKg,
       };
 
   factory TestRun.fromJson(Map<String, dynamic> json) => TestRun(
@@ -140,6 +158,10 @@ class TestRun {
         data: (json['data'] as List)
             .map((d) => DataPoint.fromJson(d as Map<String, dynamic>))
             .toList(),
+        loadCondition: json['loadCondition'] != null
+            ? LoadCondition.values.byName(json['loadCondition'] as String)
+            : null,
+        loadMassKg: (json['loadMassKg'] as num?)?.toDouble(),
       );
 
   /// Number of data points recorded.
@@ -232,12 +254,17 @@ class PidResult {
   /// Warnings about automatic gain adjustments (e.g. low-inertia de-rating).
   final List<String> warnings;
 
+  /// Integrator zone (user units). Limits integrator accumulation to prevent
+  /// windup. 0 = no limit (default). Used by robust dual-condition tuning.
+  final double iZone;
+
   const PidResult({
     this.kP = 0.0,
     this.kI = 0.0,
     this.kD = 0.0,
     this.dFilter = 0.0,
     this.allowedClosedLoopError = 0.0,
+    this.iZone = 0.0,
     this.velocityTimeConstantMs,
     this.positionBandwidthHz,
     this.warnings = const [],
@@ -249,6 +276,7 @@ class PidResult {
     double? kD,
     double? dFilter,
     double? allowedClosedLoopError,
+    double? iZone,
     double? velocityTimeConstantMs,
     double? positionBandwidthHz,
     List<String>? warnings,
@@ -259,6 +287,7 @@ class PidResult {
       kD: kD ?? this.kD,
       dFilter: dFilter ?? this.dFilter,
       allowedClosedLoopError: allowedClosedLoopError ?? this.allowedClosedLoopError,
+      iZone: iZone ?? this.iZone,
       velocityTimeConstantMs: velocityTimeConstantMs ?? this.velocityTimeConstantMs,
       positionBandwidthHz: positionBandwidthHz ?? this.positionBandwidthHz,
       warnings: warnings ?? this.warnings,
@@ -272,6 +301,7 @@ class PidResult {
         if (dFilter != 0.0) 'dFilter': dFilter,
         if (allowedClosedLoopError != 0.0)
           'allowedClosedLoopError': allowedClosedLoopError,
+        if (iZone != 0.0) 'iZone': iZone,
         if (velocityTimeConstantMs != null)
           'velocityTimeConstantMs': velocityTimeConstantMs,
         if (positionBandwidthHz != null)
@@ -286,6 +316,7 @@ class PidResult {
         dFilter: (json['dFilter'] as num?)?.toDouble() ?? 0.0,
         allowedClosedLoopError:
             (json['allowedClosedLoopError'] as num?)?.toDouble() ?? 0.0,
+        iZone: (json['iZone'] as num?)?.toDouble() ?? 0.0,
         velocityTimeConstantMs:
             (json['velocityTimeConstantMs'] as num?)?.toDouble(),
         positionBandwidthHz:

@@ -67,6 +67,9 @@ class ElevatorPhysics implements SimulatedPhysics {
   @override
   double commandedVoltage = 0.0;
 
+  @override
+  double loadTorqueVolts = 0.0;
+
   final Random _rng;
   final double noiseLevel;
 
@@ -111,26 +114,29 @@ class ElevatorPhysics implements SimulatedPhysics {
     // Gravity is a constant upward voltage requirement.
     final gravityVoltage = kG;
 
+    // Load acts like additional gravity (constant, not velocity-dependent).
+    final totalGravity = gravityVoltage + loadTorqueVolts;
+
     // Friction term.
     final double frictionTerm;
     if (_velocityInPerS.abs() > 0.05) {
       frictionTerm = kS * _velocityInPerS.sign;
-    } else if ((commandedVoltage - gravityVoltage).abs() > kS) {
-      frictionTerm = kS * (commandedVoltage - gravityVoltage).sign;
+    } else if ((commandedVoltage - totalGravity).abs() > kS) {
+      frictionTerm = kS * (commandedVoltage - totalGravity).sign;
     } else {
-      frictionTerm = commandedVoltage - gravityVoltage;
+      frictionTerm = commandedVoltage - totalGravity;
     }
 
     // V = kS·sign(v) + kG + kV·v + kA·a
     // a = (V - kS·sign(v) - kG - kV·v) / kA
     final netVoltage =
-        commandedVoltage - frictionTerm - gravityVoltage - kV * _velocityInPerS;
+        commandedVoltage - frictionTerm - totalGravity - kV * _velocityInPerS;
     final accel = kA > 0 ? netVoltage / kA : 0.0;
 
     _velocityInPerS += accel * dtSeconds;
 
     // Friction stall.
-    if ((commandedVoltage - gravityVoltage).abs() < kS &&
+    if ((commandedVoltage - totalGravity).abs() < kS &&
         _velocityInPerS.abs() < 0.05) {
       _velocityInPerS = 0.0;
     }

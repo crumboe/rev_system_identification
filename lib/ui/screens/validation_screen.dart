@@ -14,9 +14,12 @@ import 'package:fl_chart/fl_chart.dart';
 import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
+import '../../simulation/project_physics_factory.dart';
 import '../../simulation/simulated_device.dart';
 import '../../simulation/flywheel_physics.dart';
 import '../../state/app_state.dart';
+import '../../sysid/pid_autotuner.dart';
+import '../../sysid/response_diagnostics.dart';
 import '../../sysid/validation_runner.dart';
 import '../../can/spark_protocol.dart';
 import '../widgets/arm_visual.dart';
@@ -52,12 +55,21 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   ValidationResult? _result;
   String? _error;
 
+  /// Diagnosed response issues from the last completed test.
+  List<ResponseDiagnostic> _diagnostics = [];
+
   // Setpoint editing controllers
   late TextEditingController _velSpCtrl;
   late TextEditingController _posSpCtrl;
 
   // Allowed closed-loop error controller
   late TextEditingController _clErrorCtrl;
+
+  // Simulated load controller (raw voltage fallback for flywheel)
+  late TextEditingController _loadCtrl;
+
+  // Simulated load mass in kg for arm/elevator
+  double? _simulatedLoadMassKg;
 
   // MAXMotion configuration controllers
   late TextEditingController _mmCruiseCtrl;
@@ -88,6 +100,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _mmJerkCtrl = TextEditingController(text: '0');
     _mmErrorCtrl = TextEditingController(text: '0.05');
     _clErrorCtrl = TextEditingController(text: '0');
+    _loadCtrl = TextEditingController(text: '0');
 
     _positionPollTimer = Timer.periodic(
       const Duration(milliseconds: 100),
@@ -105,6 +118,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _mmJerkCtrl.dispose();
     _mmErrorCtrl.dispose();
     _clErrorCtrl.dispose();
+    _loadCtrl.dispose();
     _mmFlyoutController.dispose();
     super.dispose();
   }
@@ -449,6 +463,69 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                     ),
                   ],
                 ),
+
+                // Simulated load control (sim-only, inline next to MAXMotion)
+                if (device != null &&
+                    device.isSimulated &&
+                    device.connection is SimulatedSparkConnection) ...[
+                  const SizedBox(width: 24),
+                  if (config.type == MechanismType.arm ||
+                      config.type == MechanismType.elevator) ...[
+                    const Text('Simulated load mass (kg): '),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 120,
+                      child: NumberBox<double>(
+                        value: _simulatedLoadMassKg,
+                        onChanged: _isRunning
+                            ? null
+                            : (v) {
+                                setState(() => _simulatedLoadMassKg = v);
+                                final conn = device.connection
+                                    as SimulatedSparkConnection;
+                                conn.physics.loadTorqueVolts =
+                                    computeLoadTorqueVolts(
+                                  loadMassKg: v ?? 0.0,
+                                  config: config,
+                                  physics: conn.physics,
+                                );
+                              },
+                        smallChange: 0.1,
+                        min: 0,
+                        max: 100,
+                        clearButton: false,
+                        placeholder: '0',
+                      ),
+                    ),
+                    if (_simulatedLoadMassKg != null &&
+                        _simulatedLoadMassKg! > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12),
+                        child: InfoBadge(
+                          source: const Text('LOADED'),
+                          color: Colors.orange,
+                        ),
+                      ),
+                  ] else ...[
+                    SizedBox(
+                      width: 200,
+                      child: InfoLabel(
+                        label: 'Simulated load (V)',
+                        child: TextBox(
+                          controller: _loadCtrl,
+                          enabled: !_isRunning,
+                          placeholder: '0',
+                          onChanged: (val) {
+                            final load = double.tryParse(val) ?? 0.0;
+                            final conn = device.connection
+                                as SimulatedSparkConnection;
+                            conn.physics.loadTorqueVolts = load;
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ],
             ),
 
@@ -650,8 +727,33 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   // Metrics strip (inside Expanded so it doesn't shrink charts)
                   if (_result != null) ...[
                     const SizedBox(height: 8),
-                    _MetricsStrip(result: _result!),
-                    const SizedBox(height: 8),
+                    _MetricsStrip(
+                      result: _result!,
+                      onApplyAndRetest: _applyTuningAndRetest,
+                    ),
+                    const SizedBox(height: 4),
+                    // Response diagnostics — fix-it bars
+                    if (_diagnostics.isNotEmpty)
+                      ..._diagnostics.map((d) => Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: InfoBar(
+                              title: Text(d.description),
+                              content: Text(d.remedy),
+                              severity: d.type == DiagnosticType.oscillation
+                                  ? InfoBarSeverity.error
+                                  : d.type == DiagnosticType.largeOvershoot
+                                      ? InfoBarSeverity.warning
+                                      : d.type == DiagnosticType.noisyResponse
+                                          ? InfoBarSeverity.warning
+                                          : InfoBarSeverity.info,
+                              action: FilledButton(
+                                child: Text(d.title),
+                                onPressed: () => _applyDiagnosticFix(d),
+                              ),
+                              isLong: true,
+                            ),
+                          )),
+                    const SizedBox(height: 4),
 
                   ],
                 ],
@@ -755,6 +857,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       _liveSetpoints.clear();
       _result = null;
       _error = null;
+      _diagnostics = [];
       _statusMessage = mode == ValidationMode.velocity
           ? 'Running velocity step test — setpoint: '
               '${velSp?.toStringAsFixed(1)} ${config.velocityUnit} ...'
@@ -797,6 +900,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       }
 
       if (mounted) {
+        final tuning = ref.read(pidTuningParamsProvider);
         setState(() {
           _result = result;
           _error = result.error;
@@ -806,6 +910,16 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
               ? 'Validation ${mode.name} test completed — '
                   '${result.data.length} samples.'
               : 'Test stopped: ${result.error ?? "aborted"}';
+          if (result.completed) {
+            _diagnostics = ResponseDiagnostics.analyze(
+              result: result,
+              currentTauMs: tuning.velocityTimeConstantMs,
+              currentBwHz: tuning.positionBandwidthHz,
+              currentDamping: tuning.dampingRatio,
+              currentClosedLoopError:
+                  double.tryParse(_clErrorCtrl.text) ?? 0.0,
+            );
+          }
         });
       }
     } catch (e) {
@@ -818,6 +932,108 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
         });
       }
     }
+  }
+
+  void _applyDiagnosticFix(ResponseDiagnostic diagnostic) {
+    final action = diagnostic.action;
+    final notifier = ref.read(pidTuningParamsProvider.notifier);
+
+    // 1. Apply parameter changes.
+    if (action.velocityTimeConstantMs != null) {
+      notifier.setVelocityTimeConstant(action.velocityTimeConstantMs!);
+    }
+    if (action.positionBandwidthHz != null) {
+      notifier.setPositionBandwidth(action.positionBandwidthHz!);
+    }
+    if (action.dampingRatio != null) {
+      notifier.setDampingRatio(action.dampingRatio!);
+    }
+    if (action.closedLoopError != null) {
+      _clErrorCtrl.text = action.closedLoopError!.toStringAsFixed(3);
+    }
+
+    _retuneAndRetest();
+  }
+
+  /// Called by the metrics strip flyout sliders — update tuning params then
+  /// retune PID and rerun the same test.
+  void _applyTuningAndRetest({
+    double? velocityTimeConstantMs,
+    double? positionBandwidthHz,
+    double? dampingRatio,
+  }) {
+    final notifier = ref.read(pidTuningParamsProvider.notifier);
+    if (velocityTimeConstantMs != null) {
+      notifier.setVelocityTimeConstant(velocityTimeConstantMs);
+    }
+    if (positionBandwidthHz != null) {
+      notifier.setPositionBandwidth(positionBandwidthHz);
+    }
+    if (dampingRatio != null) {
+      notifier.setDampingRatio(dampingRatio);
+    }
+    _retuneAndRetest();
+  }
+
+  /// Retune PID gains from current provider state and rerun the last test.
+  void _retuneAndRetest() {
+    final tuning = ref.read(pidTuningParamsProvider);
+    final ff = ref.read(feedforwardGainsProvider);
+    final ffLoaded = ref.read(loadedFeedforwardGainsProvider);
+    final config = ref.read(mechanismConfigProvider);
+
+    if (ff == null) return;
+
+    PidResult velPid;
+    PidResult posPid;
+
+    if (ffLoaded != null) {
+      velPid = PidAutoTuner.tuneRobustVelocity(
+        ffUnloaded: ff,
+        ffLoaded: ffLoaded,
+        mechanismType: config.type,
+        desiredTimeConstantMs: tuning.velocityTimeConstantMs,
+      );
+      posPid = PidAutoTuner.tuneRobustPosition(
+        ffUnloaded: ff,
+        ffLoaded: ffLoaded,
+        mechanismType: config.type,
+        desiredBandwidthHz: tuning.positionBandwidthHz,
+        dampingRatio: tuning.dampingRatio,
+      );
+    } else {
+      velPid = PidAutoTuner.tuneVelocity(
+        ff: ff,
+        mechanismType: config.type,
+        desiredTimeConstantMs: tuning.velocityTimeConstantMs,
+      );
+      posPid = PidAutoTuner.tunePosition(
+        ff: ff,
+        mechanismType: config.type,
+        desiredBandwidthHz: tuning.positionBandwidthHz,
+        dampingRatio: tuning.dampingRatio,
+      );
+    }
+
+    // Store the retuned gains.
+    ref.read(pidResultProvider.notifier).state = velPid;
+    ref.read(posPidResultProvider.notifier).state = posPid;
+
+    // Rerun the same test with updated gains.
+    final device = ref.read(deviceManagerProvider).leader;
+    if (device == null || !device.isConnected) return;
+
+    final mode = _lastMode;
+    if (mode == null) return;
+
+    _runTest(
+      mode,
+      config,
+      device,
+      ff: ff,
+      velPid: velPid,
+      posPid: posPid,
+    );
   }
 
   void _onProgress(ValidationProgress p) {
@@ -864,16 +1080,45 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Metrics strip — compact row of key performance indicators
+// Metrics strip — compact row of key performance indicators with
+// hover tooltips and click-to-adjust flyout sliders.
 // ---------------------------------------------------------------------------
 
-class _MetricsStrip extends StatelessWidget {
+class _MetricsStrip extends ConsumerStatefulWidget {
   final ValidationResult result;
+  final void Function({
+    double? velocityTimeConstantMs,
+    double? positionBandwidthHz,
+    double? dampingRatio,
+  }) onApplyAndRetest;
 
-  const _MetricsStrip({required this.result});
+  const _MetricsStrip({
+    required this.result,
+    required this.onApplyAndRetest,
+  });
+
+  @override
+  ConsumerState<_MetricsStrip> createState() => _MetricsStripState();
+}
+
+class _MetricsStripState extends ConsumerState<_MetricsStrip> {
+  final _riseTimeFlyout = FlyoutController();
+  final _overshootFlyout = FlyoutController();
+  final _ssErrorFlyout = FlyoutController();
+
+  @override
+  void dispose() {
+    _riseTimeFlyout.dispose();
+    _overshootFlyout.dispose();
+    _ssErrorFlyout.dispose();
+    super.dispose();
+  }
+
+  bool get _isVelocity => widget.result.mode == ValidationMode.velocity;
 
   @override
   Widget build(BuildContext context) {
+    final result = widget.result;
     final modeLabel = switch (result.mode) {
       ValidationMode.velocity => 'Velocity',
       ValidationMode.position => 'Position',
@@ -893,27 +1138,48 @@ class _MetricsStrip extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 24),
-          _metric('Samples', '${result.data.length}'),
-          _metric('Duration',
+          _plainMetric('Samples', '${result.data.length}'),
+          _plainMetric('Duration',
               '${result.durationSeconds.toStringAsFixed(1)}s'),
           if (result.riseTime != null)
-            _metric('Rise Time',
-                '${(result.riseTime! * 1000).toStringAsFixed(0)} ms'),
+            _clickableMetric(
+              label: 'Rise Time',
+              value: '${(result.riseTime! * 1000).toStringAsFixed(0)} ms',
+              tooltip: _isVelocity
+                  ? 'Lower the time constant (\u03c4) for faster rise'
+                  : 'Increase bandwidth (BW) for faster settling',
+              controller: _riseTimeFlyout,
+              flyoutBuilder: _buildRiseTimeFlyout,
+            ),
           if (result.overshootPercent != null)
-            _metric(
-              'Overshoot',
-              '${result.overshootPercent!.toStringAsFixed(1)}%',
+            _clickableMetric(
+              label: 'Overshoot',
+              value: '${result.overshootPercent!.toStringAsFixed(1)}%',
               warn: result.overshootPercent! > 20,
+              tooltip: _isVelocity
+                  ? 'Increase time constant (\u03c4) to slow the response'
+                  : 'Increase damping ratio (\u03b6) to reduce overshoot',
+              controller: _overshootFlyout,
+              flyoutBuilder: _buildOvershootFlyout,
             ),
           if (result.steadyStateError != null)
-            _metric('SS Error',
-                result.steadyStateError!.toStringAsFixed(3)),
+            _clickableMetric(
+              label: 'SS Error',
+              value: result.steadyStateError!.toStringAsFixed(3),
+              tooltip: _isVelocity
+                  ? 'Check FF accuracy; increase \u03c4 if tracking lags'
+                  : 'Reduce bandwidth (BW) or increase allowed CL error',
+              controller: _ssErrorFlyout,
+              flyoutBuilder: _buildSsErrorFlyout,
+            ),
         ],
       ),
     );
   }
 
-  Widget _metric(String label, String value, {bool warn = false}) {
+  // -- Plain (non-interactive) metric ---------------------------------------
+
+  Widget _plainMetric(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
@@ -922,11 +1188,426 @@ class _MetricsStrip extends StatelessWidget {
           Text(label, style: const TextStyle(fontSize: 10)),
           Text(
             value,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 13,
               fontFamily: 'Consolas',
               fontWeight: FontWeight.w600,
-              color: warn ? Colors.warningPrimaryColor : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -- Clickable metric with tooltip + flyout --------------------------------
+
+  Widget _clickableMetric({
+    required String label,
+    required String value,
+    required String tooltip,
+    required FlyoutController controller,
+    required Widget Function() flyoutBuilder,
+    bool warn = false,
+  }) {
+    return FlyoutTarget(
+      controller: controller,
+      child: Tooltip(
+        message: tooltip,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: () {
+              controller.showFlyout(
+                placementMode: FlyoutPlacementMode.topCenter,
+                barrierDismissible: true,
+                dismissOnPointerMoveAway: false,
+                builder: (_) => flyoutBuilder(),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(label, style: const TextStyle(fontSize: 10)),
+                      const SizedBox(width: 3),
+                      Icon(FluentIcons.chevron_up_small, size: 8,
+                          color: FluentTheme.of(context).typography.body?.color
+                              ?.withValues(alpha: 0.5)),
+                    ],
+                  ),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontFamily: 'Consolas',
+                      fontWeight: FontWeight.w600,
+                      color: warn ? Colors.warningPrimaryColor : null,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // -- Flyout builders -------------------------------------------------------
+
+  Widget _buildRiseTimeFlyout() {
+    return StatefulBuilder(builder: (context, setFlyoutState) {
+      final currentTuning = ref.read(pidTuningParamsProvider);
+      return FlyoutContent(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isVelocity ? 'Velocity Time Constant (\u03c4)' : 'Position Bandwidth',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isVelocity
+                      ? 'Lower \u03c4 = faster rise but less stability margin'
+                      : 'Higher BW = faster rise but more noise-sensitive',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                const SizedBox(height: 12),
+                if (_isVelocity) ...[
+                  _TuningSlider(
+                    label: '\u03c4',
+                    unit: 'ms',
+                    value: currentTuning.velocityTimeConstantMs,
+                    min: 20, max: 500,
+                    onChanged: (v) {
+                      ref.read(pidTuningParamsProvider.notifier)
+                          .setVelocityTimeConstant(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                ] else ...[
+                  _TuningSlider(
+                    label: 'BW',
+                    unit: 'Hz',
+                    value: currentTuning.positionBandwidthHz,
+                    min: 1, max: 20,
+                    onChanged: (v) {
+                      ref.read(pidTuningParamsProvider.notifier)
+                          .setPositionBandwidth(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _GainPreview(isVelocity: _isVelocity),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      final t = ref.read(pidTuningParamsProvider);
+                      widget.onApplyAndRetest(
+                        velocityTimeConstantMs: _isVelocity ? t.velocityTimeConstantMs : null,
+                        positionBandwidthHz: _isVelocity ? null : t.positionBandwidthHz,
+                      );
+                    },
+                    child: const Text('Apply & Retest'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _buildOvershootFlyout() {
+    return StatefulBuilder(builder: (context, setFlyoutState) {
+      final currentTuning = ref.read(pidTuningParamsProvider);
+      return FlyoutContent(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isVelocity ? 'Velocity Time Constant (\u03c4)' : 'Damping Ratio (\u03b6)',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isVelocity
+                      ? 'Increase \u03c4 to slow the response and reduce overshoot'
+                      : '\u03b6 > 1 = overdamped (no overshoot), \u03b6 < 1 = underdamped',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                const SizedBox(height: 12),
+                if (_isVelocity) ...[
+                  _TuningSlider(
+                    label: '\u03c4',
+                    unit: 'ms',
+                    value: currentTuning.velocityTimeConstantMs,
+                    min: 20, max: 500,
+                    onChanged: (v) {
+                      ref.read(pidTuningParamsProvider.notifier)
+                          .setVelocityTimeConstant(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                ] else ...[
+                  _TuningSlider(
+                    label: '\u03b6',
+                    unit: '',
+                    value: currentTuning.dampingRatio,
+                    min: 0.3, max: 2.0,
+                    divisions: 17,
+                    onChanged: (v) {
+                      ref.read(pidTuningParamsProvider.notifier)
+                          .setDampingRatio(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _GainPreview(isVelocity: _isVelocity),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      final t = ref.read(pidTuningParamsProvider);
+                      widget.onApplyAndRetest(
+                        velocityTimeConstantMs: _isVelocity ? t.velocityTimeConstantMs : null,
+                        dampingRatio: _isVelocity ? null : t.dampingRatio,
+                      );
+                    },
+                    child: const Text('Apply & Retest'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _buildSsErrorFlyout() {
+    return StatefulBuilder(builder: (context, setFlyoutState) {
+      final currentTuning = ref.read(pidTuningParamsProvider);
+      return FlyoutContent(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isVelocity
+                      ? 'Velocity Time Constant (\u03c4)'
+                      : 'Position Bandwidth',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isVelocity
+                      ? 'Increase \u03c4 if tracking lags; also check FF accuracy'
+                      : 'Reduce BW or increase allowed CL error to improve tracking',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                const SizedBox(height: 12),
+                if (_isVelocity) ...[
+                  _TuningSlider(
+                    label: '\u03c4',
+                    unit: 'ms',
+                    value: currentTuning.velocityTimeConstantMs,
+                    min: 20, max: 500,
+                    onChanged: (v) {
+                      ref.read(pidTuningParamsProvider.notifier)
+                          .setVelocityTimeConstant(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                ] else ...[
+                  _TuningSlider(
+                    label: 'BW',
+                    unit: 'Hz',
+                    value: currentTuning.positionBandwidthHz,
+                    min: 1, max: 20,
+                    onChanged: (v) {
+                      ref.read(pidTuningParamsProvider.notifier)
+                          .setPositionBandwidth(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                ],
+                const SizedBox(height: 12),
+                _GainPreview(isVelocity: _isVelocity),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      final t = ref.read(pidTuningParamsProvider);
+                      widget.onApplyAndRetest(
+                        velocityTimeConstantMs: _isVelocity ? t.velocityTimeConstantMs : null,
+                        positionBandwidthHz: _isVelocity ? null : t.positionBandwidthHz,
+                      );
+                    },
+                    child: const Text('Apply & Retest'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+// -- Slider helper used inside flyouts ----------------------------------------
+
+class _TuningSlider extends StatelessWidget {
+  final String label;
+  final String unit;
+  final double value;
+  final double min;
+  final double max;
+  final int? divisions;
+  final ValueChanged<double> onChanged;
+
+  const _TuningSlider({
+    required this.label,
+    required this.unit,
+    required this.value,
+    required this.min,
+    required this.max,
+    this.divisions,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final displayValue = unit == 'ms'
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Text('$label: ', style: const TextStyle(fontSize: 12)),
+            Text(
+              '$displayValue $unit',
+              style: const TextStyle(
+                fontSize: 12,
+                fontFamily: 'Consolas',
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          divisions: divisions ?? ((max - min) / (unit == 'ms' ? 10 : 0.5)).round().clamp(10, 100),
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+}
+
+// -- Live gain preview inside flyout -----------------------------------------
+
+class _GainPreview extends ConsumerWidget {
+  final bool isVelocity;
+
+  const _GainPreview({required this.isVelocity});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tuning = ref.watch(pidTuningParamsProvider);
+    final ff = ref.watch(feedforwardGainsProvider);
+    final ffLoaded = ref.watch(loadedFeedforwardGainsProvider);
+    final config = ref.watch(mechanismConfigProvider);
+
+    if (ff == null) return const SizedBox.shrink();
+
+    final PidResult preview;
+    if (isVelocity) {
+      preview = ffLoaded != null
+          ? PidAutoTuner.tuneRobustVelocity(
+              ffUnloaded: ff, ffLoaded: ffLoaded,
+              mechanismType: config.type,
+              desiredTimeConstantMs: tuning.velocityTimeConstantMs)
+          : PidAutoTuner.tuneVelocity(
+              ff: ff, mechanismType: config.type,
+              desiredTimeConstantMs: tuning.velocityTimeConstantMs);
+    } else {
+      preview = ffLoaded != null
+          ? PidAutoTuner.tuneRobustPosition(
+              ffUnloaded: ff, ffLoaded: ffLoaded,
+              mechanismType: config.type,
+              desiredBandwidthHz: tuning.positionBandwidthHz,
+              dampingRatio: tuning.dampingRatio)
+          : PidAutoTuner.tunePosition(
+              ff: ff, mechanismType: config.type,
+              desiredBandwidthHz: tuning.positionBandwidthHz,
+              dampingRatio: tuning.dampingRatio);
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: FluentTheme.of(context).micaBackgroundColor.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        children: [
+          _gainCell('kP', preview.kP),
+          if (preview.kI != 0) _gainCell('kI', preview.kI),
+          _gainCell('kD', preview.kD),
+        ],
+      ),
+    );
+  }
+
+  Widget _gainCell(String label, double value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 10)),
+          Text(
+            value.toStringAsFixed(6),
+            style: const TextStyle(
+              fontSize: 11,
+              fontFamily: 'Consolas',
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],

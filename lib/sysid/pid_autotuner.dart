@@ -279,4 +279,196 @@ class PidAutoTuner {
     // Clamp to avoid extreme values; 0.0 means no filter.
     return alpha < 0.05 ? 0.0 : alpha.clamp(0.0, 0.99);
   }
+
+  /// Compute blended feedforward from unloaded and loaded gain sets.
+  ///
+  /// Each parameter is the arithmetic mean: error is bounded to ±ΔkX/2
+  /// in either direction, which the integral term corrects.
+  static FeedforwardGains blendFeedforward(
+    FeedforwardGains unloaded,
+    FeedforwardGains loaded,
+  ) {
+    return FeedforwardGains(
+      kS: (unloaded.kS + loaded.kS) / 2.0,
+      kV: (unloaded.kV + loaded.kV) / 2.0,
+      kA: (unloaded.kA + loaded.kA) / 2.0,
+      kG: (unloaded.kG + loaded.kG) / 2.0,
+    );
+  }
+
+  /// Compute robust velocity PID gains stable for both unloaded and loaded
+  /// plant conditions.
+  ///
+  /// - kP sized for the lighter plant (min kA) so proportional action
+  ///   never exceeds what either plant can track.
+  /// - kI is a slow integral to reject the gravity/weight disturbance ΔkG.
+  /// - I-zone bounds integrator accumulation to prevent windup.
+  static PidResult tuneRobustVelocity({
+    required FeedforwardGains ffUnloaded,
+    required FeedforwardGains ffLoaded,
+    required MechanismType mechanismType,
+    double desiredTimeConstantMs = 100.0,
+  }) {
+    const nominalVoltage = 12.0;
+    final warnings = <String>[];
+
+    // Use lighter plant kA (faster natural response = worst-case for
+    // proportional gain sizing — ensures stability for both).
+    final kA = math.min(ffUnloaded.kA, ffLoaded.kA);
+    final kV = math.max(ffUnloaded.kV, ffLoaded.kV);
+
+    if (kA <= 0 || kV <= 0) {
+      warnings.add('Invalid plant parameters — returning zero gains.');
+      return PidResult(
+        kP: 0, kI: 0, kD: 0,
+        velocityTimeConstantMs: desiredTimeConstantMs,
+        warnings: warnings,
+      );
+    }
+
+    final plantTau = kA / kV;
+    var tau = desiredTimeConstantMs / 1000.0;
+
+    // Same clamping as single-plant tuneVelocity.
+    if (tau < plantTau) {
+      tau = plantTau;
+      warnings.add(
+        'Velocity time constant clamped to plant τ = '
+        '${(plantTau * 1000).toStringAsFixed(1)} ms.');
+    }
+    if (plantTau < _lowInertiaTauThreshold) {
+      final robustMin = plantTau * 3.0;
+      if (tau < robustMin) {
+        tau = robustMin;
+        warnings.add('Low inertia de-rating applied: τ → '
+            '${(tau * 1000).toStringAsFixed(0)} ms.');
+      }
+    }
+
+    final kP = (kA / tau) / nominalVoltage;
+
+    // Integral gain: rejects the gravity disturbance ΔkG.
+    // Settling time ≈ 10 × τ_plant.
+    final kI = kP / (10.0 * plantTau);
+
+    // I-zone: bound accumulation to 2× |ΔkG| to prevent windup.
+    final deltaKG = (ffLoaded.kG - ffUnloaded.kG).abs();
+    final iZone = kI > 0 ? (2.0 * deltaKG / kI).clamp(0.0, 100.0) : 0.0;
+
+    warnings.add(
+      'Robust gains: kP uses lighter kA = ${kA.toStringAsFixed(4)}. '
+      'kI = ${kI.toStringAsFixed(6)} rejects gravity disturbance '
+      'ΔkG = ${deltaKG.toStringAsFixed(3)} V.');
+
+    return PidResult(
+      kP: kP,
+      kI: kI,
+      kD: 0,
+      iZone: iZone,
+      velocityTimeConstantMs: tau * 1000.0,
+      warnings: warnings,
+    );
+  }
+
+  /// Compute robust position PID gains stable for both unloaded and loaded
+  /// plant conditions.
+  ///
+  /// - kP and kD sized for **heavier** kA (max) to avoid over-driving the
+  ///   loaded plant — the lighter plant simply settles faster (no overshoot).
+  ///   This is opposite to robust velocity, where min(kA) is correct because
+  ///   lighter inertia means less phase margin.
+  /// - kI added for disturbance rejection of blended-kG mismatch.
+  /// - I-zone bounded to prevent windup.
+  /// - D-filter at 8× bandwidth as usual.
+  /// - Default damping ratio 1.2 (overdamped) to eliminate overshoot from
+  ///   the gravity-compensation mismatch inherent in FF blending.
+  static PidResult tuneRobustPosition({
+    required FeedforwardGains ffUnloaded,
+    required FeedforwardGains ffLoaded,
+    required MechanismType mechanismType,
+    double desiredBandwidthHz = 5.0,
+    double dampingRatio = 1.2,
+    double transportDelaySec = defaultTransportDelaySec,
+  }) {
+    const nominalVoltage = 12.0;
+    final warnings = <String>[];
+
+    final double r = _velocityToPositionRateFactor(mechanismType);
+
+    // Use heavier kA (max) for position — avoids over-driving the loaded
+    // plant which has more momentum and would overshoot with lighter gains.
+    // Use heavier kV (max) for conservative damping subtraction.
+    final kA = math.max(ffUnloaded.kA, ffLoaded.kA);
+    final kV = math.max(ffUnloaded.kV, ffLoaded.kV);
+
+    if (kA <= 0 || kV <= 0) {
+      warnings.add('Invalid plant parameters — returning zero gains.');
+      return PidResult(
+        kP: 0, kI: 0, kD: 0,
+        positionBandwidthHz: desiredBandwidthHz,
+        warnings: warnings,
+      );
+    }
+
+    final plantTau = kA / kV;
+    var omega = 2.0 * math.pi * desiredBandwidthHz;
+    var zeta = dampingRatio;
+
+    // Bandwidth cap: ω·τ ≤ _maxOmegaTauProduct.
+    final maxOmegaTau = _maxOmegaTauProduct / plantTau;
+    if (omega > maxOmegaTau) {
+      omega = maxOmegaTau;
+      warnings.add(
+        'Position bandwidth clamped to '
+        '${(omega / (2.0 * math.pi)).toStringAsFixed(1)} Hz '
+        '(ω·τ ≤ ${_maxOmegaTauProduct.toStringAsFixed(1)}).');
+    }
+
+    // Transport-delay damping compensation.
+    if (transportDelaySec > 0) {
+      final phaseLag = omega * transportDelaySec;
+      final zetaLoss = phaseLag / 2.0;
+      if (zetaLoss > 0.01) {
+        zeta += zetaLoss;
+      }
+    }
+
+    // Low-inertia de-rating.
+    if (plantTau < _lowInertiaTauThreshold) {
+      final boost = (_lowInertiaTauThreshold / plantTau).clamp(1.0, 2.5);
+      if (boost > 1.01) zeta *= boost;
+    }
+
+    // Pole placement (same derivation as single-plant tunePosition).
+    final kPVolts = r * kA * omega * omega;
+    final kDVolts = (2.0 * zeta * kA * omega - kV);
+    final kP = kPVolts / nominalVoltage;
+    final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
+
+    // Integral: slow correction for gravity disturbance.
+    final kI = kP * omega / 20.0;
+
+    // I-zone: |ΔkG| / kI bounds accumulation.
+    final deltaKG = (ffLoaded.kG - ffUnloaded.kG).abs();
+    final iZone = kI > 0 ? (deltaKG / kI).clamp(0.0, 100.0) : 0.0;
+
+    final dFilter = kD > 0
+        ? computeDFilter(omega / (2.0 * math.pi))
+        : 0.0;
+
+    warnings.add(
+      'Robust gains: kP/kD use heavier kA = ${kA.toStringAsFixed(4)}. '
+      'kI = ${kI.toStringAsFixed(6)} rejects ΔkG = '
+      '${deltaKG.toStringAsFixed(3)} V.');
+
+    return PidResult(
+      kP: kP,
+      kI: kI,
+      kD: kD,
+      dFilter: dFilter,
+      iZone: iZone,
+      positionBandwidthHz: omega / (2.0 * math.pi),
+      warnings: warnings,
+    );
+  }
 }

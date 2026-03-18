@@ -508,4 +508,81 @@ void main() {
       });
     }
   });
+
+  group('Loaded arm sysid shifts kG not kS', () {
+    test('loadTorqueVolts increases recovered kG', () {
+      const degPerRot = 360.0;
+      const vcf = degPerRot / 60.0;
+      const trueKs = 0.20;
+      const trueKv = 0.018;
+      const trueKa = 0.002;
+      const trueKg = 0.80;
+      const loadVolts = 0.40; // simulated extra load
+
+      // Run unloaded sysid.
+      final unloadedPhysics = ArmPhysics(
+        kS: trueKs, kV: trueKv, kA: trueKa, kG: trueKg,
+        noiseLevel: 0.015, degreesPerRotation: degPerRot,
+        minAngleDeg: -360, maxAngleDeg: 360, randomSeed: 42,
+      );
+      final unloadedConfig = _PhysicsConfig(
+        label: 'Arm unloaded',
+        physics: unloadedPhysics,
+        mechanismType: MechanismType.arm,
+        expectedKs: trueKs, expectedKv: trueKv,
+        expectedKa: trueKa, expectedKg: trueKg,
+        positionConversionFactor: degPerRot,
+        velocityConversionFactor: vcf,
+        rampRate: 0.25, maxVoltage: 8.0,
+        stepVoltage: 4.0, stepDuration: 2.0,
+        startPositionRotations: 0.0,
+      );
+      final gainsUnloaded = _runFullSysid(unloadedConfig);
+
+      // Run loaded sysid — same physics but with loadTorqueVolts.
+      final loadedPhysics = ArmPhysics(
+        kS: trueKs, kV: trueKv, kA: trueKa, kG: trueKg,
+        noiseLevel: 0.015, degreesPerRotation: degPerRot,
+        minAngleDeg: -360, maxAngleDeg: 360, randomSeed: 42,
+      );
+      loadedPhysics.loadTorqueVolts = loadVolts;
+      final loadedConfig = _PhysicsConfig(
+        label: 'Arm loaded',
+        physics: loadedPhysics,
+        mechanismType: MechanismType.arm,
+        expectedKs: trueKs, expectedKv: trueKv,
+        expectedKa: trueKa, expectedKg: trueKg + loadVolts,
+        positionConversionFactor: degPerRot,
+        velocityConversionFactor: vcf,
+        rampRate: 0.25, maxVoltage: 8.0,
+        stepVoltage: 4.0, stepDuration: 2.0,
+        startPositionRotations: 0.0,
+        kgTol: 0.25,
+      );
+      final gainsLoaded = _runFullSysid(loadedConfig);
+
+      // ignore: avoid_print
+      print('  Unloaded: kS=${gainsUnloaded.kS.toStringAsFixed(4)}, '
+          'kV=${gainsUnloaded.kV.toStringAsFixed(5)}, '
+          'kA=${gainsUnloaded.kA.toStringAsFixed(5)}, '
+          'kG=${gainsUnloaded.kG.toStringAsFixed(4)}');
+      // ignore: avoid_print
+      print('  Loaded:   kS=${gainsLoaded.kS.toStringAsFixed(4)}, '
+          'kV=${gainsLoaded.kV.toStringAsFixed(5)}, '
+          'kA=${gainsLoaded.kA.toStringAsFixed(5)}, '
+          'kG=${gainsLoaded.kG.toStringAsFixed(4)}');
+
+      // kG should increase by roughly loadVolts.
+      expect(gainsLoaded.kG, greaterThan(gainsUnloaded.kG + 0.15),
+          reason: 'kG should increase with load');
+
+      // kS should NOT absorb the load (should stay similar).
+      expect((gainsLoaded.kS - gainsUnloaded.kS).abs(), lessThan(0.15),
+          reason: 'kS should not absorb the load');
+
+      // kV and kA should be essentially unchanged.
+      expect(gainsLoaded.kV, closeTo(gainsUnloaded.kV, 0.003),
+          reason: 'kV should not change with load');
+    });
+  });
 }
