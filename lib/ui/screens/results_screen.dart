@@ -1458,8 +1458,9 @@ class _TuningParametersPanelState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'These parameters control the auto-tuned PID gains. '
-            'Adjust them before computing, or change and re-compute.',
+            'These settings shape how aggressive the auto-tuned PID is. '
+            'They control the tradeoff between speed and smoothness by setting '
+            'the target closed-loop behavior before gains are computed.',
             style: TextStyle(
               fontSize: 12,
               color: theme.typography.body?.color?.withValues(alpha: 0.7),
@@ -1509,8 +1510,9 @@ class _TuningParametersPanelState
           Padding(
             padding: const EdgeInsets.only(left: 200),
             child: Text(
-              'Smaller → faster velocity response, less stability margin. '
-              'Optimal: ${notifier.optimalTauMs.round()} ms.',
+              'Smaller \u03c4 feels snappier and larger \u03c4 feels calmer. '
+              'Decreasing \u03c4 raises loop aggressiveness and reduces phase margin. '
+              'Current optimal baseline: ${notifier.optimalTauMs.round()} ms.',
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
@@ -1538,8 +1540,8 @@ class _TuningParametersPanelState
                 child: Slider(
                   value: params.positionBandwidthHz,
                   min: 0.1,
-                  max: 40,
-                  divisions: 395,
+                  max: 10,
+                  divisions: 99,
                   label: '${params.positionBandwidthHz.toStringAsFixed(1)} Hz',
                   onChanged: _onBwChanged,
                 ),
@@ -1558,8 +1560,9 @@ class _TuningParametersPanelState
           Padding(
             padding: const EdgeInsets.only(left: 200),
             child: Text(
-              'Higher → faster position response, more sensitive to noise. '
-              'Optimal: ${notifier.optimalBwHz.toStringAsFixed(1)} Hz.',
+              'Higher bandwidth tracks quicker but can ring. '
+              'Increasing BW raises crossover and sensitivity to noise/resonance. '
+              'Current optimal baseline: ${notifier.optimalBwHz.toStringAsFixed(1)} Hz.',
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
@@ -1653,12 +1656,14 @@ class _PidCardState extends State<_PidCard> {
         widget.ff != null && widget.ffLoaded != null && widget.pid.kI > 0;
     if (hasRobustLoadedTune) {
       return widget.mode == _PidMode.velocity
-          ? 'Loaded and unloaded tests produced different plant/load estimates, so a slow integral term was added to trim the residual disturbance left by blended feedforward. The proportional loop still handles the transient; integral only cleans up the remaining bias.'
-          : 'Loaded and unloaded tests produced different gravity/load estimates, so a slow integral term was added to trim the remaining bias after the PD transient settles. It is intentionally much slower than the main loop to avoid overshoot.';
+          ? 'Loaded and unloaded behavior were different, so a small integral term removes leftover bias. '
+            'Robust tuning detected plant/load mismatch, so a slow kI trims blended-feedforward residual without dominating transients.'
+          : 'Loaded and unloaded gravity/load did not match, so a slow integral term corrects final offset after the step settles. '
+            'Robust tuning adds conservative kI for steady-state bias removal while keeping PD transient shaping dominant.';
     }
     return widget.mode == _PidMode.velocity
-        ? 'Single-condition velocity tuning leaves kI at zero to avoid windup. Feedforward handles most of the steady-state load and kP corrects small residual error.'
-        : 'Single-condition position tuning leaves kI at zero by default. kP and kD shape the step response while feedforward handles the bulk load/gravity demand.';
+        ? 'kI is off by default so it does not wind up. Single-condition velocity tuning relies on feedforward plus kP correction for steady-state tracking.'
+        : 'kI is usually not needed for position here. Single-condition position tuning uses PD pole shaping while feedforward carries most static load/gravity demand.';
   }
 
   @override

@@ -184,7 +184,7 @@ class ResponseDiagnostics {
           ),
         );
       } else {
-        final newBw = (currentBwHz / _positionBwDivisor).clamp(0.5, 40.0);
+        final newBw = (currentBwHz / _positionBwDivisor).clamp(0.5, 10.0);
         final newDamping = (currentDamping + _dampingBoost).clamp(0.3, 2.0);
         diagnostics.add(
           ResponseDiagnostic(
@@ -273,7 +273,7 @@ class ResponseDiagnostics {
                     '(slower loop allows better tracking) and retune.'
               : 'Reduce position bandwidth from '
                     '${currentBwHz.toStringAsFixed(1)} Hz to '
-                    '${(currentBwHz / 1.3).clamp(0.5, 40.0).toStringAsFixed(1)} Hz '
+                    '${(currentBwHz / 1.3).clamp(0.5, 10.0).toStringAsFixed(1)} Hz '
                     'and retune.',
           action: isVelocity
               ? TuningAction(
@@ -283,7 +283,7 @@ class ResponseDiagnostics {
                   ),
                 )
               : TuningAction(
-                  positionBandwidthHz: (currentBwHz / 1.3).clamp(0.5, 40.0),
+                  positionBandwidthHz: (currentBwHz / 1.3).clamp(0.5, 10.0),
                 ),
         ),
       );

@@ -1344,6 +1344,123 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
 
   bool get _isVelocity => widget.result.mode == ValidationMode.velocity;
 
+  double _equivalentTauMsFromBw(double bwHz) {
+    if (bwHz <= 0) return double.infinity;
+    return 1000.0 / (2.0 * 3.141592653589793 * bwHz);
+  }
+
+  String _focusAdvice(String focus) {
+    final riseMs = widget.result.riseTime != null
+        ? (widget.result.riseTime! * 1000.0)
+        : null;
+    final overshoot = widget.result.overshootPercent;
+    final ssError = widget.result.steadyStateError?.abs();
+
+    switch (focus) {
+      case 'rise':
+        final measured = riseMs != null
+            ? 'Current rise time is ${riseMs.toStringAsFixed(0)} ms. '
+            : '';
+        return _isVelocity
+        ? '${measured}If it feels sluggish, decrease time constant slightly. '
+          'Change \u03c4 in 10-20 ms steps; if overshoot grows, increase \u03c4 back one step.'
+        : '${measured}Increase bandwidth to make it respond faster. '
+          'Raise BW in 5-10% steps and keep \u03b6 around 0.8-1.2 if overshoot appears.';
+      case 'overshoot':
+        final measured = overshoot != null
+            ? 'Current overshoot is ${overshoot.toStringAsFixed(1)}%. '
+            : '';
+        return _isVelocity
+        ? '${measured}If it bounces past target, slow it down. '
+          'Increase \u03c4 until overshoot drops below about 10-15%.'
+        : '${measured}Add damping to calm ringing. '
+          'Increase \u03b6 by about 0.1-0.3 or reduce BW by 10-20%.';
+      case 'sse':
+        final measured = ssError != null
+            ? 'Current steady-state error is ${ssError.toStringAsFixed(3)}. '
+            : '';
+        return _isVelocity
+        ? '${measured}If it never quite reaches target, check the model first. '
+          'Verify feedforward and current limits, then adjust \u03c4 conservatively.'
+        : '${measured}If it settles with offset, ease aggressiveness first. '
+          'Reduce BW slightly and/or increase allowed closed-loop error if hunting persists.';
+      default:
+        return 'Adjust one parameter at a time, retest, and keep the version with the best rise/overshoot/error tradeoff.';
+    }
+  }
+
+  Widget _buildTuningReference({required String focus}) {
+    final tuning = ref.read(pidTuningParamsProvider);
+    final eqTauMs = _equivalentTauMsFromBw(tuning.positionBandwidthHz);
+    final advice = _focusAdvice(focus);
+
+    Widget item({
+      required String label,
+      required String value,
+      required String tooltip,
+    }) {
+      return Tooltip(
+        message: tooltip,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            color: FluentTheme.of(context).micaBackgroundColor.withValues(alpha: 0.45),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 10)),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'Consolas',
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            item(
+              label: 'Damping Ratio',
+              value: tuning.dampingRatio.toStringAsFixed(2),
+              tooltip:
+              'Higher damping reduces bounce. \u03b6 controls transient shape; low \u03b6 can oscillate. $advice',
+            ),
+            item(
+              label: 'Bandwidth',
+              value: '${tuning.positionBandwidthHz.toStringAsFixed(1)} Hz',
+              tooltip:
+              'Higher bandwidth reacts faster. BW raises loop crossover and sensitivity to noise/resonance. $advice',
+            ),
+            item(
+              label: 'Time Constant',
+              value: '${tuning.velocityTimeConstantMs.toStringAsFixed(0)} ms (vel), ${eqTauMs.toStringAsFixed(0)} ms (eq from BW)',
+              tooltip:
+              'Larger time constant is smoother and slower. \u03c4 sets velocity loop speed; BW roughly maps to 1/(2\u03c0BW). $advice',
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          advice,
+          style: const TextStyle(fontSize: 11),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final result = widget.result;
@@ -1402,8 +1519,8 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
               label: 'Rise Time',
               value: '${(result.riseTime! * 1000).toStringAsFixed(0)} ms',
               tooltip: _isVelocity
-                  ? 'Lower the time constant (\u03c4) for faster rise'
-                  : 'Increase bandwidth (BW) for faster settling',
+                  ? 'Adjust \u03c4 to trade off speed vs stability. Open for guided recommendations.'
+                  : 'Adjust bandwidth and damping to improve settling speed. Open for guided recommendations.',
               controller: _riseTimeFlyout,
               flyoutBuilder: _buildRiseTimeFlyout,
             ),
@@ -1413,8 +1530,8 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
               value: '${result.overshootPercent!.toStringAsFixed(1)}%',
               warn: result.overshootPercent! > 20,
               tooltip: _isVelocity
-                  ? 'Increase time constant (\u03c4) to slow the response'
-                  : 'Increase damping ratio (\u03b6) to reduce overshoot',
+                  ? 'Overshoot is mainly managed with \u03c4 in velocity mode. Open for guided recommendations.'
+                  : 'Overshoot is managed with damping ratio and bandwidth. Open for guided recommendations.',
               controller: _overshootFlyout,
               flyoutBuilder: _buildOvershootFlyout,
             ),
@@ -1423,8 +1540,8 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
               label: 'SS Error',
               value: result.steadyStateError!.toStringAsFixed(3),
               tooltip: _isVelocity
-                  ? 'Check FF accuracy; increase \u03c4 if tracking lags'
-                  : 'Reduce bandwidth (BW) or increase allowed CL error',
+                  ? 'Steady-state error may indicate FF mismatch or conservative loop tuning. Open for guided recommendations.'
+                  : 'Steady-state error can improve with BW, damping, and CL error tuning. Open for guided recommendations.',
               controller: _ssErrorFlyout,
               flyoutBuilder: _buildSsErrorFlyout,
             ),
@@ -1544,40 +1661,55 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                   const SizedBox(height: 4),
                   Text(
                     _isVelocity
-                        ? 'Lower \u03c4 = faster rise but less stability margin'
-                        : 'Higher BW = faster rise but more noise-sensitive',
+                        ? 'Lower \u03c4 rises faster, but reduces stability margin.'
+                        : 'Higher BW responds faster, but increases sensitivity to noise and resonance.',
                     style: const TextStyle(fontSize: 11),
                   ),
+                  const SizedBox(height: 10),
+                  _buildTuningReference(focus: 'rise'),
                   const SizedBox(height: 12),
-                  if (_isVelocity) ...[
-                    _TuningSlider(
-                      label: '\u03c4',
-                      unit: 'ms',
-                      value: currentTuning.velocityTimeConstantMs,
-                      min: 20,
-                      max: 500,
-                      onChanged: (v) {
-                        ref
-                            .read(pidTuningParamsProvider.notifier)
-                            .setVelocityTimeConstant(v);
-                        setFlyoutState(() {});
-                      },
-                    ),
-                  ] else ...[
-                    _TuningSlider(
-                      label: 'BW',
-                      unit: 'Hz',
-                      value: currentTuning.positionBandwidthHz,
-                      min: 0.5,
-                      max: 40,
-                      onChanged: (v) {
-                        ref
-                            .read(pidTuningParamsProvider.notifier)
-                            .setPositionBandwidth(v);
-                        setFlyoutState(() {});
-                      },
-                    ),
-                  ],
+                  _TuningSlider(
+                    label: '\u03c4',
+                    unit: 'ms',
+                    value: currentTuning.velocityTimeConstantMs,
+                    min: 20,
+                    max: 500,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setVelocityTimeConstant(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _TuningSlider(
+                    label: 'BW',
+                    unit: 'Hz',
+                    value: currentTuning.positionBandwidthHz,
+                    min: 0.5,
+                    max: 10,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setPositionBandwidth(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _TuningSlider(
+                    label: '\u03b6',
+                    unit: '',
+                    value: currentTuning.dampingRatio,
+                    min: 0.1,
+                    max: 5.0,
+                    divisions: 49,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setDampingRatio(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
                   const SizedBox(height: 12),
                   _GainPreview(isVelocity: _isVelocity),
                   const SizedBox(height: 12),
@@ -1588,12 +1720,9 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                         Navigator.of(context).pop();
                         final t = ref.read(pidTuningParamsProvider);
                         widget.onApplyAndRetest(
-                          velocityTimeConstantMs: _isVelocity
-                              ? t.velocityTimeConstantMs
-                              : null,
-                          positionBandwidthHz: _isVelocity
-                              ? null
-                              : t.positionBandwidthHz,
+                          velocityTimeConstantMs: t.velocityTimeConstantMs,
+                          positionBandwidthHz: t.positionBandwidthHz,
+                          dampingRatio: t.dampingRatio,
                         );
                       },
                       child: const Text('Apply & Retest'),
@@ -1633,41 +1762,55 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                   const SizedBox(height: 4),
                   Text(
                     _isVelocity
-                        ? 'Increase \u03c4 to slow the response and reduce overshoot'
-                        : '\u03b6 > 1 = overdamped (no overshoot), \u03b6 < 1 = underdamped',
+                        ? 'Increase \u03c4 to reduce overshoot. Larger \u03c4 lowers loop bandwidth and peak response.'
+                        : 'Increase \u03b6 to reduce bounce. \u03b6<1 is underdamped, \u03b6\u22481 is near-critical, \u03b6>1 is overdamped.',
                     style: const TextStyle(fontSize: 11),
                   ),
+                  const SizedBox(height: 10),
+                  _buildTuningReference(focus: 'overshoot'),
                   const SizedBox(height: 12),
-                  if (_isVelocity) ...[
-                    _TuningSlider(
-                      label: '\u03c4',
-                      unit: 'ms',
-                      value: currentTuning.velocityTimeConstantMs,
-                      min: 20,
-                      max: 500,
-                      onChanged: (v) {
-                        ref
-                            .read(pidTuningParamsProvider.notifier)
-                            .setVelocityTimeConstant(v);
-                        setFlyoutState(() {});
-                      },
-                    ),
-                  ] else ...[
-                    _TuningSlider(
-                      label: '\u03b6',
-                      unit: '',
-                      value: currentTuning.dampingRatio,
-                      min: 0.1,
-                      max: 5.0,
-                      divisions: 49,
-                      onChanged: (v) {
-                        ref
-                            .read(pidTuningParamsProvider.notifier)
-                            .setDampingRatio(v);
-                        setFlyoutState(() {});
-                      },
-                    ),
-                  ],
+                  _TuningSlider(
+                    label: '\u03c4',
+                    unit: 'ms',
+                    value: currentTuning.velocityTimeConstantMs,
+                    min: 20,
+                    max: 500,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setVelocityTimeConstant(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _TuningSlider(
+                    label: 'BW',
+                    unit: 'Hz',
+                    value: currentTuning.positionBandwidthHz,
+                    min: 0.5,
+                    max: 10,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setPositionBandwidth(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _TuningSlider(
+                    label: '\u03b6',
+                    unit: '',
+                    value: currentTuning.dampingRatio,
+                    min: 0.1,
+                    max: 5.0,
+                    divisions: 49,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setDampingRatio(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
                   const SizedBox(height: 12),
                   _GainPreview(isVelocity: _isVelocity),
                   const SizedBox(height: 12),
@@ -1678,10 +1821,9 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                         Navigator.of(context).pop();
                         final t = ref.read(pidTuningParamsProvider);
                         widget.onApplyAndRetest(
-                          velocityTimeConstantMs: _isVelocity
-                              ? t.velocityTimeConstantMs
-                              : null,
-                          dampingRatio: _isVelocity ? null : t.dampingRatio,
+                          velocityTimeConstantMs: t.velocityTimeConstantMs,
+                          positionBandwidthHz: t.positionBandwidthHz,
+                          dampingRatio: t.dampingRatio,
                         );
                       },
                       child: const Text('Apply & Retest'),
@@ -1721,40 +1863,55 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                   const SizedBox(height: 4),
                   Text(
                     _isVelocity
-                        ? 'Increase \u03c4 if tracking lags; also check FF accuracy'
-                        : 'Reduce BW or increase allowed CL error to improve tracking',
+                        ? 'Check feedforward first, then tune \u03c4. Feedforward bias often dominates velocity steady-state error.'
+                        : 'Reduce BW if it hunts near target. Lower BW or widen CL error deadband to avoid chatter.',
                     style: const TextStyle(fontSize: 11),
                   ),
+                  const SizedBox(height: 10),
+                  _buildTuningReference(focus: 'sse'),
                   const SizedBox(height: 12),
-                  if (_isVelocity) ...[
-                    _TuningSlider(
-                      label: '\u03c4',
-                      unit: 'ms',
-                      value: currentTuning.velocityTimeConstantMs,
-                      min: 20,
-                      max: 500,
-                      onChanged: (v) {
-                        ref
-                            .read(pidTuningParamsProvider.notifier)
-                            .setVelocityTimeConstant(v);
-                        setFlyoutState(() {});
-                      },
-                    ),
-                  ] else ...[
-                    _TuningSlider(
-                      label: 'BW',
-                      unit: 'Hz',
-                      value: currentTuning.positionBandwidthHz,
-                      min: 0.5,
-                      max: 40,
-                      onChanged: (v) {
-                        ref
-                            .read(pidTuningParamsProvider.notifier)
-                            .setPositionBandwidth(v);
-                        setFlyoutState(() {});
-                      },
-                    ),
-                  ],
+                  _TuningSlider(
+                    label: '\u03c4',
+                    unit: 'ms',
+                    value: currentTuning.velocityTimeConstantMs,
+                    min: 20,
+                    max: 500,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setVelocityTimeConstant(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _TuningSlider(
+                    label: 'BW',
+                    unit: 'Hz',
+                    value: currentTuning.positionBandwidthHz,
+                    min: 0.5,
+                    max: 10,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setPositionBandwidth(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  _TuningSlider(
+                    label: '\u03b6',
+                    unit: '',
+                    value: currentTuning.dampingRatio,
+                    min: 0.1,
+                    max: 5.0,
+                    divisions: 49,
+                    onChanged: (v) {
+                      ref
+                          .read(pidTuningParamsProvider.notifier)
+                          .setDampingRatio(v);
+                      setFlyoutState(() {});
+                    },
+                  ),
                   const SizedBox(height: 12),
                   _GainPreview(isVelocity: _isVelocity),
                   const SizedBox(height: 12),
@@ -1765,12 +1922,9 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                         Navigator.of(context).pop();
                         final t = ref.read(pidTuningParamsProvider);
                         widget.onApplyAndRetest(
-                          velocityTimeConstantMs: _isVelocity
-                              ? t.velocityTimeConstantMs
-                              : null,
-                          positionBandwidthHz: _isVelocity
-                              ? null
-                              : t.positionBandwidthHz,
+                          velocityTimeConstantMs: t.velocityTimeConstantMs,
+                          positionBandwidthHz: t.positionBandwidthHz,
+                          dampingRatio: t.dampingRatio,
                         );
                       },
                       child: const Text('Apply & Retest'),

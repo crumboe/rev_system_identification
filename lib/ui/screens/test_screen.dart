@@ -62,6 +62,9 @@ class _TestScreenState extends ConsumerState<TestScreen> {
   /// Simulated load mass (kg) for arm/elevator loaded tests.
   double? _simulatedLoadMassKg;
 
+  /// Load condition label for real-hardware tests.
+  bool _realHardwareLoaded = false;
+
   /// Colors assigned to successive test segments.
   static final _segmentColors = [
     Colors.blue,
@@ -244,6 +247,30 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                           color: Colors.orange,
                         ),
                       ),
+                  ],
+                ),
+              ),
+
+            // Real-hardware load condition toggle (all mechanism types)
+            if (device != null && !device.isSimulated)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    const Text('Load condition: '),
+                    const SizedBox(width: 8),
+                    ToggleSwitch(
+                      checked: _realHardwareLoaded,
+                      onChanged: _isRunning
+                          ? null
+                          : (v) => setState(() => _realHardwareLoaded = v),
+                      content: Text(_realHardwareLoaded ? 'Loaded' : 'Unloaded'),
+                    ),
+                    const SizedBox(width: 8),
+                    InfoBadge(
+                      source: Text(_realHardwareLoaded ? 'LOADED' : 'UNLOADED'),
+                      color: _realHardwareLoaded ? Colors.orange : Colors.blue,
+                    ),
                   ],
                 ),
               ),
@@ -523,14 +550,16 @@ class _TestScreenState extends ConsumerState<TestScreen> {
 
     // Apply simulated load to physics before test.
     final loadMass = _simulatedLoadMassKg;
-    final isLoaded = loadMass != null && loadMass > 0;
+    final isLoaded = device.isSimulated
+      ? (loadMass != null && loadMass > 0)
+      : _realHardwareLoaded;
     double previousLoadVolts = 0.0;
     if (isLoaded && device.isSimulated) {
       final conn = device.connection;
       if (conn is SimulatedSparkConnection) {
         previousLoadVolts = conn.physics.loadTorqueVolts;
         conn.physics.loadTorqueVolts = computeLoadTorqueVolts(
-          loadMassKg: loadMass,
+          loadMassKg: loadMass!,
           config: config,
           physics: conn.physics,
         );
@@ -607,14 +636,16 @@ class _TestScreenState extends ConsumerState<TestScreen> {
 
     // Apply simulated load to physics before test.
     final loadMass = _simulatedLoadMassKg;
-    final isLoaded = loadMass != null && loadMass > 0;
+    final isLoaded = device.isSimulated
+      ? (loadMass != null && loadMass > 0)
+      : _realHardwareLoaded;
     double previousLoadVolts = 0.0;
     if (isLoaded && device.isSimulated) {
       final conn = device.connection;
       if (conn is SimulatedSparkConnection) {
         previousLoadVolts = conn.physics.loadTorqueVolts;
         conn.physics.loadTorqueVolts = computeLoadTorqueVolts(
-          loadMassKg: loadMass,
+          loadMassKg: loadMass!,
           config: config,
           physics: conn.physics,
         );

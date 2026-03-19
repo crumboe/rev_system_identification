@@ -333,7 +333,7 @@ class PidTuningParams {
   static double clampVelocityTau(double ms) => ms.clamp(20.0, 500.0);
 
   /// Position bandwidth clamped to valid range.
-  static double clampPositionBw(double hz) => hz.clamp(0.5, 40.0);
+  static double clampPositionBw(double hz) => hz.clamp(0.5, 10.0);
 
   /// Damping ratio clamped to valid range.
   static double clampDamping(double z) => z.clamp(0.1, 5.0);
