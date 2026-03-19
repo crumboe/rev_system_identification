@@ -93,7 +93,9 @@ class ReportGenerator {
               pw.Text(
                 'Diagnostic Plots',
                 style: pw.TextStyle(
-                    fontSize: 18, fontWeight: pw.FontWeight.bold),
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                ),
               ),
               pw.Divider(thickness: 1),
               pw.SizedBox(height: 8),
@@ -120,29 +122,46 @@ class ReportGenerator {
                 pw.Text(
                   'Frequency Response (Bode Plot)',
                   style: pw.TextStyle(
-                      fontSize: 14,
-                      fontWeight: pw.FontWeight.bold,
-                      color: PdfColors.blueGrey800),
+                    fontSize: 14,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.blueGrey800,
+                  ),
                 ),
                 pw.SizedBox(height: 6),
                 // Velocity Bode
                 if (velocityPid != null) ...[
-                  pw.Text('Velocity Loop',
-                      style: pw.TextStyle(
-                          fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(
+                    'Velocity Loop',
+                    style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
                   pw.SizedBox(height: 4),
                   _buildBodePdfPlot(
-                      ff, velocityPid, BodePlotMode.velocity, chartFont),
+                    ff,
+                    velocityPid,
+                    BodePlotMode.velocity,
+                    chartFont,
+                  ),
                   pw.SizedBox(height: 10),
                 ],
                 // Position Bode
                 if (positionPid != null) ...[
-                  pw.Text('Position Loop',
-                      style: pw.TextStyle(
-                          fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                  pw.Text(
+                    'Position Loop',
+                    style: pw.TextStyle(
+                      fontSize: 11,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
                   pw.SizedBox(height: 4),
                   _buildBodePdfPlot(
-                      ff, positionPid, BodePlotMode.position, chartFont),
+                    ff,
+                    positionPid,
+                    BodePlotMode.position,
+                    chartFont,
+                  ),
                 ],
               ],
               pw.Spacer(),
@@ -165,7 +184,9 @@ class ReportGenerator {
               pw.Text(
                 'Pole-Zero Map (s-Plane)',
                 style: pw.TextStyle(
-                    fontSize: 18, fontWeight: pw.FontWeight.bold),
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                ),
               ),
               pw.Divider(thickness: 1),
               pw.SizedBox(height: 8),
@@ -175,16 +196,24 @@ class ReportGenerator {
                   if (velocityPid != null)
                     pw.Expanded(
                       child: _buildPoleZeroPdfPlot(
-                          ff, velocityPid, PoleZeroMode.velocity, chartFont,
-                          config.type),
+                        ff,
+                        velocityPid,
+                        PoleZeroMode.velocity,
+                        chartFont,
+                        config.type,
+                      ),
                     ),
                   if (velocityPid != null && positionPid != null)
                     pw.SizedBox(width: 16),
                   if (positionPid != null)
                     pw.Expanded(
                       child: _buildPoleZeroPdfPlot(
-                          ff, positionPid, PoleZeroMode.position, chartFont,
-                          config.type),
+                        ff,
+                        positionPid,
+                        PoleZeroMode.position,
+                        chartFont,
+                        config.type,
+                      ),
                     ),
                 ],
               ),
@@ -214,10 +243,7 @@ class ReportGenerator {
       children: [
         pw.Text(
           'System Identification Report',
-          style: pw.TextStyle(
-            fontSize: 22,
-            fontWeight: pw.FontWeight.bold,
-          ),
+          style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold),
         ),
         pw.SizedBox(height: 4),
         pw.Text(
@@ -242,29 +268,38 @@ class ReportGenerator {
           if (config.systemName.isNotEmpty)
             _tableRow('System Name', config.systemName),
           _tableRow('Mechanism Type', config.type.displayName),
-          _tableRow('Position Conv. Factor',
-              '${config.positionConversionFactor.toStringAsFixed(6)} '
-              'rot -> ${config.positionUnit}'),
-          _tableRow('Velocity Conv. Factor',
-              '${config.velocityConversionFactor.toStringAsFixed(6)} '
-              'RPM -> ${config.velocityUnit}'),
-          _tableRow('Motor Type',
-              config.isBrushless ? 'Brushless' : 'Brushed'),
+          _tableRow(
+            'Position Conv. Factor',
+            '${config.positionConversionFactor.toStringAsFixed(6)} '
+                'rot -> ${config.positionUnit}',
+          ),
+          _tableRow(
+            'Velocity Conv. Factor',
+            '${config.velocityConversionFactor.toStringAsFixed(6)} '
+                'RPM -> ${config.velocityUnit}',
+          ),
+          _tableRow('Motor Type', config.isBrushless ? 'Brushless' : 'Brushed'),
           _tableRow('Motor Inverted', config.motorInverted ? 'Yes' : 'No'),
           _tableRow('Current Limit', '${config.currentLimitAmps} A'),
           if (config.forwardSoftLimit != null)
-            _tableRow('Forward Soft Limit',
-                '${config.forwardSoftLimit!.toStringAsFixed(2)} ${config.positionUnit}'),
+            _tableRow(
+              'Forward Soft Limit',
+              '${config.forwardSoftLimit!.toStringAsFixed(2)} ${config.positionUnit}',
+            ),
           if (config.reverseSoftLimit != null)
-            _tableRow('Reverse Soft Limit',
-                '${config.reverseSoftLimit!.toStringAsFixed(2)} ${config.positionUnit}'),
+            _tableRow(
+              'Reverse Soft Limit',
+              '${config.reverseSoftLimit!.toStringAsFixed(2)} ${config.positionUnit}',
+            ),
         ],
       ),
     );
   }
 
   static pw.Widget _buildFeedforwardSection(
-      FeedforwardGains ff, MechanismConfig config) {
+    FeedforwardGains ff,
+    MechanismConfig config,
+  ) {
     final velUnit = config.velocityUnit;
     final posUnit = config.positionUnit;
 
@@ -276,11 +311,9 @@ class ReportGenerator {
     ];
 
     if (config.type == MechanismType.arm) {
-      rows.add(_gainsRow(
-          'kG (cos)', ff.kG, 'V', 'Gravity compensation (arm)'));
+      rows.add(_gainsRow('kG (cos)', ff.kG, 'V', 'Gravity compensation (arm)'));
     } else if (config.type == MechanismType.elevator) {
-      rows.add(
-          _gainsRow('kG', ff.kG, 'V', 'Gravity compensation (elevator)'));
+      rows.add(_gainsRow('kG', ff.kG, 'V', 'Gravity compensation (elevator)'));
     }
 
     rows.add(_gainsRow('R^2', ff.rSquared, '', 'Goodness of fit'));
@@ -301,74 +334,98 @@ class ReportGenerator {
   }
 
   static pw.Widget _buildPidSection(
-      PidResult? velPid, PidResult? posPid, MechanismConfig config,
-      PidTuningParams tuningParams) {
+    PidResult? velPid,
+    PidResult? posPid,
+    MechanismConfig config,
+    PidTuningParams tuningParams,
+  ) {
     final children = <pw.Widget>[];
 
     if (velPid != null) {
-      children.add(pw.Text('Velocity PID',
-          style: pw.TextStyle(
-              fontSize: 11, fontWeight: pw.FontWeight.bold)));
+      children.add(
+        pw.Text(
+          'Velocity PID',
+          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+        ),
+      );
       children.add(pw.SizedBox(height: 4));
-      children.add(pw.Table(
-        border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
-        columnWidths: {
-          0: const pw.FixedColumnWidth(60),
-          1: const pw.FixedColumnWidth(120),
-          2: const pw.FlexColumnWidth(),
-        },
-        children: [
-          _pidHeaderRow(),
-          _pidRow('kP', velPid.kP),
-          _pidRow('kI', velPid.kI),
-          _pidRow('kD', velPid.kD),
-        ],
-      ));
+      children.add(
+        pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+          columnWidths: {
+            0: const pw.FixedColumnWidth(60),
+            1: const pw.FixedColumnWidth(120),
+            2: const pw.FlexColumnWidth(),
+          },
+          children: [
+            _pidHeaderRow(),
+            _pidRow('kP', velPid.kP),
+            _pidRow('kI', velPid.kI),
+            _pidRow('kD', velPid.kD),
+          ],
+        ),
+      );
       children.add(pw.SizedBox(height: 2));
-      children.add(pw.Text(
-        'Tuning: tau = ${tuningParams.velocityTimeConstantMs.toStringAsFixed(0)} ms',
-        style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
-      ));
+      children.add(
+        pw.Text(
+          'Tuning: tau = ${tuningParams.velocityTimeConstantMs.toStringAsFixed(0)} ms',
+          style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+        ),
+      );
     }
 
     if (posPid != null) {
       if (velPid != null) children.add(pw.SizedBox(height: 8));
-      children.add(pw.Text('Position PID',
-          style: pw.TextStyle(
-              fontSize: 11, fontWeight: pw.FontWeight.bold)));
+      children.add(
+        pw.Text(
+          'Position PID',
+          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+        ),
+      );
       children.add(pw.SizedBox(height: 4));
-      children.add(pw.Table(
-        border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
-        columnWidths: {
-          0: const pw.FixedColumnWidth(60),
-          1: const pw.FixedColumnWidth(120),
-          2: const pw.FlexColumnWidth(),
-        },
-        children: [
-          _pidHeaderRow(),
-          _pidRow('kP', posPid.kP),
-          _pidRow('kI', posPid.kI),
-          _pidRow('kD', posPid.kD),
-        ],
-      ));
+      children.add(
+        pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+          columnWidths: {
+            0: const pw.FixedColumnWidth(60),
+            1: const pw.FixedColumnWidth(120),
+            2: const pw.FlexColumnWidth(),
+          },
+          children: [
+            _pidHeaderRow(),
+            _pidRow('kP', posPid.kP),
+            _pidRow('kI', posPid.kI),
+            _pidRow('kD', posPid.kD),
+          ],
+        ),
+      );
       children.add(pw.SizedBox(height: 2));
-      children.add(pw.Text(
-        'Tuning: w = ${tuningParams.positionBandwidthHz.toStringAsFixed(1)} Hz, '
-        'z = ${tuningParams.dampingRatio.toStringAsFixed(3)} '
-        '(${_dampingLabel(tuningParams.dampingRatio)})',
-        style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
-      ));
+      children.add(
+        pw.Text(
+          'Tuning: w = ${tuningParams.positionBandwidthHz.toStringAsFixed(1)} Hz, '
+          'z = ${tuningParams.dampingRatio.toStringAsFixed(3)} '
+          '(${_dampingLabel(tuningParams.dampingRatio)})',
+          style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+        ),
+      );
     }
 
     if (children.isEmpty) {
-      children.add(pw.Text('No PID gains computed.',
-          style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600)));
+      children.add(
+        pw.Text(
+          'No PID gains computed.',
+          style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey600),
+        ),
+      );
     }
 
-    return _section('PID Gains', pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: children,
-    ));
+    return _section(
+      'PID Gains',
+      pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
   }
 
   static pw.Widget _buildTestSummarySection(List<TestRun> runs) {
@@ -385,12 +442,16 @@ class ReportGenerator {
     ];
 
     for (final run in runs) {
-      rows.add(pw.TableRow(children: [
-        _cell(run.testType.displayName),
-        _cell('${run.sampleCount}'),
-        _cell(run.durationSeconds.toStringAsFixed(1)),
-        _cell(run.sampleRate.toStringAsFixed(0)),
-      ]));
+      rows.add(
+        pw.TableRow(
+          children: [
+            _cell(run.testType.displayName),
+            _cell('${run.sampleCount}'),
+            _cell(run.durationSeconds.toStringAsFixed(1)),
+            _cell(run.sampleRate.toStringAsFixed(0)),
+          ],
+        ),
+      );
     }
 
     return _section(
@@ -409,10 +470,13 @@ class ReportGenerator {
   }
 
   static pw.Widget _buildValidationSection(
-      ValidationResult vr, MechanismConfig config) {
+    ValidationResult vr,
+    MechanismConfig config,
+  ) {
     final modeLabel = switch (vr.mode) {
       ValidationMode.velocity => 'Velocity Step',
       ValidationMode.position => 'Position Step',
+      ValidationMode.disturbancePosition => 'Disturbance Position',
       ValidationMode.maxMotionPosition => 'MAXMotion Position',
     };
 
@@ -424,16 +488,25 @@ class ReportGenerator {
     ];
 
     if (vr.riseTime != null) {
-      rows.add(_tableRow('Rise Time',
-          '${(vr.riseTime! * 1000).toStringAsFixed(0)} ms'));
+      rows.add(
+        _tableRow(
+          'Rise Time',
+          '${(vr.riseTime! * 1000).toStringAsFixed(0)} ms',
+        ),
+      );
     }
     if (vr.overshootPercent != null) {
-      rows.add(_tableRow(
-          'Overshoot', '${vr.overshootPercent!.toStringAsFixed(1)}%'));
+      rows.add(
+        _tableRow('Overshoot', '${vr.overshootPercent!.toStringAsFixed(1)}%'),
+      );
     }
     if (vr.steadyStateError != null) {
-      rows.add(_tableRow(
-          'Steady-State Error', vr.steadyStateError!.toStringAsFixed(4)));
+      rows.add(
+        _tableRow(
+          'Steady-State Error',
+          vr.steadyStateError!.toStringAsFixed(4),
+        ),
+      );
     }
     if (vr.error != null) {
       rows.add(_tableRow('Error', vr.error!));
@@ -496,18 +569,21 @@ class ReportGenerator {
   }
 
   static pw.TableRow _tableRow(String label, String value) {
-    return pw.TableRow(children: [
-      pw.Padding(
-        padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-        child: pw.Text(label,
-            style: pw.TextStyle(
-                fontSize: 10, fontWeight: pw.FontWeight.bold)),
-      ),
-      pw.Padding(
-        padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-        child: pw.Text(value, style: const pw.TextStyle(fontSize: 10)),
-      ),
-    ]);
+    return pw.TableRow(
+      children: [
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+          child: pw.Text(
+            label,
+            style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+          ),
+        ),
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+          child: pw.Text(value, style: const pw.TextStyle(fontSize: 10)),
+        ),
+      ],
+    );
   }
 
   static pw.TableRow _gainsHeaderRow() {
@@ -523,13 +599,19 @@ class ReportGenerator {
   }
 
   static pw.TableRow _gainsRow(
-      String name, double value, String unit, String desc) {
-    return pw.TableRow(children: [
-      _cell(name, bold: true),
-      _cell(value.toStringAsFixed(6), mono: true),
-      _cell(unit),
-      _cell(desc),
-    ]);
+    String name,
+    double value,
+    String unit,
+    String desc,
+  ) {
+    return pw.TableRow(
+      children: [
+        _cell(name, bold: true),
+        _cell(value.toStringAsFixed(6), mono: true),
+        _cell(unit),
+        _cell(desc),
+      ],
+    );
   }
 
   static pw.TableRow _pidHeaderRow() {
@@ -550,15 +632,16 @@ class ReportGenerator {
       'kD' => 'Derivative',
       _ => '',
     };
-    return pw.TableRow(children: [
-      _cell(name, bold: true),
-      _cell(value.toStringAsFixed(6), mono: true),
-      _cell(desc),
-    ]);
+    return pw.TableRow(
+      children: [
+        _cell(name, bold: true),
+        _cell(value.toStringAsFixed(6), mono: true),
+        _cell(desc),
+      ],
+    );
   }
 
-  static pw.Widget _cell(String text,
-      {bool bold = false, bool mono = false}) {
+  static pw.Widget _cell(String text, {bool bold = false, bool mono = false}) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 4),
       child: pw.Text(
@@ -603,7 +686,8 @@ class ReportGenerator {
         } else if (mechanismType == MechanismType.elevator) {
           gravity = 1.0;
         }
-        final predicted = ff.kS * signVel +
+        final predicted =
+            ff.kS * signVel +
             ff.kV * dp.velocity.abs() +
             ff.kA * accel +
             ff.kG * gravity;
@@ -612,16 +696,19 @@ class ReportGenerator {
     }
 
     if (points.isEmpty) {
-      return pw.Text('No data for model fit chart.',
-          style: const pw.TextStyle(fontSize: 9));
+      return pw.Text(
+        'No data for model fit chart.',
+        style: const pw.TextStyle(fontSize: 9),
+      );
     }
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text('Predicted vs Actual Voltage',
-            style: pw.TextStyle(
-                fontSize: 11, fontWeight: pw.FontWeight.bold)),
+        pw.Text(
+          'Predicted vs Actual Voltage',
+          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+        ),
         pw.SizedBox(height: 4),
         pw.SizedBox(
           height: 160,
@@ -643,10 +730,14 @@ class ReportGenerator {
 
   /// Draw a simplified step response chart.
   static pw.Widget _buildStepResponseChart(
-      List<TestRun> dynRuns, PdfFont chartFont) {
+    List<TestRun> dynRuns,
+    PdfFont chartFont,
+  ) {
     if (dynRuns.isEmpty) {
-      return pw.Text('No dynamic test data.',
-          style: const pw.TextStyle(fontSize: 9));
+      return pw.Text(
+        'No dynamic test data.',
+        style: const pw.TextStyle(fontSize: 9),
+      );
     }
 
     final allPoints = <List<_PdfPoint>>[];
@@ -658,24 +749,32 @@ class ReportGenerator {
     }
 
     if (allPoints.isEmpty) {
-      return pw.Text('No step response data.',
-          style: const pw.TextStyle(fontSize: 9));
+      return pw.Text(
+        'No step response data.',
+        style: const pw.TextStyle(fontSize: 9),
+      );
     }
 
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text('Step Response (Dynamic)',
-            style: pw.TextStyle(
-                fontSize: 11, fontWeight: pw.FontWeight.bold)),
+        pw.Text(
+          'Step Response (Dynamic)',
+          style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+        ),
         pw.SizedBox(height: 4),
         pw.SizedBox(
           height: 160,
           child: pw.CustomPaint(
             size: const PdfPoint(240, 160),
-            painter: (canvas, size) =>
-                _drawMultiLineChart(canvas, size, allPoints, chartFont,
-                    xLabel: 'Time (s)', yLabel: 'Velocity'),
+            painter: (canvas, size) => _drawMultiLineChart(
+              canvas,
+              size,
+              allPoints,
+              chartFont,
+              xLabel: 'Time (s)',
+              yLabel: 'Velocity',
+            ),
           ),
         ),
         pw.SizedBox(height: 2),
@@ -694,12 +793,7 @@ class ReportGenerator {
     BodePlotMode mode,
     PdfFont chartFont,
   ) {
-    final data = computeBodeData(
-      ff: ff,
-      pid: pid,
-      mode: mode,
-      numPoints: 200,
-    );
+    final data = computeBodeData(ff: ff, pid: pid, mode: mode, numPoints: 200);
 
     final m = data.margins;
     final gm = m.gainMarginDb.isInfinite
@@ -714,30 +808,45 @@ class ReportGenerator {
 
     // Convert frequency response to plottable points
     final plantMag = data.plant
-        .map((d) => _PdfPoint(
+        .map(
+          (d) => _PdfPoint(
             math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
-            d.magnitudeDb))
+            d.magnitudeDb,
+          ),
+        )
         .toList();
     final olMag = data.openLoop
-        .map((d) => _PdfPoint(
+        .map(
+          (d) => _PdfPoint(
             math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
-            d.magnitudeDb))
+            d.magnitudeDb,
+          ),
+        )
         .toList();
     final clMag = data.closedLoop
-        .map((d) => _PdfPoint(
+        .map(
+          (d) => _PdfPoint(
             math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
-            d.magnitudeDb))
+            d.magnitudeDb,
+          ),
+        )
         .toList();
 
     final plantPhase = data.plant
-        .map((d) => _PdfPoint(
+        .map(
+          (d) => _PdfPoint(
             math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
-            d.phaseDeg))
+            d.phaseDeg,
+          ),
+        )
         .toList();
     final olPhase = data.openLoop
-        .map((d) => _PdfPoint(
+        .map(
+          (d) => _PdfPoint(
             math.log(d.omegaRadPerSec / (2 * math.pi)) / math.ln10,
-            d.phaseDeg))
+            d.phaseDeg,
+          ),
+        )
         .toList();
 
     return pw.Column(
@@ -750,8 +859,10 @@ class ReportGenerator {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('Magnitude (dB)',
-                      style: const pw.TextStyle(fontSize: 9)),
+                  pw.Text(
+                    'Magnitude (dB)',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
                   pw.SizedBox(height: 2),
                   pw.SizedBox(
                     height: 110,
@@ -769,9 +880,13 @@ class ReportGenerator {
                     ),
                   ),
                   pw.Center(
-                    child: pw.Text('Frequency (Hz)',
-                        style: const pw.TextStyle(
-                            fontSize: 7, color: PdfColors.grey600)),
+                    child: pw.Text(
+                      'Frequency (Hz)',
+                      style: const pw.TextStyle(
+                        fontSize: 7,
+                        color: PdfColors.grey600,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -781,8 +896,10 @@ class ReportGenerator {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text('Phase (deg)',
-                      style: const pw.TextStyle(fontSize: 9)),
+                  pw.Text(
+                    'Phase (deg)',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
                   pw.SizedBox(height: 2),
                   pw.SizedBox(
                     height: 110,
@@ -800,9 +917,13 @@ class ReportGenerator {
                     ),
                   ),
                   pw.Center(
-                    child: pw.Text('Frequency (Hz)',
-                        style: const pw.TextStyle(
-                            fontSize: 7, color: PdfColors.grey600)),
+                    child: pw.Text(
+                      'Frequency (Hz)',
+                      style: const pw.TextStyle(
+                        fontSize: 7,
+                        color: PdfColors.grey600,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -902,8 +1023,9 @@ class ReportGenerator {
           ..drawLine(px, plotOriginY, px, plotOriginY - 3)
           ..strokePath();
         // Label
-        final label =
-            isLogX ? '${math.pow(10, v).toStringAsFixed(0)}' : _tickLabel(v);
+        final label = isLogX
+            ? '${math.pow(10, v).toStringAsFixed(0)}'
+            : _tickLabel(v);
         canvas.drawString(font, 6, label, px - 6, plotOriginY - 12);
       } else {
         final py = plotOriginY + frac * plotH;
@@ -950,18 +1072,38 @@ class ReportGenerator {
       ..strokePath();
 
     // Tick labels
-    _drawAxisTicks(canvas, font, xMin, xMax,
-        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
-        isXAxis: true);
-    _drawAxisTicks(canvas, font, yMin, yMax,
-        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
-        isXAxis: false);
+    _drawAxisTicks(
+      canvas,
+      font,
+      xMin,
+      xMax,
+      plotOriginX: left,
+      plotOriginY: bottom,
+      plotW: plotW,
+      plotH: plotH,
+      isXAxis: true,
+    );
+    _drawAxisTicks(
+      canvas,
+      font,
+      yMin,
+      yMax,
+      plotOriginX: left,
+      plotOriginY: bottom,
+      plotW: plotW,
+      plotH: plotH,
+      isXAxis: false,
+    );
 
     // Axis name labels
-    canvas
-      ..setColor(PdfColors.grey700);
+    canvas..setColor(PdfColors.grey700);
     canvas.drawString(
-        font, 7, 'Predicted Voltage (V)', left + plotW / 2 - 35, 2);
+      font,
+      7,
+      'Predicted Voltage (V)',
+      left + plotW / 2 - 35,
+      2,
+    );
     canvas.drawString(font, 6, 'Actual (V)', 0, bottom + plotH - 6);
 
     // Draw y=x reference line (green)
@@ -1030,18 +1172,33 @@ class ReportGenerator {
       ..strokePath();
 
     // Tick labels
-    _drawAxisTicks(canvas, font, xMin, xMax,
-        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
-        isXAxis: true);
-    _drawAxisTicks(canvas, font, yMin, yMax,
-        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
-        isXAxis: false);
+    _drawAxisTicks(
+      canvas,
+      font,
+      xMin,
+      xMax,
+      plotOriginX: left,
+      plotOriginY: bottom,
+      plotW: plotW,
+      plotH: plotH,
+      isXAxis: true,
+    );
+    _drawAxisTicks(
+      canvas,
+      font,
+      yMin,
+      yMax,
+      plotOriginX: left,
+      plotOriginY: bottom,
+      plotW: plotW,
+      plotH: plotH,
+      isXAxis: false,
+    );
 
     // Axis name labels
     canvas.setColor(PdfColors.grey700);
     if (xLabel.isNotEmpty) {
-      canvas.drawString(
-          font, 7, xLabel, left + plotW / 2 - 15, 2);
+      canvas.drawString(font, 7, xLabel, left + plotW / 2 - 15, 2);
     }
     if (yLabel.isNotEmpty) {
       canvas.drawString(font, 6, yLabel, 0, bottom + plotH - 6);
@@ -1109,13 +1266,30 @@ class ReportGenerator {
       ..strokePath();
 
     // Tick labels: X-axis (log frequency → Hz)
-    _drawAxisTicks(canvas, font, xMin, xMax,
-        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
-        isXAxis: true, isLogX: true);
+    _drawAxisTicks(
+      canvas,
+      font,
+      xMin,
+      xMax,
+      plotOriginX: left,
+      plotOriginY: bottom,
+      plotW: plotW,
+      plotH: plotH,
+      isXAxis: true,
+      isLogX: true,
+    );
     // Y-axis ticks
-    _drawAxisTicks(canvas, font, yMin, yMax,
-        plotOriginX: left, plotOriginY: bottom, plotW: plotW, plotH: plotH,
-        isXAxis: false);
+    _drawAxisTicks(
+      canvas,
+      font,
+      yMin,
+      yMax,
+      plotOriginX: left,
+      plotOriginY: bottom,
+      plotW: plotW,
+      plotH: plotH,
+      isXAxis: false,
+    );
 
     // Y-axis unit label
     if (yAxisLabel.isNotEmpty) {
@@ -1180,8 +1354,9 @@ class ReportGenerator {
   ) {
     final poles = computeClosedLoopPoles(ff, pid, mode, mechanismType);
     final olPoles = computeOpenLoopPoles(ff, pid, mode);
-    final modeLabel =
-        mode == PoleZeroMode.velocity ? 'Velocity Loop' : 'Position Loop';
+    final modeLabel = mode == PoleZeroMode.velocity
+        ? 'Velocity Loop'
+        : 'Position Loop';
 
     // Summarise poles
     final allStable = poles.every((p) => p.isStable);
@@ -1197,9 +1372,10 @@ class ReportGenerator {
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text(modeLabel,
-            style: pw.TextStyle(
-                fontSize: 12, fontWeight: pw.FontWeight.bold)),
+        pw.Text(
+          modeLabel,
+          style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+        ),
         pw.SizedBox(height: 4),
         pw.SizedBox(
           height: 260,
@@ -1305,15 +1481,12 @@ class ReportGenerator {
     canvas.setColor(PdfColors.grey600);
     for (double v = -maxAbs; v <= maxAbs + step * 0.1; v += step) {
       if (v.abs() < step * 0.1) continue;
-      canvas.drawString(
-          font, 6, v.toStringAsFixed(0), toX(v) - 4, bottom - 10);
-      canvas.drawString(
-          font, 6, v.toStringAsFixed(0), left - 26, toY(v) - 2);
+      canvas.drawString(font, 6, v.toStringAsFixed(0), toX(v) - 4, bottom - 10);
+      canvas.drawString(font, 6, v.toStringAsFixed(0), left - 26, toY(v) - 2);
     }
 
     // Axis name labels
-    canvas
-      ..setColor(PdfColors.grey700);
+    canvas..setColor(PdfColors.grey700);
     canvas.drawString(font, 7, 'Re (1/s)', left + plotW - 28, originY + 3);
     canvas.drawString(font, 7, 'Im (rad/s)', originX + 3, bottom + plotH - 3);
 
@@ -1392,8 +1565,10 @@ class ReportGenerator {
         final a2 = 2 * math.pi * (seg + 1) / 12;
         canvas
           ..drawLine(
-            px + r * math.cos(a1), py + r * math.sin(a1),
-            px + r * math.cos(a2), py + r * math.sin(a2),
+            px + r * math.cos(a1),
+            py + r * math.sin(a1),
+            px + r * math.cos(a2),
+            py + r * math.sin(a2),
           )
           ..strokePath();
       }
@@ -1438,9 +1613,9 @@ class ReportGenerator {
         .first;
     final slug = config.systemName.isNotEmpty
         ? config.systemName
-            .toLowerCase()
-            .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-            .replaceAll(RegExp(r'^_+|_+$'), '')
+              .toLowerCase()
+              .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+              .replaceAll(RegExp(r'^_+|_+$'), '')
         : config.type.name;
     final name = 'sysid_report_${slug}_$timestamp.pdf';
 

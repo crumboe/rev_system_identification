@@ -46,12 +46,12 @@ final devicesProvider = StreamProvider<List<SparkDevice>>((ref) {
 /// Current mechanism configuration (user-editable).
 final mechanismConfigProvider =
     StateNotifierProvider<MechanismConfigNotifier, MechanismConfig>((ref) {
-  return MechanismConfigNotifier();
-});
+      return MechanismConfigNotifier();
+    });
 
 class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
   MechanismConfigNotifier()
-      : super(const MechanismConfig(type: MechanismType.flywheel));
+    : super(const MechanismConfig(type: MechanismType.flywheel));
 
   void setType(MechanismType type) {
     state = state.copyWith(type: type);
@@ -147,8 +147,8 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
 /// Current test parameters.
 final testParamsProvider =
     StateNotifierProvider<TestParamsNotifier, SysIdTestParams>((ref) {
-  return TestParamsNotifier();
-});
+      return TestParamsNotifier();
+    });
 
 class TestParamsNotifier extends StateNotifier<SysIdTestParams> {
   TestParamsNotifier() : super(const SysIdTestParams());
@@ -187,10 +187,11 @@ class TestParamsNotifier extends StateNotifier<SysIdTestParams> {
 // ---------------------------------------------------------------------------
 
 /// Collected test run data for the current session.
-final testRunsProvider =
-    StateNotifierProvider<TestRunsNotifier, List<TestRun>>((ref) {
-  return TestRunsNotifier();
-});
+final testRunsProvider = StateNotifierProvider<TestRunsNotifier, List<TestRun>>(
+  (ref) {
+    return TestRunsNotifier();
+  },
+);
 
 class TestRunsNotifier extends StateNotifier<List<TestRun>> {
   TestRunsNotifier() : super([]);
@@ -213,8 +214,9 @@ class TestRunsNotifier extends StateNotifier<List<TestRun>> {
 }
 
 /// Computed feedforward gains (null until analysis is run).
-final feedforwardGainsProvider =
-    StateProvider<FeedforwardGains?>((ref) => null);
+final feedforwardGainsProvider = StateProvider<FeedforwardGains?>(
+  (ref) => null,
+);
 
 /// Computed velocity PID gains (null until analysis is run).
 final pidResultProvider = StateProvider<PidResult?>((ref) => null);
@@ -223,8 +225,9 @@ final pidResultProvider = StateProvider<PidResult?>((ref) => null);
 final posPidResultProvider = StateProvider<PidResult?>((ref) => null);
 
 /// Computed feedforward gains from loaded tests (null if no loaded data).
-final loadedFeedforwardGainsProvider =
-    StateProvider<FeedforwardGains?>((ref) => null);
+final loadedFeedforwardGainsProvider = StateProvider<FeedforwardGains?>(
+  (ref) => null,
+);
 
 /// Complete sysid results (null until analysis is run).
 final sysIdResultsProvider = StateProvider<SysIdResults?>((ref) => null);
@@ -240,12 +243,12 @@ final selectedPageProvider = StateProvider<int>((ref) => 1);
 final testRunningProvider = StateProvider<bool>((ref) => false);
 
 /// Latest test progress update.
-final testProgressProvider =
-    StateProvider<TestProgress?>((ref) => null);
+final testProgressProvider = StateProvider<TestProgress?>((ref) => null);
 
 /// Whether the user has seen the chart walkthrough (per chart key).
-final walkthroughSeenProvider =
-    StateProvider.family<bool, String>((ref, chartKey) => false);
+final walkthroughSeenProvider = StateProvider.family<bool, String>(
+  (ref, chartKey) => false,
+);
 
 // ---------------------------------------------------------------------------
 // Theme
@@ -259,19 +262,22 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.dark);
 // ---------------------------------------------------------------------------
 
 /// Current validation test parameters.
-final validationParamsProvider =
-    StateProvider<ValidationParams>((ref) => const ValidationParams());
+final validationParamsProvider = StateProvider<ValidationParams>(
+  (ref) => const ValidationParams(),
+);
 
 /// Whether a validation test is currently running.
 final validationRunningProvider = StateProvider<bool>((ref) => false);
 
 /// Latest validation progress update.
-final validationProgressProvider =
-    StateProvider<ValidationProgress?>((ref) => null);
+final validationProgressProvider = StateProvider<ValidationProgress?>(
+  (ref) => null,
+);
 
 /// Latest validation result (null until a test completes).
-final validationResultProvider =
-    StateProvider<ValidationResult?>((ref) => null);
+final validationResultProvider = StateProvider<ValidationResult?>(
+  (ref) => null,
+);
 
 // ---------------------------------------------------------------------------
 // PID tuning parameters (advanced)
@@ -291,7 +297,7 @@ class PidTuningParams {
   /// Desired closed-loop bandwidth for position control (Hz).
   ///
   /// Higher values → faster response but more sensitive to noise.
-  /// Range: 1–20 Hz. Default: 5 Hz.
+  /// Range: 0.5–40 Hz. Default: 5 Hz.
   final double positionBandwidthHz;
 
   /// Desired damping ratio (ζ) for position pole placement.
@@ -301,7 +307,7 @@ class PidTuningParams {
   ///   ζ = 1.0: Critically damped – fastest without overshoot.
   ///   ζ = 0.707: Butterworth – ~4 % overshoot, fast settling.
   ///   ζ < 0.707: Underdamped – oscillatory, faster rise time.
-  /// Range: 0.3–2.0. Default: 1.0 (critically damped).
+  /// Range: 0.1–5.0. Default: 1.0 (critically damped).
   final double dampingRatio;
 
   const PidTuningParams({
@@ -318,8 +324,7 @@ class PidTuningParams {
     return PidTuningParams(
       velocityTimeConstantMs:
           velocityTimeConstantMs ?? this.velocityTimeConstantMs,
-      positionBandwidthHz:
-          positionBandwidthHz ?? this.positionBandwidthHz,
+      positionBandwidthHz: positionBandwidthHz ?? this.positionBandwidthHz,
       dampingRatio: dampingRatio ?? this.dampingRatio,
     );
   }
@@ -328,20 +333,22 @@ class PidTuningParams {
   static double clampVelocityTau(double ms) => ms.clamp(20.0, 500.0);
 
   /// Position bandwidth clamped to valid range.
-  static double clampPositionBw(double hz) => hz.clamp(1.0, 20.0);
+  static double clampPositionBw(double hz) => hz.clamp(0.5, 40.0);
 
   /// Damping ratio clamped to valid range.
-  static double clampDamping(double z) => z.clamp(0.3, 2.0);
+  static double clampDamping(double z) => z.clamp(0.1, 5.0);
 }
 
 /// Current PID tuning parameters.
 final pidTuningParamsProvider =
     StateNotifierProvider<PidTuningParamsNotifier, PidTuningParams>((ref) {
-  return PidTuningParamsNotifier();
-});
+      return PidTuningParamsNotifier();
+    });
 
 class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
   PidTuningParamsNotifier() : super(const PidTuningParams());
+
+  static const _initialPositionBandwidthScale = 1.0 / 3.0;
 
   /// Plant-optimal defaults (updated after feedforward analysis).
   double _optimalTauMs = 100.0;
@@ -367,7 +374,9 @@ class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
   void setOptimalDefaults(double tauMs, double bwHz) {
     final wasAtDefaults = isAtDefaults;
     _optimalTauMs = PidTuningParams.clampVelocityTau(tauMs);
-    _optimalBwHz = PidTuningParams.clampPositionBw(bwHz);
+    _optimalBwHz = PidTuningParams.clampPositionBw(
+      bwHz * _initialPositionBandwidthScale,
+    );
     if (wasAtDefaults) {
       state = PidTuningParams(
         velocityTimeConstantMs: _optimalTauMs,
@@ -390,9 +399,7 @@ class PidTuningParamsNotifier extends StateNotifier<PidTuningParams> {
   }
 
   void setDampingRatio(double z) {
-    state = state.copyWith(
-      dampingRatio: PidTuningParams.clampDamping(z),
-    );
+    state = state.copyWith(dampingRatio: PidTuningParams.clampDamping(z));
   }
 
   void reset() {

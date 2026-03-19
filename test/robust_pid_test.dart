@@ -9,7 +9,9 @@ import 'package:rev_system_identification/data/test_data.dart';
 import 'package:rev_system_identification/mechanisms/mechanism.dart';
 import 'package:rev_system_identification/simulation/arm_physics.dart';
 import 'package:rev_system_identification/simulation/elevator_physics.dart';
+import 'package:rev_system_identification/simulation/flywheel_physics.dart';
 import 'package:rev_system_identification/simulation/project_physics_factory.dart';
+import 'package:rev_system_identification/simulation/simulated_device.dart';
 import 'package:rev_system_identification/sysid/pid_autotuner.dart';
 
 void main() {
@@ -128,6 +130,25 @@ void main() {
       expect(pid.kI, greaterThan(0));
     });
 
+    test('kI uses the slower robust integral time constant', () {
+      final pid = PidAutoTuner.tuneRobustVelocity(
+        ffUnloaded: ffU,
+        ffLoaded: ffL,
+        mechanismType: MechanismType.arm,
+      );
+      const kA = 0.002;
+      const kV = 0.020;
+      const tau = 0.1;
+      const plantTau = kA / kV;
+      final kP = kA / tau / 12.0;
+      final ti = PidAutoTuner.robustVelocityIntegralTimeSec(
+        closedLoopTauSec: tau,
+        plantTauSec: plantTau,
+      );
+      expect(pid.kI, closeTo(kP / ti, 1e-9));
+      expect(pid.kI, lessThan(kP / (10.0 * plantTau)));
+    });
+
     test('iZone is nonzero when ΔkG > 0', () {
       final pid = PidAutoTuner.tuneRobustVelocity(
         ffUnloaded: ffU,
@@ -180,6 +201,25 @@ void main() {
         mechanismType: MechanismType.arm,
       );
       expect(pid.kI, greaterThan(0));
+    });
+
+    test('kI uses the slower robust position integral time constant', () {
+      final pid = PidAutoTuner.tuneRobustPosition(
+        ffUnloaded: ffU,
+        ffLoaded: ffL,
+        mechanismType: MechanismType.arm,
+      );
+      const kA = 0.004;
+      const kV = 0.020;
+      const omega = 10.0; // bandwidth is clamped from 5 Hz to plant limit
+      const plantTau = kA / kV;
+      final kP = kA * omega * omega / 12.0;
+      final ti = PidAutoTuner.robustPositionIntegralTimeSec(
+        omegaRadPerSec: omega,
+        plantTauSec: plantTau,
+      );
+      expect(pid.kI, closeTo(kP / ti, 1e-9));
+      expect(pid.kI, lessThan(kP * omega / 20.0));
     });
 
     test('iZone is nonzero', () {
@@ -302,6 +342,60 @@ void main() {
       final pid = PidResult(kP: 0.1, kI: 0.02, kD: 0.05, iZone: 1.5);
       final copy = pid.copyWith(iZone: 3.0);
       expect(copy.iZone, 3.0);
+    });
+  });
+
+  // =========================================================================
+  // Simulated controller iZone behavior
+  // =========================================================================
+
+  group('SimulatedPidFfController iZone', () {
+    test('velocity integral only accumulates inside iZone and resets outside',
+        () async {
+      final params = SimulatedParameterApi();
+      final physics = FlywheelPhysics(noiseLevel: 0.0);
+      final controller = SimulatedPidFfController(params, physics);
+
+      await params.setPidSlot0(
+        p: 0.0,
+        i: 1.0,
+        d: 0.0,
+        iZone: 5.0,
+      );
+
+      final firstInside = controller.computeVelocity(4.0, 0.1);
+      final secondInside = controller.computeVelocity(4.0, 0.1);
+      final outsideZone = controller.computeVelocity(10.0, 0.1);
+      final afterReset = controller.computeVelocity(4.0, 0.1);
+
+      expect(firstInside, closeTo(4.8, 1e-9));
+      expect(secondInside, closeTo(9.6, 1e-9));
+      expect(outsideZone, closeTo(0.0, 1e-9));
+      expect(afterReset, closeTo(4.8, 1e-9));
+    });
+
+    test('position integral only accumulates inside iZone and resets outside',
+        () async {
+      final params = SimulatedParameterApi();
+      final physics = FlywheelPhysics(noiseLevel: 0.0);
+      final controller = SimulatedPidFfController(params, physics);
+
+      await params.setPidSlot0(
+        p: 0.0,
+        i: 1.0,
+        d: 0.0,
+        iZone: 2.0,
+      );
+
+      final firstInside = controller.computePosition(1.0, 0.1);
+      final secondInside = controller.computePosition(1.0, 0.1);
+      final outsideZone = controller.computePosition(3.0, 0.1);
+      final afterReset = controller.computePosition(1.0, 0.1);
+
+      expect(firstInside, closeTo(1.2, 1e-9));
+      expect(secondInside, closeTo(2.4, 1e-9));
+      expect(outsideZone, closeTo(0.0, 1e-9));
+      expect(afterReset, closeTo(1.2, 1e-9));
     });
   });
 }

@@ -86,8 +86,7 @@ class SimulatedValidationDialog extends StatefulWidget {
       _SimulatedValidationDialogState();
 }
 
-class _SimulatedValidationDialogState
-    extends State<SimulatedValidationDialog> {
+class _SimulatedValidationDialogState extends State<SimulatedValidationDialog> {
   SparkDevice? _device;
   ValidationRunner? _runner;
 
@@ -118,8 +117,7 @@ class _SimulatedValidationDialogState
     final defaultSetpoint = widget.isPositionMode
         ? defaults.positionSetpoint
         : defaults.velocitySetpoint;
-    _setpointCtrl =
-        TextEditingController(text: defaultSetpoint.toString());
+    _setpointCtrl = TextEditingController(text: defaultSetpoint.toString());
     _initDevice();
   }
 
@@ -174,21 +172,23 @@ class _SimulatedValidationDialogState
       device.parameters.setParameter(kParamSlot0FfKcos, ff.kG);
       // kCosRatio converts position in degrees to a fraction of a full
       // rotation for the cos() computation: cos(pos * kCosRatio * 2π).
-      device.parameters.setParameter(
-          kParamSlot0FfKcosRatio, 1.0 / 360.0);
+      device.parameters.setParameter(kParamSlot0FfKcosRatio, 1.0 / 360.0);
     }
 
     // Conversion factors (already set in factory, but re-apply for safety).
     device.parameters.setParameter(
-        kParamPositionConvFactor, config.positionConversionFactor);
+      kParamPositionConvFactor,
+      config.positionConversionFactor,
+    );
     device.parameters.setParameter(
-        kParamVelocityConvFactor, config.velocityConversionFactor);
+      kParamVelocityConvFactor,
+      config.velocityConversionFactor,
+    );
   }
 
   void _pollPosition() {
     if (_isRunning || _device == null) return;
-    final raw =
-        _device!.connection.lastStatus2?.positionRotations ?? 0.0;
+    final raw = _device!.connection.lastStatus2?.positionRotations ?? 0.0;
     if ((raw - _currentPosition).abs() > 0.005) {
       setState(() => _currentPosition = raw);
     }
@@ -243,9 +243,9 @@ class _SimulatedValidationDialogState
       );
       final userSetpoint =
           double.tryParse(_setpointCtrl.text.trim()) ??
-              (widget.isPositionMode
-                  ? defaults.positionSetpoint
-                  : defaults.velocitySetpoint);
+          (widget.isPositionMode
+              ? defaults.positionSetpoint
+              : defaults.velocitySetpoint);
       final params = widget.isPositionMode
           ? defaults.copyWith(positionSetpoint: userSetpoint)
           : defaults.copyWith(velocitySetpoint: userSetpoint);
@@ -289,13 +289,15 @@ class _SimulatedValidationDialogState
   void _onProgress(ValidationProgress p) {
     if (!mounted) return;
     setState(() {
-      _liveData.add(DataPoint(
-        timestamp: p.elapsedSeconds,
-        voltage: p.voltage,
-        velocity: p.velocity,
-        position: p.position,
-        current: p.current,
-      ));
+      _liveData.add(
+        DataPoint(
+          timestamp: p.elapsedSeconds,
+          voltage: p.voltage,
+          velocity: p.velocity,
+          position: p.position,
+          current: p.current,
+        ),
+      );
       _liveSetpoints.add(p.setpoint);
       _currentPosition = p.position;
     });
@@ -352,8 +354,8 @@ class _SimulatedValidationDialogState
             severity: _isRunning
                 ? InfoBarSeverity.warning
                 : (_result?.completed == true
-                    ? InfoBarSeverity.success
-                    : InfoBarSeverity.info),
+                      ? InfoBarSeverity.success
+                      : InfoBarSeverity.info),
           ),
           const SizedBox(height: 8),
 
@@ -429,10 +431,7 @@ class _SimulatedValidationDialogState
                 const SizedBox(width: 8),
 
                 // Mechanism visual area
-                SizedBox(
-                  width: 220,
-                  child: _buildMechanismVisual(config),
-                ),
+                SizedBox(width: 220, child: _buildMechanismVisual(config)),
               ],
             ),
           ),
@@ -450,8 +449,9 @@ class _SimulatedValidationDialogState
 
   Widget _buildControlsRow(BuildContext context) {
     final config = widget.mechanismConfig;
-    final setpointUnit =
-        widget.isPositionMode ? config.positionUnit : config.velocityUnit;
+    final setpointUnit = widget.isPositionMode
+        ? config.positionUnit
+        : config.velocityUnit;
     final canRun = _device != null && !_isRunning;
     return Row(
       children: [
@@ -491,7 +491,8 @@ class _SimulatedValidationDialogState
           onPressed: _isRunning ? _emergencyStop : null,
           style: ButtonStyle(
             backgroundColor: WidgetStatePropertyAll(
-                _isRunning ? Colors.warningPrimaryColor : null),
+              _isRunning ? Colors.warningPrimaryColor : null,
+            ),
           ),
           child: const Text('Emergency Stop'),
         ),
@@ -503,8 +504,10 @@ class _SimulatedValidationDialogState
             child: ProgressRing(strokeWidth: 2),
           ),
           const SizedBox(width: 6),
-          const Text('Initialising simulation…',
-              style: TextStyle(fontSize: 12)),
+          const Text(
+            'Initialising simulation…',
+            style: TextStyle(fontSize: 12),
+          ),
         ],
       ],
     );
@@ -522,8 +525,9 @@ class _SimulatedValidationDialogState
                 forwardLimitDeg: config.forwardSoftLimit,
                 reverseLimitDeg: config.reverseSoftLimit,
                 isDraggable: device != null && !_isRunning,
-                onAngleChanged:
-                    device != null ? (deg) => _dragPosition(device, deg) : null,
+                onAngleChanged: device != null
+                    ? (deg) => _dragPosition(device, deg)
+                    : null,
               ),
             ),
             if (device != null) ...[
@@ -635,8 +639,9 @@ class _LiveChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final measuredSpots =
-        data.map((dp) => FlSpot(dp.timestamp, yExtractor(dp))).toList();
+    final measuredSpots = data
+        .map((dp) => FlSpot(dp.timestamp, yExtractor(dp)))
+        .toList();
 
     final setpointSpots = <FlSpot>[];
     if (showSetpoint) {
@@ -683,13 +688,17 @@ class _LiveChart extends StatelessWidget {
               Text(
                 '$title ($yLabel)',
                 style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w600),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               if (showSetpoint) ...[
                 const Spacer(),
                 Container(
-                    width: 10, height: 2,
-                    color: Colors.successPrimaryColor),
+                  width: 10,
+                  height: 2,
+                  color: Colors.successPrimaryColor,
+                ),
                 const SizedBox(width: 3),
                 const Text('SP', style: TextStyle(fontSize: 9)),
                 const SizedBox(width: 6),
@@ -703,8 +712,8 @@ class _LiveChart extends StatelessWidget {
           Expanded(
             child: lineBars.isEmpty
                 ? const Center(
-                    child: Text('No data',
-                        style: TextStyle(fontSize: 11)))
+                    child: Text('No data', style: TextStyle(fontSize: 11)),
+                  )
                 : LineChart(
                     LineChartData(
                       minX: minX,
@@ -734,9 +743,11 @@ class _LiveChart extends StatelessWidget {
                           ),
                         ),
                         topTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false)),
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
                         rightTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false)),
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
                       ),
                       lineBarsData: lineBars,
                     ),
@@ -761,6 +772,7 @@ class _MetricsStrip extends StatelessWidget {
     final modeLabel = switch (result.mode) {
       ValidationMode.velocity => 'Velocity',
       ValidationMode.position => 'Position',
+      ValidationMode.disturbancePosition => 'Disturbance Position',
       ValidationMode.maxMotionPosition => 'MAXMotion',
     };
 
@@ -770,16 +782,16 @@ class _MetricsStrip extends StatelessWidget {
         children: [
           Text(
             '$modeLabel — ${result.completed ? "Complete" : "Incomplete"}',
-            style: const TextStyle(
-                fontSize: 12, fontWeight: FontWeight.w600),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
           ),
           const SizedBox(width: 20),
           _metric('Samples', '${result.data.length}'),
-          _metric(
-              'Duration', '${result.durationSeconds.toStringAsFixed(1)}s'),
+          _metric('Duration', '${result.durationSeconds.toStringAsFixed(1)}s'),
           if (result.riseTime != null)
-            _metric('Rise Time',
-                '${(result.riseTime! * 1000).toStringAsFixed(0)} ms'),
+            _metric(
+              'Rise Time',
+              '${(result.riseTime! * 1000).toStringAsFixed(0)} ms',
+            ),
           if (result.overshootPercent != null)
             _metric(
               'Overshoot',
@@ -787,8 +799,7 @@ class _MetricsStrip extends StatelessWidget {
               warn: result.overshootPercent! > 20,
             ),
           if (result.steadyStateError != null)
-            _metric('SS Error',
-                result.steadyStateError!.toStringAsFixed(3)),
+            _metric('SS Error', result.steadyStateError!.toStringAsFixed(3)),
         ],
       ),
     );

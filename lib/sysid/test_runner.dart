@@ -315,6 +315,9 @@ class TestRunner {
       // Main test loop — runs at approximately 10ms intervals.
       while (!_abortRequested) {
         final elapsedSeconds = stopwatch.elapsedMilliseconds / 1000.0;
+        final status1 = device.connection.lastStatus1;
+        final status2 = device.connection.lastStatus2;
+        double? filteredCurrent;
 
         // Check if dynamic test duration exceeded.
         if (testType.isDynamic &&
@@ -357,8 +360,9 @@ class TestRunner {
 
         // Check current trip (skip first 0.3s — inrush grace period).
         if (testParams.currentTripAmps != null && elapsedSeconds > 0.3) {
-          final rawCurrent = device.connection.lastStatus1?.outputCurrentAmps ?? 0.0;
+          final rawCurrent = status1?.outputCurrentAmps ?? 0.0;
           final currentAmps = _filterCurrentForDisplay(rawCurrent);
+          filteredCurrent = currentAmps;
           if (currentAmps > testParams.currentTripAmps!) {
             overCurrentCount++;
             if (overCurrentCount >= overCurrentThreshold) {
@@ -378,14 +382,12 @@ class TestRunner {
         // physics state produced by the PREVIOUS voltage command, so we
         // must pair them with that previous voltage to avoid a systematic
         // one-tick lead that inflates kS during the quasistatic ramp.
-        final status1 = device.connection.lastStatus1;
-        final status2 = device.connection.lastStatus2;
-
         if (status1 != null && _prevVoltage != null) {
           // Status frames already report in user units (onboard CFs).
           final velocity = status1.velocityRpm;
           final position = status2?.positionRotations ?? 0.0;
-          final current = _filterCurrentForDisplay(status1.outputCurrentAmps);
+          final current =
+              filteredCurrent ?? _filterCurrentForDisplay(status1.outputCurrentAmps);
 
           final dp = DataPoint(
             timestamp: elapsedSeconds,
@@ -395,21 +397,28 @@ class TestRunner {
             current: current,
           );
           data.add(dp);
-
-          onProgress?.call(TestProgress(
-            elapsedSeconds: elapsedSeconds,
-            currentVoltage: _prevVoltage!,
-            currentVelocity: velocity,
-            currentPosition: position,
-            currentCurrent: current,
-            sampleCount: data.length,
-            softLimitWarning: false,
-          ));
         }
 
-        // Apply voltage for the next physics tick.
+        // Apply voltage for the next physics tick, then publish a live UI
+        // update immediately using the commanded voltage. This keeps the
+        // Run Tests screen responsive from the moment voltage begins rising,
+        // while persisted samples remain paired to the previous command for
+        // accurate system identification analysis.
         _prevVoltage = targetVoltage;
         device.control.setVoltage(targetVoltage);
+
+        onProgress?.call(TestProgress(
+          elapsedSeconds: elapsedSeconds,
+          currentVoltage: targetVoltage,
+          currentVelocity: status1?.velocityRpm ?? 0.0,
+          currentPosition: status2?.positionRotations ?? 0.0,
+          currentCurrent: filteredCurrent ??
+              _filteredCurrentAmps ??
+              status1?.outputCurrentAmps ??
+              0.0,
+          sampleCount: data.length,
+          softLimitWarning: false,
+        ));
 
         // Wait ~10ms for next sample.
         await Future.delayed(const Duration(milliseconds: 10));

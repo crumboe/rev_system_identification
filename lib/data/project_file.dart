@@ -23,6 +23,12 @@ const int _formatVersion = 1;
 /// Extension used for project files.
 const String projectFileExtension = 'revsysid';
 
+String _withProjectExtension(String path) {
+  final suffix = '.$projectFileExtension';
+  if (path.toLowerCase().endsWith(suffix)) return path;
+  return '$path$suffix';
+}
+
 /// In-memory representation of a saved project.
 class ProjectData {
   final MechanismConfig config;
@@ -42,29 +48,31 @@ class ProjectData {
   });
 
   Map<String, dynamic> toJson() => {
-        'formatVersion': _formatVersion,
-        'config': config.toJson(),
-        'testParams': testParams.toJson(),
-        'testRuns': testRuns.map((r) => r.toJson()).toList(),
-        if (feedforward != null) 'feedforward': feedforward!.toJson(),
-        if (velocityPid != null) 'velocityPid': velocityPid!.toJson(),
-        if (positionPid != null) 'positionPid': positionPid!.toJson(),
-      };
+    'formatVersion': _formatVersion,
+    'config': config.toJson(),
+    'testParams': testParams.toJson(),
+    'testRuns': testRuns.map((r) => r.toJson()).toList(),
+    if (feedforward != null) 'feedforward': feedforward!.toJson(),
+    if (velocityPid != null) 'velocityPid': velocityPid!.toJson(),
+    if (positionPid != null) 'positionPid': positionPid!.toJson(),
+  };
 
   factory ProjectData.fromJson(Map<String, dynamic> json) {
     // formatVersion can be used for migration in the future.
     return ProjectData(
-      config:
-          MechanismConfig.fromJson(json['config'] as Map<String, dynamic>),
+      config: MechanismConfig.fromJson(json['config'] as Map<String, dynamic>),
       testParams: SysIdTestParams.fromJson(
-          json['testParams'] as Map<String, dynamic>),
-      testRuns: (json['testRuns'] as List?)
+        json['testParams'] as Map<String, dynamic>,
+      ),
+      testRuns:
+          (json['testRuns'] as List?)
               ?.map((r) => TestRun.fromJson(r as Map<String, dynamic>))
               .toList() ??
           const [],
       feedforward: json['feedforward'] != null
           ? FeedforwardGains.fromJson(
-              json['feedforward'] as Map<String, dynamic>)
+              json['feedforward'] as Map<String, dynamic>,
+            )
           : null,
       velocityPid: json['velocityPid'] != null
           ? PidResult.fromJson(json['velocityPid'] as Map<String, dynamic>)
@@ -88,7 +96,7 @@ Future<String?> saveProject(ProjectData project) async {
 
   final String result;
   if (kIsWeb) {
-    result = fileName;
+    result = _withProjectExtension(fileName);
   } else {
     final picked = await FilePicker.platform.saveFile(
       dialogTitle: 'Save System Identification Project',
@@ -97,11 +105,12 @@ Future<String?> saveProject(ProjectData project) async {
       allowedExtensions: [projectFileExtension],
     );
     if (picked == null) return null;
-    result = picked;
+    result = _withProjectExtension(picked);
   }
 
-  final jsonString =
-      const JsonEncoder.withIndent('  ').convert(project.toJson());
+  final jsonString = const JsonEncoder.withIndent(
+    '  ',
+  ).convert(project.toJson());
   await writeFileString(result, jsonString, flush: true);
   return result;
 }

@@ -109,9 +109,17 @@ class CodeSnippetExporter {
     final velP = velocityPid != null ? _fmt(velocityPid.kP) : '0.000000';
     final velI = velocityPid != null ? _fmt(velocityPid.kI) : '0.000000';
     final velD = velocityPid != null ? _fmt(velocityPid.kD) : '0.000000';
+    final velIZone = velocityPid != null ? _fmt(velocityPid.iZone) : '0.000000';
+    final velAllowedError = velocityPid != null
+        ? _fmt(velocityPid.allowedClosedLoopError)
+        : '0.000000';
     final posP = positionPid != null ? _fmt(positionPid.kP) : '0.000000';
     final posI = positionPid != null ? _fmt(positionPid.kI) : '0.000000';
     final posD = positionPid != null ? _fmt(positionPid.kD) : '0.000000';
+    final posIZone = positionPid != null ? _fmt(positionPid.iZone) : '0.000000';
+    final posAllowedError = positionPid != null
+        ? _fmt(positionPid.allowedClosedLoopError)
+        : '0.000000';
 
     final kS = _fmt(ff.kS);
     final kV = _fmt(ff.kV);
@@ -119,44 +127,56 @@ class CodeSnippetExporter {
     final kG = _fmt(ff.kG);
     final hasGravity = config.type.hasGravity;
     final posDFilter = positionPid != null && positionPid.dFilter > 0
-        ? _fmt(positionPid.dFilter) : null;
+        ? _fmt(positionPid.dFilter)
+        : null;
 
     final gravityLine = hasGravity ? '\n                .kG($kG)' : '';
 
     // Velocity PID — Slot 0
-    final velSlot = velocityPid != null ? '''
+    final velSlot = velocityPid != null
+        ? '''
 
         // --- Velocity PID (Slot 0) ---
         config.closedLoop
                 .feedbackSensor(FeedbackSensor.${config.feedbackSensor.javaName})
-                .pid($velP, $velI, $velD);
+          .pid($velP, $velI, $velD)
+          .iZone($velIZone)
+          .allowedClosedLoopError($velAllowedError);
         config.closedLoop.feedForward
                 .kS($kS)
                 .kV($kV)
-                .kA($kA)$gravityLine;''' : '';
+                .kA($kA)$gravityLine;'''
+        : '';
 
     // Position PID — Slot 1
     final posDFilterLine = posDFilter != null
-        ? '\n                .dFilter($posDFilter)' : '';
-    final posSlot = positionPid != null ? '''
+        ? '\n                .dFilter($posDFilter)'
+        : '';
+    final posSlot = positionPid != null
+        ? '''
 
         // --- Position PID (Slot 1) ---
         config.closedLoop.slot1
-                .pid($posP, $posI, $posD)$posDFilterLine;
+          .pid($posP, $posI, $posD)
+          .iZone($posIZone)
+          .allowedClosedLoopError($posAllowedError)$posDFilterLine;
         config.closedLoop.slot1.feedForward
                 .kS($kS)
                 .kV($kV)
-                .kA($kA)$gravityLine;''' : '';
+                .kA($kA)$gravityLine;'''
+        : '';
 
     // Soft limits
-    final javaSoftLimits = config.hasSoftLimits ? '''
+    final javaSoftLimits = config.hasSoftLimits
+        ? '''
 
         // --- Soft limits ---
         config.softLimit
                 .forwardSoftLimitEnabled(true)
                 .forwardSoftLimit(${_fmt(config.forwardSoftLimit!)})
                 .reverseSoftLimitEnabled(true)
-                .reverseSoftLimit(${_fmt(config.reverseSoftLimit!)});''' : '';
+                .reverseSoftLimit(${_fmt(config.reverseSoftLimit!)});'''
+        : '';
 
     final className = _javaClassName(systemLabel);
 
@@ -255,11 +275,20 @@ $velSlot$posSlot$javaSoftLimits
     final velP = velocityPid != null ? _fmt(velocityPid.kP) : '0.000000';
     final velI = velocityPid != null ? _fmt(velocityPid.kI) : '0.000000';
     final velD = velocityPid != null ? _fmt(velocityPid.kD) : '0.000000';
+    final velIZone = velocityPid != null ? _fmt(velocityPid.iZone) : '0.000000';
+    final velAllowedError = velocityPid != null
+        ? _fmt(velocityPid.allowedClosedLoopError)
+        : '0.000000';
     final posP = positionPid != null ? _fmt(positionPid.kP) : '0.000000';
     final posI = positionPid != null ? _fmt(positionPid.kI) : '0.000000';
     final posD = positionPid != null ? _fmt(positionPid.kD) : '0.000000';
+    final posIZone = positionPid != null ? _fmt(positionPid.iZone) : '0.000000';
+    final posAllowedError = positionPid != null
+        ? _fmt(positionPid.allowedClosedLoopError)
+        : '0.000000';
     final pyPosDFilter = positionPid != null && positionPid.dFilter > 0
-        ? _fmt(positionPid.dFilter) : null;
+        ? _fmt(positionPid.dFilter)
+        : null;
 
     final kS = _fmt(ff.kS);
     final kV = _fmt(ff.kV);
@@ -271,37 +300,50 @@ $velSlot$posSlot$javaSoftLimits
       ..writeln('        config.closedLoop.feedForward.kS($kS)')
       ..writeln('        config.closedLoop.feedForward.kV($kV)')
       ..write('        config.closedLoop.feedForward.kA($kA)');
-    if (hasGravity) ffLines.write('\n        config.closedLoop.feedForward.kG($kG)');
+    if (hasGravity)
+      ffLines.write('\n        config.closedLoop.feedForward.kG($kG)');
 
     final ffLinesSlot1 = StringBuffer()
       ..writeln('        config.closedLoop.slot1.feedForward.kS($kS)')
       ..writeln('        config.closedLoop.slot1.feedForward.kV($kV)')
       ..write('        config.closedLoop.slot1.feedForward.kA($kA)');
     if (hasGravity) {
-      ffLinesSlot1.write('\n        config.closedLoop.slot1.feedForward.kG($kG)');
+      ffLinesSlot1.write(
+        '\n        config.closedLoop.slot1.feedForward.kG($kG)',
+      );
     }
 
-    final velSection = velocityPid != null ? '''
+    final velSection = velocityPid != null
+        ? '''
 
         # --- Velocity PID (Slot 0) ---
         config.closedLoop.feedbackSensor(
             ClosedLoopConfig.FeedbackSensor.${config.feedbackSensor.pythonName})
         config.closedLoop.pid($velP, $velI, $velD)
-$ffLines''' : '';
+        config.closedLoop.iZone($velIZone)
+        config.closedLoop.allowedClosedLoopError($velAllowedError)
+$ffLines'''
+        : '';
 
-    final posSection = positionPid != null ? '''
+    final posSection = positionPid != null
+        ? '''
 
         # --- Position PID (Slot 1) ---
         config.closedLoop.slot1.pid($posP, $posI, $posD)${pyPosDFilter != null ? '\n        config.closedLoop.slot1.dFilter($pyPosDFilter)' : ''}
-$ffLinesSlot1''' : '';
+        config.closedLoop.slot1.iZone($posIZone)
+        config.closedLoop.slot1.allowedClosedLoopError($posAllowedError)
+$ffLinesSlot1'''
+        : '';
 
-    final pySoftLimits = config.hasSoftLimits ? '''
+    final pySoftLimits = config.hasSoftLimits
+        ? '''
 
         # --- Soft limits ---
         config.softLimit.forwardSoftLimitEnabled(True)
         config.softLimit.forwardSoftLimit(${_fmt(config.forwardSoftLimit!)})
         config.softLimit.reverseSoftLimitEnabled(True)
-        config.softLimit.reverseSoftLimit(${_fmt(config.reverseSoftLimit!)})''' : '';
+        config.softLimit.reverseSoftLimit(${_fmt(config.reverseSoftLimit!)})'''
+        : '';
 
     final className = _pyClassName(systemLabel);
 
@@ -392,9 +434,17 @@ $velSection$posSection$pySoftLimits
     final velP = velocityPid != null ? _fmt(velocityPid.kP) : '0.000000';
     final velI = velocityPid != null ? _fmt(velocityPid.kI) : '0.000000';
     final velD = velocityPid != null ? _fmt(velocityPid.kD) : '0.000000';
+    final velIZone = velocityPid != null ? _fmt(velocityPid.iZone) : '0.000000';
+    final velAllowedError = velocityPid != null
+        ? _fmt(velocityPid.allowedClosedLoopError)
+        : '0.000000';
     final posP = positionPid != null ? _fmt(positionPid.kP) : '0.000000';
     final posI = positionPid != null ? _fmt(positionPid.kI) : '0.000000';
     final posD = positionPid != null ? _fmt(positionPid.kD) : '0.000000';
+    final posIZone = positionPid != null ? _fmt(positionPid.iZone) : '0.000000';
+    final posAllowedError = positionPid != null
+        ? _fmt(positionPid.allowedClosedLoopError)
+        : '0.000000';
 
     final kS = _fmt(ff.kS);
     final kV = _fmt(ff.kV);
@@ -402,13 +452,15 @@ $velSection$posSection$pySoftLimits
     final kG = _fmt(ff.kG);
     final hasGravity = config.type.hasGravity;
     final cppPosDFilter = positionPid != null && positionPid.dFilter > 0
-        ? _fmt(positionPid.dFilter) : null;
+        ? _fmt(positionPid.dFilter)
+        : null;
 
     final ffLines = StringBuffer()
       ..writeln('    config.closedLoop.feedForward.kS($kS);')
       ..writeln('    config.closedLoop.feedForward.kV($kV);')
       ..write('    config.closedLoop.feedForward.kA($kA);');
-    if (hasGravity) ffLines.write('\n    config.closedLoop.feedForward.kG($kG);');
+    if (hasGravity)
+      ffLines.write('\n    config.closedLoop.feedForward.kG($kG);');
 
     final ffLinesSlot1 = StringBuffer()
       ..writeln('    config.closedLoop.slot1.feedForward.kS($kS);')
@@ -418,27 +470,37 @@ $velSection$posSection$pySoftLimits
       ffLinesSlot1.write('\n    config.closedLoop.slot1.feedForward.kG($kG);');
     }
 
-    final velSection = velocityPid != null ? '''
+    final velSection = velocityPid != null
+        ? '''
 
     // --- Velocity PID (Slot 0) ---
     config.closedLoop
         .FeedbackSensor(rev::spark::ClosedLoopConfig::FeedbackSensor::${config.feedbackSensor.cppName})
-        .Pid($velP, $velI, $velD);
-$ffLines''' : '';
+      .Pid($velP, $velI, $velD)
+      .IZone($velIZone)
+      .AllowedClosedLoopError($velAllowedError);
+$ffLines'''
+        : '';
 
-    final posSection = positionPid != null ? '''
+    final posSection = positionPid != null
+        ? '''
 
     // --- Position PID (Slot 1) ---
-    config.closedLoop.slot1.Pid($posP, $posI, $posD);${cppPosDFilter != null ? '\n    config.closedLoop.slot1.DFilter($cppPosDFilter);' : ''}
-$ffLinesSlot1''' : '';
+    config.closedLoop.slot1.Pid($posP, $posI, $posD);
+    config.closedLoop.slot1.IZone($posIZone);${cppPosDFilter != null ? '\n    config.closedLoop.slot1.DFilter($cppPosDFilter);' : ''}
+    config.closedLoop.slot1.AllowedClosedLoopError($posAllowedError);
+$ffLinesSlot1'''
+        : '';
 
-    final cppSoftLimits = config.hasSoftLimits ? '''
+    final cppSoftLimits = config.hasSoftLimits
+        ? '''
 
     // --- Soft limits ---
     config.softLimit.ForwardSoftLimitEnabled(true);
     config.softLimit.ForwardSoftLimit(${_fmt(config.forwardSoftLimit!)});
     config.softLimit.ReverseSoftLimitEnabled(true);
-    config.softLimit.ReverseSoftLimit(${_fmt(config.reverseSoftLimit!)});''' : '';
+    config.softLimit.ReverseSoftLimit(${_fmt(config.reverseSoftLimit!)});'''
+        : '';
 
     final className = _cppHeaderGuard(systemLabel);
 

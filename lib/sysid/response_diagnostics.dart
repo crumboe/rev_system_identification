@@ -75,7 +75,8 @@ class TuningAction {
 
 class ResponseDiagnostics {
   /// Oscillation detection thresholds.
-  static const _minZeroCrossings = 4; // need at least 4 crossings to call it oscillatory
+  static const _minZeroCrossings =
+      4; // need at least 4 crossings to call it oscillatory
   static const _oscillationAmplitudeRatio = 0.05; // 5% of step amplitude
 
   /// Overshoot threshold (%).
@@ -125,65 +126,86 @@ class ResponseDiagnostics {
     if (stepAmplitude.abs() < 1e-9) return [];
 
     // 1. Oscillation / noise detection
-    final detection = _detectOscillation(result, isVelocity, target, stepAmplitude);
+    final detection = _detectOscillation(
+      result,
+      isVelocity,
+      target,
+      stepAmplitude,
+    );
     final oscillation = detection?.significant;
     final noiseInfo = detection?.noise;
 
     // 1a. Noisy response — many small crossings suggest increasing CL error.
-    if (noiseInfo != null && noiseInfo.crossings >= _minNoiseCrossings && oscillation == null) {
+    if (noiseInfo != null &&
+        noiseInfo.crossings >= _minNoiseCrossings &&
+        oscillation == null) {
       final suggestedError = math.max(
         currentClosedLoopError,
         noiseInfo.amplitude * 1.5,
       );
-      diagnostics.add(ResponseDiagnostic(
-        type: DiagnosticType.noisyResponse,
-        title: 'Increase Deadband',
-        description: 'Small noise chatter detected '
-            '(${noiseInfo.crossings} low-amplitude zero-crossings, '
-            'peak ${noiseInfo.amplitude.toStringAsFixed(3)}). '
-            'Increase the allowed closed-loop error to filter it out.',
-        remedy: 'Set allowed CL error from '
-            '${currentClosedLoopError.toStringAsFixed(3)} to '
-            '${suggestedError.toStringAsFixed(3)}.',
-        action: TuningAction(closedLoopError: suggestedError),
-      ));
+      diagnostics.add(
+        ResponseDiagnostic(
+          type: DiagnosticType.noisyResponse,
+          title: 'Increase Deadband',
+          description:
+              'Small noise chatter detected '
+              '(${noiseInfo.crossings} low-amplitude zero-crossings, '
+              'peak ${noiseInfo.amplitude.toStringAsFixed(3)}). '
+              'Increase the allowed closed-loop error to filter it out.',
+          remedy:
+              'Set allowed CL error from '
+              '${currentClosedLoopError.toStringAsFixed(3)} to '
+              '${suggestedError.toStringAsFixed(3)}.',
+          action: TuningAction(closedLoopError: suggestedError),
+        ),
+      );
     }
 
     // 1b. Real oscillation — large-amplitude swings.
     if (oscillation != null) {
       if (isVelocity) {
-        final newTau = (currentTauMs * _velocityTauMultiplier)
-            .clamp(20.0, 500.0);
-        diagnostics.add(ResponseDiagnostic(
-          type: DiagnosticType.oscillation,
-          title: 'Fix Oscillation',
-          description: 'Oscillatory response detected '
-              '(${oscillation.crossings} zero-crossings around setpoint). '
-              'The velocity time constant is too aggressive.',
-          remedy: 'Increase velocity time constant from '
-              '${currentTauMs.toStringAsFixed(0)} ms to '
-              '${newTau.toStringAsFixed(0)} ms and retune.',
-          action: TuningAction(velocityTimeConstantMs: newTau),
-        ));
-      } else {
-        final newBw = (currentBwHz / _positionBwDivisor).clamp(1.0, 20.0);
-        final newDamping = (currentDamping + _dampingBoost).clamp(0.3, 2.0);
-        diagnostics.add(ResponseDiagnostic(
-          type: DiagnosticType.oscillation,
-          title: 'Fix Oscillation',
-          description: 'Oscillatory response detected '
-              '(${oscillation.crossings} zero-crossings around setpoint). '
-              'Position bandwidth is too high or damping too low.',
-          remedy: 'Reduce bandwidth from '
-              '${currentBwHz.toStringAsFixed(1)} Hz to '
-              '${newBw.toStringAsFixed(1)} Hz, increase damping from '
-              '${currentDamping.toStringAsFixed(2)} to '
-              '${newDamping.toStringAsFixed(2)}, and retune.',
-          action: TuningAction(
-            positionBandwidthHz: newBw,
-            dampingRatio: newDamping,
+        final newTau = (currentTauMs * _velocityTauMultiplier).clamp(
+          20.0,
+          500.0,
+        );
+        diagnostics.add(
+          ResponseDiagnostic(
+            type: DiagnosticType.oscillation,
+            title: 'Fix Oscillation',
+            description:
+                'Oscillatory response detected '
+                '(${oscillation.crossings} zero-crossings around setpoint). '
+                'The velocity time constant is too aggressive.',
+            remedy:
+                'Increase velocity time constant from '
+                '${currentTauMs.toStringAsFixed(0)} ms to '
+                '${newTau.toStringAsFixed(0)} ms and retune.',
+            action: TuningAction(velocityTimeConstantMs: newTau),
           ),
-        ));
+        );
+      } else {
+        final newBw = (currentBwHz / _positionBwDivisor).clamp(0.5, 40.0);
+        final newDamping = (currentDamping + _dampingBoost).clamp(0.3, 2.0);
+        diagnostics.add(
+          ResponseDiagnostic(
+            type: DiagnosticType.oscillation,
+            title: 'Fix Oscillation',
+            description:
+                'Oscillatory response detected '
+                '(${oscillation.crossings} zero-crossings around setpoint). '
+                'Position bandwidth is too high or damping too low.',
+            remedy:
+                'Reduce bandwidth from '
+                '${currentBwHz.toStringAsFixed(1)} Hz to '
+                '${newBw.toStringAsFixed(1)} Hz, increase damping from '
+                '${currentDamping.toStringAsFixed(2)} to '
+                '${newDamping.toStringAsFixed(2)}, and retune.',
+            action: TuningAction(
+              positionBandwidthHz: newBw,
+              dampingRatio: newDamping,
+            ),
+          ),
+        );
       }
     }
 
@@ -195,61 +217,76 @@ class ResponseDiagnostics {
         oscillation == null) {
       if (isVelocity) {
         final newTau = (currentTauMs * 1.5).clamp(20.0, 500.0);
-        diagnostics.add(ResponseDiagnostic(
-          type: DiagnosticType.largeOvershoot,
-          title: 'Reduce Overshoot',
-          description: 'Overshoot is ${overshoot.toStringAsFixed(1)}% '
-              '(threshold: ${_overshootThreshold.toStringAsFixed(0)}%). '
-              'The velocity response is too aggressive.',
-          remedy: 'Increase velocity time constant from '
-              '${currentTauMs.toStringAsFixed(0)} ms to '
-              '${newTau.toStringAsFixed(0)} ms and retune.',
-          action: TuningAction(velocityTimeConstantMs: newTau),
-        ));
+        diagnostics.add(
+          ResponseDiagnostic(
+            type: DiagnosticType.largeOvershoot,
+            title: 'Reduce Overshoot',
+            description:
+                'Overshoot is ${overshoot.toStringAsFixed(1)}% '
+                '(threshold: ${_overshootThreshold.toStringAsFixed(0)}%). '
+                'The velocity response is too aggressive.',
+            remedy:
+                'Increase velocity time constant from '
+                '${currentTauMs.toStringAsFixed(0)} ms to '
+                '${newTau.toStringAsFixed(0)} ms and retune.',
+            action: TuningAction(velocityTimeConstantMs: newTau),
+          ),
+        );
       } else {
         final newDamping = (currentDamping + _dampingBoost).clamp(0.3, 2.0);
-        diagnostics.add(ResponseDiagnostic(
-          type: DiagnosticType.largeOvershoot,
-          title: 'Reduce Overshoot',
-          description: 'Overshoot is ${overshoot.toStringAsFixed(1)}% '
-              '(threshold: ${_overshootThreshold.toStringAsFixed(0)}%). '
-              'Position damping ratio is too low.',
-          remedy: 'Increase damping ratio from '
-              '${currentDamping.toStringAsFixed(2)} to '
-              '${newDamping.toStringAsFixed(2)} and retune.',
-          action: TuningAction(dampingRatio: newDamping),
-        ));
+        diagnostics.add(
+          ResponseDiagnostic(
+            type: DiagnosticType.largeOvershoot,
+            title: 'Reduce Overshoot',
+            description:
+                'Overshoot is ${overshoot.toStringAsFixed(1)}% '
+                '(threshold: ${_overshootThreshold.toStringAsFixed(0)}%). '
+                'Position damping ratio is too low.',
+            remedy:
+                'Increase damping ratio from '
+                '${currentDamping.toStringAsFixed(2)} to '
+                '${newDamping.toStringAsFixed(2)} and retune.',
+            action: TuningAction(dampingRatio: newDamping),
+          ),
+        );
       }
     }
 
     // 3. Large steady-state error
     final ssError = result.steadyStateError;
-    if (ssError != null && ssError > stepAmplitude.abs() * _ssErrorFractionThreshold) {
+    if (ssError != null &&
+        ssError > stepAmplitude.abs() * _ssErrorFractionThreshold) {
       final errorPercent = (ssError / stepAmplitude.abs()) * 100.0;
-      diagnostics.add(ResponseDiagnostic(
-        type: DiagnosticType.largeSteadyStateError,
-        title: 'Fix Steady-State Error',
-        description: 'Steady-state error is '
-            '${ssError.toStringAsFixed(3)} '
-            '(${errorPercent.toStringAsFixed(1)}% of step). '
-            'Feedforward gains may be inaccurate or integral action is needed.',
-        remedy: isVelocity
-            ? 'Increase velocity time constant from '
-                '${currentTauMs.toStringAsFixed(0)} ms to '
-                '${(currentTauMs * 1.5).clamp(20.0, 500.0).toStringAsFixed(0)} ms '
-                '(slower loop allows better tracking) and retune.'
-            : 'Reduce position bandwidth from '
-                '${currentBwHz.toStringAsFixed(1)} Hz to '
-                '${(currentBwHz / 1.3).clamp(1.0, 20.0).toStringAsFixed(1)} Hz '
-                'and retune.',
-        action: isVelocity
-            ? TuningAction(
-                velocityTimeConstantMs:
-                    (currentTauMs * 1.5).clamp(20.0, 500.0))
-            : TuningAction(
-                positionBandwidthHz:
-                    (currentBwHz / 1.3).clamp(1.0, 20.0)),
-      ));
+      diagnostics.add(
+        ResponseDiagnostic(
+          type: DiagnosticType.largeSteadyStateError,
+          title: 'Fix Steady-State Error',
+          description:
+              'Steady-state error is '
+              '${ssError.toStringAsFixed(3)} '
+              '(${errorPercent.toStringAsFixed(1)}% of step). '
+              'Feedforward gains may be inaccurate or integral action is needed.',
+          remedy: isVelocity
+              ? 'Increase velocity time constant from '
+                    '${currentTauMs.toStringAsFixed(0)} ms to '
+                    '${(currentTauMs * 1.5).clamp(20.0, 500.0).toStringAsFixed(0)} ms '
+                    '(slower loop allows better tracking) and retune.'
+              : 'Reduce position bandwidth from '
+                    '${currentBwHz.toStringAsFixed(1)} Hz to '
+                    '${(currentBwHz / 1.3).clamp(0.5, 40.0).toStringAsFixed(1)} Hz '
+                    'and retune.',
+          action: isVelocity
+              ? TuningAction(
+                  velocityTimeConstantMs: (currentTauMs * 1.5).clamp(
+                    20.0,
+                    500.0,
+                  ),
+                )
+              : TuningAction(
+                  positionBandwidthHz: (currentBwHz / 1.3).clamp(0.5, 40.0),
+                ),
+        ),
+      );
     }
 
     return diagnostics;
@@ -308,10 +345,16 @@ class ResponseDiagnostics {
     }
 
     final significant = significantCrossings >= _minZeroCrossings
-        ? _OscillationInfo(crossings: significantCrossings, amplitude: maxAmplitude)
+        ? _OscillationInfo(
+            crossings: significantCrossings,
+            amplitude: maxAmplitude,
+          )
         : null;
     final noise = noiseCrossings >= _minNoiseCrossings
-        ? _OscillationInfo(crossings: noiseCrossings, amplitude: maxNoiseAmplitude)
+        ? _OscillationInfo(
+            crossings: noiseCrossings,
+            amplitude: maxNoiseAmplitude,
+          )
         : null;
 
     if (significant == null && noise == null) return null;
@@ -322,6 +365,7 @@ class ResponseDiagnostics {
 class _OscillationDetection {
   /// Large-amplitude oscillation (real instability), or null.
   final _OscillationInfo? significant;
+
   /// Small-amplitude noise chatter, or null.
   final _OscillationInfo? noise;
   const _OscillationDetection({this.significant, this.noise});

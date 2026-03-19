@@ -8,6 +8,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../can/parameter_api.dart';
+import '../../can/spark_protocol.dart';
 import '../../data/code_snippet_exporter.dart';
 import '../../data/test_data.dart';
 import '../../mechanisms/mechanism.dart';
@@ -27,6 +28,15 @@ enum _DeployPidMode { velocity, position, both }
 class _DeployScreenState extends ConsumerState<DeployScreen> {
   bool _deploying = false;
   _DeployPidMode _pidMode = _DeployPidMode.both;
+  final TextEditingController _openLoopRampRateCtrl = TextEditingController();
+  double? _openLoopRampRateSec;
+  bool _rampRateEdited = false;
+
+  @override
+  void dispose() {
+    _openLoopRampRateCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +46,15 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
     final config = ref.watch(mechanismConfigProvider);
     final device = ref.watch(deviceManagerProvider).leader;
     final hasGains = ff != null && (velPid != null || posPid != null);
+    final recommendedRampRateSec = _recommendedOpenLoopRampRateSeconds();
+
+    if (_openLoopRampRateSec == null || !_rampRateEdited) {
+      _openLoopRampRateSec = recommendedRampRateSec;
+      final text = recommendedRampRateSec.toStringAsFixed(3);
+      if (_openLoopRampRateCtrl.text != text) {
+        _openLoopRampRateCtrl.text = text;
+      }
+    }
 
     // Ensure selected mode is valid for available gains.
     if (velPid == null && _pidMode != _DeployPidMode.position) {
@@ -59,7 +78,12 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
           // -- Config summary -----------------------------------------------
           _SectionHeader(title: 'Configuration Summary'),
           const SizedBox(height: 8),
-          _ConfigSummary(config: config, ff: ff, velPid: velPid, posPid: posPid),
+          _ConfigSummary(
+            config: config,
+            ff: ff,
+            velPid: velPid,
+            posPid: posPid,
+          ),
           const SizedBox(height: 24),
 
           // -- PID mode selector -------------------------------------------
@@ -76,7 +100,8 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
                   if ((mode == _DeployPidMode.velocity && velPid != null) ||
                       (mode == _DeployPidMode.position && posPid != null) ||
                       (mode == _DeployPidMode.both &&
-                          velPid != null && posPid != null))
+                          velPid != null &&
+                          posPid != null))
                     Padding(
                       padding: const EdgeInsets.only(right: 8),
                       child: RadioButton<_DeployPidMode>(
@@ -93,6 +118,55 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
           ),
           const SizedBox(height: 16),
 
+          // -- Ramp rate ---------------------------------------------------
+          _SectionHeader(title: 'Open&Closed-Loop Ramp Rate'),
+          const SizedBox(height: 8),
+          Card(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Recommended starting value: '
+                  '${recommendedRampRateSec.toStringAsFixed(3)} s (0 -> full output)',
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 220,
+                      child: TextBox(
+                        controller: _openLoopRampRateCtrl,
+                        placeholder: 'Seconds (e.g. 0.25)',
+                        onChanged: (value) {
+                          final parsed = double.tryParse(value);
+                          if (parsed == null || parsed < 0) return;
+                          setState(() {
+                            _openLoopRampRateSec = parsed;
+                            _rampRateEdited = true;
+                          });
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Button(
+                      onPressed: () {
+                        setState(() {
+                          _openLoopRampRateSec = recommendedRampRateSec;
+                          _openLoopRampRateCtrl.text = recommendedRampRateSec
+                              .toStringAsFixed(3);
+                          _rampRateEdited = false;
+                        });
+                      },
+                      child: const Text('Use Recommended'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // -- Actions ------------------------------------------------------
           _SectionHeader(title: 'Actions'),
           const SizedBox(height: 8),
@@ -104,11 +178,13 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
                 onPressed: device == null || _deploying
                     ? null
                     : () => _burnToFlash(
-                          config,
-                          ff,
-                          _pidMode != _DeployPidMode.position ? velPid : null,
-                          _pidMode != _DeployPidMode.velocity ? posPid : null,
-                        ),
+                        config,
+                        ff,
+                        velPid,
+                        posPid,
+                        _openLoopRampRateSec ?? recommendedRampRateSec,
+                        _pidMode,
+                      ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -122,18 +198,27 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
                         padding: EdgeInsets.only(right: 8),
                         child: Icon(FluentIcons.save, size: 16),
                       ),
-                    Text(_deploying
-                        ? 'Deploying…'
-                        : 'Burn ${switch (_pidMode) {
-                            _DeployPidMode.velocity => 'Velocity',
-                            _DeployPidMode.position => 'Position',
-                            _DeployPidMode.both => 'All',
-                          }} to Flash'),
+                    Text(
+                      _deploying
+                          ? 'Deploying…'
+                          : 'Burn ${switch (_pidMode) {
+                              _DeployPidMode.velocity => 'Velocity',
+                              _DeployPidMode.position => 'Position',
+                              _DeployPidMode.both => 'All',
+                            }} to Flash',
+                    ),
                   ],
                 ),
               ),
               Button(
-                onPressed: () => _showCodeExport(config, ff, velPid, posPid),
+                onPressed: () => _showCodeExport(
+                  config,
+                  ff,
+                  velPid,
+                  posPid,
+                  _openLoopRampRateSec ?? recommendedRampRateSec,
+                  _pidMode,
+                ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -149,8 +234,9 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
             const SizedBox(height: 8),
             const InfoBar(
               title: Text('No device connected'),
-              content:
-                  Text('Connect a SPARK MAX to burn gains to the controller.'),
+              content: Text(
+                'Connect a SPARK MAX to burn gains to the controller.',
+              ),
               severity: InfoBarSeverity.info,
             ),
           ],
@@ -166,6 +252,8 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
     FeedforwardGains ff,
     PidResult? velPid,
     PidResult? posPid,
+    double openLoopRampRateSec,
+    _DeployPidMode mode,
   ) async {
     final device = ref.read(deviceManagerProvider).leader;
     if (device == null) return;
@@ -175,13 +263,23 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
 
     try {
       // Conversion factors
-      await device.parameters
-          .setPositionConversionFactor(config.positionConversionFactor);
-      await device.parameters
-          .setVelocityConversionFactor(config.velocityConversionFactor);
+      await device.parameters.setPositionConversionFactor(
+        config.positionConversionFactor,
+      );
+      await device.parameters.setVelocityConversionFactor(
+        config.velocityConversionFactor,
+      );
+
+      try {
+        await device.parameters.setOpenLoopRampRate(openLoopRampRateSec);
+      } on ParameterWriteException catch (e) {
+        errors.add(
+          'Open-loop ramp param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})',
+        );
+      }
 
       // Velocity PID (slot 0)
-      if (velPid != null) {
+      if (velPid != null && mode != _DeployPidMode.position) {
         try {
           await device.parameters.setPidSlot0(
             p: velPid.kP,
@@ -190,31 +288,52 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
             f: 0.0,
             iZone: velPid.iZone,
           );
-          await device.parameters
-              .setAllowedClosedLoopError0(velPid.allowedClosedLoopError);
+          await device.parameters.setAllowedClosedLoopError0(
+            velPid.allowedClosedLoopError,
+          );
         } on ParameterWriteException catch (e) {
           errors.add(
-              'Vel PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
+            'Vel PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})',
+          );
         }
       }
 
-      // Position PID (slot 0 — overwrites velocity if both present; the
-      // real robot typically uses one at a time, but we write both sets.)
-      if (posPid != null) {
+      // Position PID
+      if (posPid != null && mode != _DeployPidMode.velocity) {
         try {
-          await device.parameters.setPidSlot0(
-            p: posPid.kP,
-            i: posPid.kI,
-            d: posPid.kD,
-            f: 0.0,
-            iZone: posPid.iZone,
-            dFilter: posPid.dFilter,
-          );
-          await device.parameters
-              .setAllowedClosedLoopError0(posPid.allowedClosedLoopError);
+          if (mode == _DeployPidMode.both) {
+            // Keep velocity in Slot 0 and place position gains in Slot 1.
+            await device.parameters.setPidSlot(
+              1,
+              p: posPid.kP,
+              i: posPid.kI,
+              d: posPid.kD,
+              f: 0.0,
+              iZone: posPid.iZone,
+              dFilter: posPid.dFilter,
+            );
+            await device.parameters.setParameter(
+              kParamAllowedClosedLoopError1,
+              posPid.allowedClosedLoopError,
+            );
+          } else {
+            // Position-only mode writes to Slot 0 for single-slot setups.
+            await device.parameters.setPidSlot0(
+              p: posPid.kP,
+              i: posPid.kI,
+              d: posPid.kD,
+              f: 0.0,
+              iZone: posPid.iZone,
+              dFilter: posPid.dFilter,
+            );
+            await device.parameters.setAllowedClosedLoopError0(
+              posPid.allowedClosedLoopError,
+            );
+          }
         } on ParameterWriteException catch (e) {
           errors.add(
-              'Pos PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
+            'Pos PID param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})',
+          );
         }
       }
 
@@ -241,7 +360,8 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
         );
       } on ParameterWriteException catch (e) {
         errors.add(
-            'FF param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})');
+          'FF param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})',
+        );
       }
 
       // Disable extra status frames before persisting
@@ -251,47 +371,58 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
 
       if (mounted) {
         if (errors.isNotEmpty) {
-          await displayInfoBar(context, builder: (ctx, close) {
+          await displayInfoBar(
+            context,
+            builder: (ctx, close) {
+              return InfoBar(
+                title: const Text('Deploy Warning'),
+                content: Text(
+                  'Some parameters failed to write:\n${errors.join('\n')}',
+                ),
+                severity: InfoBarSeverity.error,
+                action: IconButton(
+                  icon: const Icon(FluentIcons.clear),
+                  onPressed: close,
+                ),
+              );
+            },
+          );
+        } else {
+          await displayInfoBar(
+            context,
+            builder: (ctx, close) {
+              return InfoBar(
+                title: const Text('Deploy Successful'),
+                content: Text(
+                  'All gains, feedforward, conversion factors, and open-loop ramp rate '
+                  '(${openLoopRampRateSec.toStringAsFixed(3)} s) were written to controller and saved to flash.',
+                ),
+                severity: InfoBarSeverity.success,
+                action: IconButton(
+                  icon: const Icon(FluentIcons.clear),
+                  onPressed: close,
+                ),
+              );
+            },
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        await displayInfoBar(
+          context,
+          builder: (ctx, close) {
             return InfoBar(
-              title: const Text('Deploy Warning'),
-              content: Text(
-                  'Some parameters failed to write:\n${errors.join('\n')}'),
+              title: const Text('Deploy Failed'),
+              content: Text('$e'),
               severity: InfoBarSeverity.error,
               action: IconButton(
                 icon: const Icon(FluentIcons.clear),
                 onPressed: close,
               ),
             );
-          });
-        } else {
-          await displayInfoBar(context, builder: (ctx, close) {
-            return InfoBar(
-              title: const Text('Deploy Successful'),
-              content: const Text(
-                'All gains, feedforward, and conversion factors written to controller and saved to flash.',
-              ),
-              severity: InfoBarSeverity.success,
-              action: IconButton(
-                icon: const Icon(FluentIcons.clear),
-                onPressed: close,
-              ),
-            );
-          });
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        await displayInfoBar(context, builder: (ctx, close) {
-          return InfoBar(
-            title: const Text('Deploy Failed'),
-            content: Text('$e'),
-            severity: InfoBarSeverity.error,
-            action: IconButton(
-              icon: const Icon(FluentIcons.clear),
-              onPressed: close,
-            ),
-          );
-        });
+          },
+        );
       }
     } finally {
       if (mounted) setState(() => _deploying = false);
@@ -305,18 +436,27 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
     FeedforwardGains ff,
     PidResult? velPid,
     PidResult? posPid,
+    double openLoopRampRateSec,
+    _DeployPidMode mode,
   ) {
+    final selectedVelocityPid = mode == _DeployPidMode.position ? null : velPid;
+    final selectedPositionPid = mode == _DeployPidMode.velocity ? null : posPid;
+
     final snippets = CodeSnippetExporter.generate(
       config: config,
       ff: ff,
-      velocityPid: velPid,
-      positionPid: posPid,
+      velocityPid: selectedVelocityPid,
+      positionPid: selectedPositionPid,
+      openLoopRampRate: openLoopRampRateSec,
+      closedLoopRampRate: openLoopRampRateSec,
     );
     showDialog(
       context: context,
       builder: (_) => CodeExportDialog(snippets: snippets),
     );
   }
+
+  double _recommendedOpenLoopRampRateSeconds() => 0.5;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,10 +471,9 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       title,
-      style: FluentTheme.of(context)
-          .typography
-          .subtitle
-          ?.copyWith(fontSize: 16),
+      style: FluentTheme.of(
+        context,
+      ).typography.subtitle?.copyWith(fontSize: 16),
     );
   }
 }
@@ -436,10 +575,7 @@ class _GainCard extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
           ),
           const SizedBox(height: 8),
           Wrap(

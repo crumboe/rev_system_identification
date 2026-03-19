@@ -23,6 +23,7 @@ import '../mechanisms/mechanism.dart';
 enum ValidationMode {
   velocity,
   position,
+  disturbancePosition,
   maxMotionPosition,
 }
 
@@ -64,29 +65,29 @@ class ValidationParams {
   }) {
     return switch (type) {
       MechanismType.flywheel => const ValidationParams(
-          velocitySetpoint: 500.0, // RPM
-          positionSetpoint: 5.0,   // rotations
-          holdDuration: 3.0,
-          settleDuration: 2.0,
-        ),
+        velocitySetpoint: 500.0, // RPM
+        positionSetpoint: 5.0, // rotations
+        holdDuration: 3.0,
+        settleDuration: 2.0,
+      ),
       MechanismType.arm => const ValidationParams(
-          velocitySetpoint: 90.0,   // deg/s
-          positionSetpoint: 45.0,   // degrees
-          holdDuration: 3.0,
-          settleDuration: 1.0,
-        ),
+        velocitySetpoint: 90.0, // deg/s
+        positionSetpoint: 45.0, // degrees
+        holdDuration: 3.0,
+        settleDuration: 1.0,
+      ),
       MechanismType.elevator => ValidationParams(
-          velocitySetpoint: imperial ? 6.0 : 0.15, // in/s or m/s
-          positionSetpoint: imperial ? 12.0 : 0.3, // inches or meters
-          holdDuration: 3.0,
-          settleDuration: 1.0,
-        ),
+        velocitySetpoint: imperial ? 6.0 : 0.15, // in/s or m/s
+        positionSetpoint: imperial ? 12.0 : 0.3, // inches or meters
+        holdDuration: 3.0,
+        settleDuration: 1.0,
+      ),
       MechanismType.simple => const ValidationParams(
-          velocitySetpoint: 500.0,  // RPM
-          positionSetpoint: 5.0,    // rotations
-          holdDuration: 3.0,
-          settleDuration: 1.0,
-        ),
+        velocitySetpoint: 500.0, // RPM
+        positionSetpoint: 5.0, // rotations
+        holdDuration: 3.0,
+        settleDuration: 1.0,
+      ),
     };
   }
 
@@ -223,8 +224,9 @@ class ValidationResult {
     if (data.isEmpty || setpoints.isEmpty) return null;
     final target = setpoints.first != 0 ? setpoints.first : setpoints.last;
 
-    final initialMeasured =
-        mode == ValidationMode.velocity ? data.first.velocity : data.first.position;
+    final initialMeasured = mode == ValidationMode.velocity
+        ? data.first.velocity
+        : data.first.position;
     final stepAmplitude = target - initialMeasured;
     if (stepAmplitude.abs() < 1e-9) return null;
 
@@ -236,11 +238,11 @@ class ValidationResult {
     double? t90;
 
     for (var i = 0; i < data.length; i++) {
-      final measured =
-          mode == ValidationMode.velocity
-              ? data[i].velocity
-              : data[i].position;
-      if (t10 == null && (rising ? measured >= threshold10 : measured <= threshold10)) {
+      final measured = mode == ValidationMode.velocity
+          ? data[i].velocity
+          : data[i].position;
+      if (t10 == null &&
+          (rising ? measured >= threshold10 : measured <= threshold10)) {
         t10 = data[i].timestamp;
       }
       if (t10 != null &&
@@ -265,10 +267,9 @@ class ValidationResult {
     double sumError = 0;
     int count = 0;
     for (var i = startIdx; i < data.length; i++) {
-      final measured =
-          mode == ValidationMode.velocity
-              ? data[i].velocity
-              : data[i].position;
+      final measured = mode == ValidationMode.velocity
+          ? data[i].velocity
+          : data[i].position;
       sumError += (setpoints[i] - measured).abs();
       count++;
     }
@@ -281,16 +282,18 @@ class ValidationResult {
     if (data.isEmpty || setpoints.isEmpty) return null;
     final target = setpoints.first != 0 ? setpoints.first : setpoints.last;
 
-    final initialMeasured =
-        mode == ValidationMode.velocity ? data.first.velocity : data.first.position;
+    final initialMeasured = mode == ValidationMode.velocity
+        ? data.first.velocity
+        : data.first.position;
     final stepAmplitude = target - initialMeasured;
     if (stepAmplitude.abs() < 1e-9) return 0.0;
 
     double peak = initialMeasured;
     double valley = initialMeasured;
     for (final dp in data) {
-      final measured =
-          mode == ValidationMode.velocity ? dp.velocity : dp.position;
+      final measured = mode == ValidationMode.velocity
+          ? dp.velocity
+          : dp.position;
       if (measured > peak) peak = measured;
       if (measured < valley) valley = measured;
     }
@@ -366,7 +369,9 @@ class ValidationRunner {
 
     const alpha = 0.20;
     final prev = _filteredCurrentAmps;
-    final filtered = prev == null ? sample : (alpha * sample + (1 - alpha) * prev);
+    final filtered = prev == null
+        ? sample
+        : (alpha * sample + (1 - alpha) * prev);
     _filteredCurrentAmps = filtered;
     return filtered;
   }
@@ -386,9 +391,11 @@ class ValidationRunner {
 
     // Write conversion factors so the controller handles unit conversion.
     await device.parameters.setPositionConversionFactor(
-        mechanismConfig.positionConversionFactor);
+      mechanismConfig.positionConversionFactor,
+    );
     await device.parameters.setVelocityConversionFactor(
-        mechanismConfig.velocityConversionFactor);
+      mechanismConfig.velocityConversionFactor,
+    );
 
     // Brief pause between conversion-factor writes and PID writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -399,9 +406,11 @@ class ValidationRunner {
       i: pid.kI,
       d: pid.kD,
       f: 0.0,
+      iZone: pid.iZone,
     );
     await device.parameters.setAllowedClosedLoopError0(
-        pid.allowedClosedLoopError);
+      pid.allowedClosedLoopError,
+    );
 
     // Brief pause between PID and FF writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -440,9 +449,11 @@ class ValidationRunner {
 
     // Write conversion factors so the controller handles unit conversion.
     await device.parameters.setPositionConversionFactor(
-        mechanismConfig.positionConversionFactor);
+      mechanismConfig.positionConversionFactor,
+    );
     await device.parameters.setVelocityConversionFactor(
-        mechanismConfig.velocityConversionFactor);
+      mechanismConfig.velocityConversionFactor,
+    );
 
     // Brief pause between conversion-factor writes and PID writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -453,10 +464,12 @@ class ValidationRunner {
       i: pid.kI,
       d: pid.kD,
       f: 0.0,
+      iZone: pid.iZone,
       dFilter: pid.dFilter,
     );
     await device.parameters.setAllowedClosedLoopError0(
-        pid.allowedClosedLoopError);
+      pid.allowedClosedLoopError,
+    );
 
     // Brief pause between PID and FF writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -513,9 +526,11 @@ class ValidationRunner {
   Future<void> _prepareMAXMotionProfileOnly(MAXMotionConfig config) async {
     // Ensure conversion factors are on the controller.
     await device.parameters.setPositionConversionFactor(
-        mechanismConfig.positionConversionFactor);
+      mechanismConfig.positionConversionFactor,
+    );
     await device.parameters.setVelocityConversionFactor(
-        mechanismConfig.velocityConversionFactor);
+      mechanismConfig.velocityConversionFactor,
+    );
 
     // Brief pause between conversion-factor and MAXMotion writes.
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -580,6 +595,21 @@ class ValidationRunner {
     );
   }
 
+  /// Run an untimed disturbance position test.
+  ///
+  /// This behaves like a normal position hold test, but continues until
+  /// manually aborted so external disturbances can be applied and observed.
+  Future<ValidationResult> runDisturbancePositionTest({
+    required ValidationParams params,
+    void Function(ValidationProgress)? onProgress,
+  }) async {
+    return _runTest(
+      mode: ValidationMode.disturbancePosition,
+      params: params,
+      onProgress: onProgress,
+    );
+  }
+
   Future<ValidationResult> _runTest({
     required ValidationMode mode,
     required ValidationParams params,
@@ -608,8 +638,10 @@ class ValidationRunner {
     _lastRawCurrentAmps = null;
 
     final totalDuration = params.holdDuration + params.settleDuration;
-    // MAXMotion tests run until manually stopped (no time limit).
-    final untimed = mode == ValidationMode.maxMotionPosition;
+    // Disturbance and MAXMotion tests run until manually stopped.
+    final untimed =
+        mode == ValidationMode.maxMotionPosition ||
+        mode == ValidationMode.disturbancePosition;
 
     try {
       // Enable all periodic status frames so we get full telemetry.
@@ -696,9 +728,10 @@ class ValidationRunner {
 
           // Read position from the configured feedback sensor's status frame.
           final double rawPosition;
-          if (mechanismConfig.feedbackSensor == FeedbackSensor.absoluteEncoder) {
-            rawPosition = device.connection.lastStatus5
-                    ?.absoluteEncoderPosition ??
+          if (mechanismConfig.feedbackSensor ==
+              FeedbackSensor.absoluteEncoder) {
+            rawPosition =
+                device.connection.lastStatus5?.absoluteEncoderPosition ??
                 (status2?.positionRotations ?? 0.0);
           } else {
             rawPosition = status2?.positionRotations ?? 0.0;
@@ -722,19 +755,18 @@ class ValidationRunner {
           data.add(dp);
           setpoints.add(setpoint);
 
-          onProgress?.call(ValidationProgress(
-            elapsedSeconds: elapsed,
-            setpoint: setpoint,
-            measured:
-                mode == ValidationMode.velocity
-                    ? velocity
-                    : position,
-            velocity: velocity,
-            position: position,
-            voltage: dp.voltage,
-            current: dp.current,
-            sampleCount: data.length,
-          ));
+          onProgress?.call(
+            ValidationProgress(
+              elapsedSeconds: elapsed,
+              setpoint: setpoint,
+              measured: mode == ValidationMode.velocity ? velocity : position,
+              velocity: velocity,
+              position: position,
+              voltage: dp.voltage,
+              current: dp.current,
+              sampleCount: data.length,
+            ),
+          );
         }
 
         await Future.delayed(const Duration(milliseconds: 10));

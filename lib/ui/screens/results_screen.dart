@@ -74,8 +74,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             CommandBarButton(
               icon: const Icon(FluentIcons.download),
               label: const Text('Export CSV'),
-              onPressed:
-                  testRuns.isNotEmpty ? () => _exportCsv(testRuns) : null,
+              onPressed: testRuns.isNotEmpty
+                  ? () => _exportCsv(testRuns)
+                  : null,
             ),
             CommandBarButton(
               icon: const Icon(FluentIcons.download),
@@ -117,8 +118,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         Row(
           children: [
             FilledButton(
-              onPressed:
-                  canAnalyze ? () => _runAnalysis(qsRuns, dynRuns, config) : null,
+              onPressed: canAnalyze
+                  ? () => _runAnalysis(qsRuns, dynRuns, config)
+                  : null,
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Text('Compute Feedforward & PID'),
@@ -222,30 +224,44 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_velPid != null)
-                Expanded(child: _PidCard(
-                  title: 'Velocity PID',
-                  pid: _velPid!,
-                  ff: _ff,
-                  mode: _PidMode.velocity,
-                  config: config,
-                  onAllowedErrorChanged: (v) {
-                    setState(() => _velPid = _velPid!.copyWith(allowedClosedLoopError: v));
-                    ref.read(pidResultProvider.notifier).state = _velPid;
-                  },
-                )),
+                Expanded(
+                  child: _PidCard(
+                    title: 'Velocity PID',
+                    pid: _velPid!,
+                    ff: _ff,
+                    ffLoaded: _ffLoaded,
+                    mode: _PidMode.velocity,
+                    config: config,
+                    onAllowedErrorChanged: (v) {
+                      setState(
+                        () => _velPid = _velPid!.copyWith(
+                          allowedClosedLoopError: v,
+                        ),
+                      );
+                      ref.read(pidResultProvider.notifier).state = _velPid;
+                    },
+                  ),
+                ),
               const SizedBox(width: 12),
               if (_posPid != null)
-                Expanded(child: _PidCard(
-                  title: 'Position PID',
-                  pid: _posPid!,
-                  ff: _ff,
-                  mode: _PidMode.position,
-                  config: config,
-                  onAllowedErrorChanged: (v) {
-                    setState(() => _posPid = _posPid!.copyWith(allowedClosedLoopError: v));
-                    ref.read(posPidResultProvider.notifier).state = _posPid;
-                  },
-                )),
+                Expanded(
+                  child: _PidCard(
+                    title: 'Position PID',
+                    pid: _posPid!,
+                    ff: _ff,
+                    ffLoaded: _ffLoaded,
+                    mode: _PidMode.position,
+                    config: config,
+                    onAllowedErrorChanged: (v) {
+                      setState(
+                        () => _posPid = _posPid!.copyWith(
+                          allowedClosedLoopError: v,
+                        ),
+                      );
+                      ref.read(posPidResultProvider.notifier).state = _posPid;
+                    },
+                  ),
+                ),
             ],
           ),
 
@@ -294,9 +310,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Expanded(
-                  child: _StepResponsePlot(testRuns: dynRuns),
-                ),
+                Expanded(child: _StepResponsePlot(testRuns: dynRuns)),
               ],
             ),
           ),
@@ -317,8 +331,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               mode: _isPositionMode
                   ? BodePlotMode.position
                   : BodePlotMode.velocity,
-              onModeChanged: (m) =>
-                  _setLoopMode(m == BodePlotMode.position),
+              onModeChanged: (m) => _setLoopMode(m == BodePlotMode.position),
             ),
           ),
 
@@ -339,8 +352,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               mode: _isPositionMode
                   ? PoleZeroMode.position
                   : PoleZeroMode.velocity,
-              onModeChanged: (m) =>
-                  _setLoopMode(m == PoleZeroMode.position),
+              onModeChanged: (m) => _setLoopMode(m == PoleZeroMode.position),
             ),
           ),
         ],
@@ -354,43 +366,44 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
-          ...testRuns.map((run) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Card(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${run.testType.displayName} — '
-                          '${run.sampleCount} samples, '
-                          '${run.durationSeconds.toStringAsFixed(1)}s',
-                        ),
+          ...testRuns.map(
+            (run) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Card(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${run.testType.displayName} — '
+                        '${run.sampleCount} samples, '
+                        '${run.durationSeconds.toStringAsFixed(1)}s',
                       ),
-                      if (run.loadCondition != null) ...[
-                        InfoBadge(
-                          source: Text(
-                            run.loadCondition == LoadCondition.loaded
-                                ? 'LOADED'
-                                : 'UNLOADED',
-                          ),
-                          color: run.loadCondition == LoadCondition.loaded
-                              ? Colors.orange
-                              : Colors.green,
+                    ),
+                    if (run.loadCondition != null) ...[
+                      InfoBadge(
+                        source: Text(
+                          run.loadCondition == LoadCondition.loaded
+                              ? 'LOADED'
+                              : 'UNLOADED',
                         ),
-                        const SizedBox(width: 8),
-                      ],
-                      Button(
-                        onPressed: () {
-                          ref.read(testRunsProvider.notifier).removeRun(run.id);
-                        },
-                        child: const Icon(FluentIcons.delete, size: 14),
+                        color: run.loadCondition == LoadCondition.loaded
+                            ? Colors.orange
+                            : Colors.green,
                       ),
+                      const SizedBox(width: 8),
                     ],
-                  ),
+                    Button(
+                      onPressed: () {
+                        ref.read(testRunsProvider.notifier).removeRun(run.id);
+                      },
+                      child: const Icon(FluentIcons.delete, size: 14),
+                    ),
+                  ],
                 ),
-              )),
+              ),
+            ),
+          ),
         ],
-
       ],
     );
   }
@@ -425,8 +438,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final ff = _ff!;
     final mechType = ref.read(mechanismConfigProvider).type;
 
-    final totalSamples = [...qsRuns, ...dynRuns]
-        .fold<int>(0, (sum, r) => sum + r.sampleCount);
+    final totalSamples = [
+      ...qsRuns,
+      ...dynRuns,
+    ].fold<int>(0, (sum, r) => sum + r.sampleCount);
     final qsCount = qsRuns.length;
     final dynCount = dynRuns.length;
 
@@ -448,7 +463,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           decoration: BoxDecoration(
             color: theme.accentColor.withValues(alpha: 0.04),
             border: Border.all(
-                color: theme.accentColor.withValues(alpha: 0.15)),
+              color: theme.accentColor.withValues(alpha: 0.15),
+            ),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Column(
@@ -478,7 +494,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
                   Text(
                     title,
                     style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
@@ -493,8 +511,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final gravityTermLabel = mechType == MechanismType.arm
         ? '\n• kG · cos(θ) — gravity torque (arm, varies with angle)'
         : mechType == MechanismType.elevator
-            ? '\n• kG — constant gravity compensation (elevator)'
-            : '';
+        ? '\n• kG — constant gravity compensation (elevator)'
+        : '';
 
     return Expander(
       header: const Row(
@@ -524,8 +542,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
 
           // Step 2 — Physics model
           stepCard(2, 'The Physics Model', [
-            Text('The mechanism obeys a linear feedforward model:',
-                style: captionStyle),
+            Text(
+              'The mechanism obeys a linear feedforward model:',
+              style: captionStyle,
+            ),
             const SizedBox(height: 8),
             _buildEquationRow(mechType, theme),
             const SizedBox(height: 8),
@@ -556,8 +576,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               style: captionStyle,
             ),
             const SizedBox(height: 8),
-            Text('  β  =  (XᵀX)⁻¹ Xᵀ V',
-                style: monoStyle.copyWith(fontSize: 13)),
+            Text(
+              '  β  =  (XᵀX)⁻¹ Xᵀ V',
+              style: monoStyle.copyWith(fontSize: 13),
+            ),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.all(10),
@@ -568,15 +590,20 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('kS = ${ff.kS.toStringAsFixed(5)} V',
-                      style: monoStyle),
-                  Text('kV = ${ff.kV.toStringAsFixed(5)} V·s/unit',
-                      style: monoStyle),
-                  Text('kA = ${ff.kA.toStringAsFixed(5)} V·s²/unit',
-                      style: monoStyle),
+                  Text('kS = ${ff.kS.toStringAsFixed(5)} V', style: monoStyle),
+                  Text(
+                    'kV = ${ff.kV.toStringAsFixed(5)} V·s/unit',
+                    style: monoStyle,
+                  ),
+                  Text(
+                    'kA = ${ff.kA.toStringAsFixed(5)} V·s²/unit',
+                    style: monoStyle,
+                  ),
                   if (hasGravity)
-                    Text('kG = ${ff.kG.toStringAsFixed(5)} V',
-                        style: monoStyle),
+                    Text(
+                      'kG = ${ff.kG.toStringAsFixed(5)} V',
+                      style: monoStyle,
+                    ),
                   const SizedBox(height: 4),
                   Text(
                     'R² = ${ff.rSquared.toStringAsFixed(4)}',
@@ -608,8 +635,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     final suffix = mechType == MechanismType.arm
         ? '  +  kG·cos(θ)'
         : mechType == MechanismType.elevator
-            ? '  +  kG'
-            : '';
+        ? '  +  kG'
+        : '';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
@@ -644,9 +671,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
     // Spread the selection evenly across the data.
     final step = all.length ~/ 5;
     if (step < 1) return all.take(5).toList();
-    return [
-      for (var i = 0; i < all.length && i ~/ step < 5; i += step) all[i],
-    ];
+    return [for (var i = 0; i < all.length && i ~/ step < 5; i += step) all[i]];
   }
 
   void _runAnalysis(
@@ -656,9 +681,11 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   ) {
     try {
       // Partition runs by load condition (arm/elevator only).
-      final hasLoadTags = qsRuns.any((r) => r.loadCondition != null) ||
+      final hasLoadTags =
+          qsRuns.any((r) => r.loadCondition != null) ||
           dynRuns.any((r) => r.loadCondition != null);
-      final isGravityMech = config.type == MechanismType.arm ||
+      final isGravityMech =
+          config.type == MechanismType.arm ||
           config.type == MechanismType.elevator;
 
       FeedforwardGains ff;
@@ -668,14 +695,18 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       if (hasLoadTags && isGravityMech) {
         // Split into unloaded and loaded sets.
         final qsUnloaded = qsRuns
-            .where((r) =>
-                r.loadCondition == null ||
-                r.loadCondition == LoadCondition.unloaded)
+            .where(
+              (r) =>
+                  r.loadCondition == null ||
+                  r.loadCondition == LoadCondition.unloaded,
+            )
             .toList();
         final dynUnloaded = dynRuns
-            .where((r) =>
-                r.loadCondition == null ||
-                r.loadCondition == LoadCondition.unloaded)
+            .where(
+              (r) =>
+                  r.loadCondition == null ||
+                  r.loadCondition == LoadCondition.unloaded,
+            )
             .toList();
         final qsLoaded = qsRuns
             .where((r) => r.loadCondition == LoadCondition.loaded)
@@ -712,9 +743,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       // Compute and apply plant-optimal defaults.
       final primaryFF = ffBlended ?? ff;
       final (optTau, optBw) = PidAutoTuner.optimalDefaults(primaryFF);
-      ref.read(pidTuningParamsProvider.notifier).setOptimalDefaults(
-        optTau, optBw,
-      );
+      ref
+          .read(pidTuningParamsProvider.notifier)
+          .setOptimalDefaults(optTau, optBw);
 
       final tuningParams = ref.read(pidTuningParamsProvider);
 
@@ -776,39 +807,44 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   Future<void> _exportCsv(List<TestRun> runs) async {
     final path = await CsvExporter.exportAllRuns(runs);
     if (path != null && mounted) {
-      await displayInfoBar(context, builder: (ctx, close) {
-        return InfoBar(
-          title: const Text('Exported'),
-          content: Text('Saved to: $path'),
-          severity: InfoBarSeverity.success,
-          action: IconButton(
-            icon: const Icon(FluentIcons.clear),
-            onPressed: close,
-          ),
-        );
-      });
+      await displayInfoBar(
+        context,
+        builder: (ctx, close) {
+          return InfoBar(
+            title: const Text('Exported'),
+            content: Text('Saved to: $path'),
+            severity: InfoBarSeverity.success,
+            action: IconButton(
+              icon: const Icon(FluentIcons.clear),
+              onPressed: close,
+            ),
+          );
+        },
+      );
     }
   }
 
   Future<void> _exportWpiLib(List<TestRun> runs) async {
     final path = await CsvExporter.exportWpiLibFormat(runs);
     if (path != null && mounted) {
-      await displayInfoBar(context, builder: (ctx, close) {
-        return InfoBar(
-          title: const Text('Exported'),
-          content: Text('WPILib SysId JSON saved to: $path'),
-          severity: InfoBarSeverity.success,
-          action: IconButton(
-            icon: const Icon(FluentIcons.clear),
-            onPressed: close,
-          ),
-        );
-      });
+      await displayInfoBar(
+        context,
+        builder: (ctx, close) {
+          return InfoBar(
+            title: const Text('Exported'),
+            content: Text('WPILib SysId JSON saved to: $path'),
+            severity: InfoBarSeverity.success,
+            action: IconButton(
+              icon: const Icon(FluentIcons.clear),
+              onPressed: close,
+            ),
+          );
+        },
+      );
     }
   }
 
-  Future<void> _exportPdf(
-      MechanismConfig config, List<TestRun> runs) async {
+  Future<void> _exportPdf(MechanismConfig config, List<TestRun> runs) async {
     try {
       final path = await ReportGenerator.generate(
         config: config,
@@ -819,37 +855,45 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
         tuningParams: ref.read(pidTuningParamsProvider),
       );
       if (path != null && mounted) {
-        await displayInfoBar(context, builder: (ctx, close) {
-          return InfoBar(
-            title: const Text('Report saved'),
-            content: Text('PDF saved to: $path'),
-            severity: InfoBarSeverity.success,
-            action: IconButton(
-              icon: const Icon(FluentIcons.clear),
-              onPressed: close,
-            ),
-          );
-        });
+        await displayInfoBar(
+          context,
+          builder: (ctx, close) {
+            return InfoBar(
+              title: const Text('Report saved'),
+              content: Text('PDF saved to: $path'),
+              severity: InfoBarSeverity.success,
+              action: IconButton(
+                icon: const Icon(FluentIcons.clear),
+                onPressed: close,
+              ),
+            );
+          },
+        );
       }
     } catch (e) {
       if (mounted) {
-        await displayInfoBar(context, builder: (ctx, close) {
-          return InfoBar(
-            title: const Text('Export failed'),
-            content: Text('$e'),
-            severity: InfoBarSeverity.error,
-            action: IconButton(
-              icon: const Icon(FluentIcons.clear),
-              onPressed: close,
-            ),
-          );
-        });
+        await displayInfoBar(
+          context,
+          builder: (ctx, close) {
+            return InfoBar(
+              title: const Text('Export failed'),
+              content: Text('$e'),
+              severity: InfoBarSeverity.error,
+              action: IconButton(
+                icon: const Icon(FluentIcons.clear),
+                onPressed: close,
+              ),
+            );
+          },
+        );
       }
     }
   }
 
   Future<void> _exportNotebook(
-      MechanismConfig config, List<TestRun> testRuns) async {
+    MechanismConfig config,
+    List<TestRun> testRuns,
+  ) async {
     final path = await NotebookExporter.export(
       config: config,
       ff: _ff!,
@@ -859,17 +903,20 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       validationResult: ref.read(validationResultProvider),
     );
     if (path != null && mounted) {
-      await displayInfoBar(context, builder: (ctx, close) {
-        return InfoBar(
-          title: const Text('Notebook Exported'),
-          content: Text('Saved to $path'),
-          severity: InfoBarSeverity.success,
-          action: IconButton(
-            icon: const Icon(FluentIcons.chrome_close),
-            onPressed: close,
-          ),
-        );
-      });
+      await displayInfoBar(
+        context,
+        builder: (ctx, close) {
+          return InfoBar(
+            title: const Text('Notebook Exported'),
+            content: Text('Saved to $path'),
+            severity: InfoBarSeverity.success,
+            action: IconButton(
+              icon: const Icon(FluentIcons.chrome_close),
+              onPressed: close,
+            ),
+          );
+        },
+      );
     }
   }
 }
@@ -1028,8 +1075,14 @@ class _DualGainsTable extends StatelessWidget {
         child: Row(
           children: [
             SizedBox(width: 160, child: Text(label)),
-            SizedBox(width: 140, child: Text('${u.toStringAsFixed(5)} $unit', style: style)),
-            SizedBox(width: 140, child: Text('${l.toStringAsFixed(5)} $unit', style: style)),
+            SizedBox(
+              width: 140,
+              child: Text('${u.toStringAsFixed(5)} $unit', style: style),
+            ),
+            SizedBox(
+              width: 140,
+              child: Text('${l.toStringAsFixed(5)} $unit', style: style),
+            ),
             SizedBox(
               width: 140,
               child: Text(
@@ -1051,17 +1104,59 @@ class _DualGainsTable extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Row(
               children: [
-                const SizedBox(width: 160, child: Text('Parameter', style: TextStyle(fontWeight: FontWeight.bold))),
-                const SizedBox(width: 140, child: Text('Unloaded', style: TextStyle(fontWeight: FontWeight.bold))),
-                const SizedBox(width: 140, child: Text('Loaded', style: TextStyle(fontWeight: FontWeight.bold))),
-                const SizedBox(width: 140, child: Text('Blended', style: TextStyle(fontWeight: FontWeight.bold))),
+                const SizedBox(
+                  width: 160,
+                  child: Text(
+                    'Parameter',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(
+                  width: 140,
+                  child: Text(
+                    'Unloaded',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(
+                  width: 140,
+                  child: Text(
+                    'Loaded',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(
+                  width: 140,
+                  child: Text(
+                    'Blended',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
               ],
             ),
           ),
           const Divider(),
-          row('kS (Static Friction)', ffUnloaded.kS, ffLoaded.kS, ffBlended.kS, 'V'),
-          row('kV (Velocity)', ffUnloaded.kV, ffLoaded.kV, ffBlended.kV, 'V/$velUnit'),
-          row('kA (Acceleration)', ffUnloaded.kA, ffLoaded.kA, ffBlended.kA, 'V·s/$velUnit'),
+          row(
+            'kS (Static Friction)',
+            ffUnloaded.kS,
+            ffLoaded.kS,
+            ffBlended.kS,
+            'V',
+          ),
+          row(
+            'kV (Velocity)',
+            ffUnloaded.kV,
+            ffLoaded.kV,
+            ffBlended.kV,
+            'V/$velUnit',
+          ),
+          row(
+            'kA (Acceleration)',
+            ffUnloaded.kA,
+            ffLoaded.kA,
+            ffBlended.kA,
+            'V·s/$velUnit',
+          ),
           if (isArm || isElevator)
             row('kG (Gravity)', ffUnloaded.kG, ffLoaded.kG, ffBlended.kG, 'V'),
           const Divider(),
@@ -1085,7 +1180,12 @@ class _GainRow extends StatelessWidget {
   final bool highlight;
   final String? tooltip;
 
-  const _GainRow(this.label, this.value, {this.highlight = false, this.tooltip});
+  const _GainRow(
+    this.label,
+    this.value, {
+    this.highlight = false,
+    this.tooltip,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1123,10 +1223,7 @@ class _GainRow extends StatelessWidget {
         style: const TooltipThemeData(
           waitDuration: Duration(milliseconds: 300),
         ),
-        child: MouseRegion(
-          cursor: SystemMouseCursors.help,
-          child: row,
-        ),
+        child: MouseRegion(cursor: SystemMouseCursors.help, child: row),
       );
     }
 
@@ -1149,25 +1246,25 @@ const _dampingPresets = [
     'Overdamped (ζ = 1.5)',
     1.5,
     'Very conservative — slow approach with no overshoot. '
-    'Use when overshoot is absolutely unacceptable (e.g. elevator near hard stop).',
+        'Use when overshoot is absolutely unacceptable (e.g. elevator near hard stop).',
   ),
   _DampingPreset(
     'Critically Damped (ζ = 1.0)',
     1.0,
     'Fastest response with zero overshoot. '
-    'Recommended for most FRC mechanisms. The "textbook" default.',
+        'Recommended for most FRC mechanisms. The "textbook" default.',
   ),
   _DampingPreset(
     'Butterworth (ζ ≈ 0.707)',
     0.707,
     '~4 % overshoot, maximally flat frequency response. '
-    'Good for mechanisms that can tolerate a small overshoot in exchange for a faster rise time.',
+        'Good for mechanisms that can tolerate a small overshoot in exchange for a faster rise time.',
   ),
   _DampingPreset(
     'Underdamped (ζ = 0.5)',
     0.5,
     '~16 % overshoot, faster rise time but oscillatory settling. '
-    'Use with caution — the mechanism will ring past the setpoint.',
+        'Use with caution — the mechanism will ring past the setpoint.',
   ),
 ];
 
@@ -1181,6 +1278,9 @@ class _DampingSelector extends ConsumerWidget {
     final selected = _dampingPresets.firstWhere(
       (p) => (p.zeta - params.dampingRatio).abs() < 0.01,
       orElse: () => _dampingPresets[1],
+    );
+    final isCustom = !_dampingPresets.any(
+      (p) => (p.zeta - params.dampingRatio).abs() < 0.01,
     );
 
     return Column(
@@ -1202,10 +1302,12 @@ class _DampingSelector extends ConsumerWidget {
             ComboBox<double>(
               value: selected.zeta,
               items: _dampingPresets
-                  .map((p) => ComboBoxItem<double>(
-                        value: p.zeta,
-                        child: Text(p.label),
-                      ))
+                  .map(
+                    (p) => ComboBoxItem<double>(
+                      value: p.zeta,
+                      child: Text(p.label),
+                    ),
+                  )
                   .toList(),
               onChanged: (val) {
                 if (val != null) {
@@ -1214,6 +1316,24 @@ class _DampingSelector extends ConsumerWidget {
                       .setDampingRatio(val);
                 }
               },
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 120,
+              child: NumberBox<double>(
+                value: params.dampingRatio,
+                min: 0.1,
+                max: 5.0,
+                smallChange: 0.1,
+                mode: SpinButtonPlacementMode.inline,
+                onChanged: (v) {
+                  if (v != null) {
+                    ref
+                        .read(pidTuningParamsProvider.notifier)
+                        .setDampingRatio(v);
+                  }
+                },
+              ),
             ),
           ],
         ),
@@ -1226,7 +1346,10 @@ class _DampingSelector extends ConsumerWidget {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              selected.description,
+              isCustom
+                  ? 'Custom damping ratio (ζ = ${params.dampingRatio.toStringAsFixed(1)}). '
+                        'Higher values are more overdamped and conservative; lower values are faster but can ring.'
+                  : selected.description,
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
@@ -1257,9 +1380,11 @@ class _TuningParametersPanelState
     super.initState();
     final params = ref.read(pidTuningParamsProvider);
     _tauController = TextEditingController(
-        text: params.velocityTimeConstantMs.toStringAsFixed(0));
+      text: params.velocityTimeConstantMs.toStringAsFixed(0),
+    );
     _bwController = TextEditingController(
-        text: params.positionBandwidthHz.toStringAsFixed(1));
+      text: params.positionBandwidthHz.toStringAsFixed(1),
+    );
   }
 
   @override
@@ -1316,16 +1441,14 @@ class _TuningParametersPanelState
           if (!isDefault) ...[
             const SizedBox(width: 8),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 color: theme.accentColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 'Modified',
-                style:
-                    TextStyle(fontSize: 10, color: theme.accentColor),
+                style: TextStyle(fontSize: 10, color: theme.accentColor),
               ),
             ),
           ],
@@ -1339,8 +1462,7 @@ class _TuningParametersPanelState
             'Adjust them before computing, or change and re-compute.',
             style: TextStyle(
               fontSize: 12,
-              color:
-                  theme.typography.body?.color?.withValues(alpha: 0.7),
+              color: theme.typography.body?.color?.withValues(alpha: 0.7),
             ),
           ),
           const SizedBox(height: 16),
@@ -1369,8 +1491,7 @@ class _TuningParametersPanelState
                   min: 20,
                   max: 500,
                   divisions: 48,
-                  label:
-                      '${params.velocityTimeConstantMs.round()} ms',
+                  label: '${params.velocityTimeConstantMs.round()} ms',
                   onChanged: _onTauChanged,
                 ),
               ),
@@ -1393,8 +1514,7 @@ class _TuningParametersPanelState
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
-                color: theme.typography.body?.color
-                    ?.withValues(alpha: 0.5),
+                color: theme.typography.body?.color?.withValues(alpha: 0.5),
               ),
             ),
           ),
@@ -1417,11 +1537,10 @@ class _TuningParametersPanelState
               Expanded(
                 child: Slider(
                   value: params.positionBandwidthHz,
-                  min: 1,
-                  max: 20,
-                  divisions: 38,
-                  label:
-                      '${params.positionBandwidthHz.toStringAsFixed(1)} Hz',
+                  min: 0.1,
+                  max: 40,
+                  divisions: 395,
+                  label: '${params.positionBandwidthHz.toStringAsFixed(1)} Hz',
                   onChanged: _onBwChanged,
                 ),
               ),
@@ -1444,8 +1563,7 @@ class _TuningParametersPanelState
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
-                color: theme.typography.body?.color
-                    ?.withValues(alpha: 0.5),
+                color: theme.typography.body?.color?.withValues(alpha: 0.5),
               ),
             ),
           ),
@@ -1455,10 +1573,8 @@ class _TuningParametersPanelState
             Button(
               onPressed: () {
                 ref.read(pidTuningParamsProvider.notifier).reset();
-                _tauController.text =
-                    notifier.optimalTauMs.round().toString();
-                _bwController.text =
-                    notifier.optimalBwHz.toStringAsFixed(1);
+                _tauController.text = notifier.optimalTauMs.round().toString();
+                _bwController.text = notifier.optimalBwHz.toStringAsFixed(1);
               },
               child: const Text('Reset to Optimal'),
             ),
@@ -1472,6 +1588,7 @@ class _PidCard extends StatefulWidget {
   final String title;
   final PidResult pid;
   final FeedforwardGains? ff;
+  final FeedforwardGains? ffLoaded;
   final _PidMode mode;
   final MechanismConfig? config;
   final ValueChanged<double>? onAllowedErrorChanged;
@@ -1480,6 +1597,7 @@ class _PidCard extends StatefulWidget {
     required this.title,
     required this.pid,
     this.ff,
+    this.ffLoaded,
     this.mode = _PidMode.velocity,
     this.config,
     this.onAllowedErrorChanged,
@@ -1508,10 +1626,9 @@ class _PidCardState extends State<_PidCard> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.pid.allowedClosedLoopError !=
         widget.pid.allowedClosedLoopError) {
-      _allowedErrorCtrl.text =
-          widget.pid.allowedClosedLoopError == 0.0
-              ? '0'
-              : widget.pid.allowedClosedLoopError.toString();
+      _allowedErrorCtrl.text = widget.pid.allowedClosedLoopError == 0.0
+          ? '0'
+          : widget.pid.allowedClosedLoopError.toString();
     }
   }
 
@@ -1531,6 +1648,19 @@ class _PidCardState extends State<_PidCard> {
     }
   }
 
+  String get _kITooltip {
+    final hasRobustLoadedTune =
+        widget.ff != null && widget.ffLoaded != null && widget.pid.kI > 0;
+    if (hasRobustLoadedTune) {
+      return widget.mode == _PidMode.velocity
+          ? 'Loaded and unloaded tests produced different plant/load estimates, so a slow integral term was added to trim the residual disturbance left by blended feedforward. The proportional loop still handles the transient; integral only cleans up the remaining bias.'
+          : 'Loaded and unloaded tests produced different gravity/load estimates, so a slow integral term was added to trim the remaining bias after the PD transient settles. It is intentionally much slower than the main loop to avoid overshoot.';
+    }
+    return widget.mode == _PidMode.velocity
+        ? 'Single-condition velocity tuning leaves kI at zero to avoid windup. Feedforward handles most of the steady-state load and kP corrects small residual error.'
+        : 'Single-condition position tuning leaves kI at zero by default. kP and kD shape the step response while feedforward handles the bulk load/gravity demand.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
@@ -1542,9 +1672,13 @@ class _PidCardState extends State<_PidCard> {
           Row(
             children: [
               Expanded(
-                child: Text(widget.title,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600)),
+                child: Text(
+                  widget.title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
               Tooltip(
                 message: _showExplanation
@@ -1572,22 +1706,34 @@ class _PidCardState extends State<_PidCard> {
             ),
             const SizedBox(height: 6),
           ],
-          _GainRow('kP', widget.pid.kP.toStringAsFixed(6),
-            tooltip: _pidUnitNote),
-          _GainRow('kI', widget.pid.kI.toStringAsFixed(6)),
+          _GainRow(
+            'kP',
+            widget.pid.kP.toStringAsFixed(6),
+            tooltip: _pidUnitNote,
+          ),
+          _GainRow('kI', widget.pid.kI.toStringAsFixed(6), tooltip: _kITooltip),
           _GainRow('kD', widget.pid.kD.toStringAsFixed(6)),
           if (widget.mode == _PidMode.position && widget.pid.dFilter > 0)
-            _GainRow('D Filter', widget.pid.dFilter.toStringAsFixed(4),
-              tooltip: 'EMA low-pass on derivative (0=off, higher=more smoothing)'),
+            _GainRow(
+              'D Filter',
+              widget.pid.dFilter.toStringAsFixed(4),
+              tooltip:
+                  'EMA low-pass on derivative (0=off, higher=more smoothing)',
+            ),
           if (widget.pid.iZone > 0)
-            _GainRow('I-Zone', widget.pid.iZone.toStringAsFixed(4),
-              tooltip: 'Limits integral accumulation to prevent windup. '
-                  'Integral only accumulates when error is within this zone.'),
+            _GainRow(
+              'I-Zone',
+              widget.pid.iZone.toStringAsFixed(4),
+              tooltip:
+                  'Limits integral accumulation to prevent windup. '
+                  'Integral only accumulates when error is within this zone.',
+            ),
           const SizedBox(height: 8),
           SizedBox(
             width: 260,
             child: InfoLabel(
-              label: 'Allowed Closed-Loop Error'
+              label:
+                  'Allowed Closed-Loop Error'
                   '${widget.config != null ? ' (${widget.mode == _PidMode.velocity ? widget.config!.velocityUnit : widget.config!.positionUnit})' : ''}',
               child: TextBox(
                 controller: _allowedErrorCtrl,
@@ -1609,12 +1755,14 @@ class _PidCardState extends State<_PidCard> {
             'separately via FeedForwardConfig on the controller.',
             style: TextStyle(
               fontSize: 11,
-              color: FluentTheme.of(context).typography.body?.color
-                  ?.withValues(alpha: 0.6),
+              color: FluentTheme.of(
+                context,
+              ).typography.body?.color?.withValues(alpha: 0.6),
               fontStyle: FontStyle.italic,
             ),
           ),
-          if (_showExplanation && widget.ff != null) ..._buildExplanation(theme),
+          if (_showExplanation && widget.ff != null)
+            ..._buildExplanation(theme),
         ],
       ),
     );
@@ -1624,17 +1772,107 @@ class _PidCardState extends State<_PidCard> {
     final ff = widget.ff!;
     final explainColor = theme.typography.body?.color?.withValues(alpha: 0.8);
     const monoStyle = TextStyle(fontFamily: 'Consolas', fontSize: 12);
-    final captionStyle = TextStyle(fontSize: 12, color: explainColor, height: 1.5);
+    final captionStyle = TextStyle(
+      fontSize: 12,
+      color: explainColor,
+      height: 1.5,
+    );
 
     if (widget.mode == _PidMode.velocity) {
       final tauMs = widget.pid.velocityTimeConstantMs ?? 100.0;
       final tauS = tauMs / 1000.0;
       final isCustomTau = tauMs != 100.0;
+      final hasRobustIntegral = widget.ffLoaded != null && widget.pid.kI > 0;
+      if (hasRobustIntegral) {
+        final ffLoaded = widget.ffLoaded!;
+        final kA = math.min(ff.kA, ffLoaded.kA);
+        final kV = math.max(ff.kV, ffLoaded.kV);
+        final plantTau = kV > 0 ? kA / kV : 0.0;
+        final ti = PidAutoTuner.robustVelocityIntegralTimeSec(
+          closedLoopTauSec: tauS,
+          plantTauSec: plantTau,
+        );
+        final deltaKG = (ffLoaded.kG - ff.kG).abs();
+        return [
+          const Divider(),
+          const SizedBox(height: 8),
+          Text(
+            'How Velocity PID is derived',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: theme.accentColor,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Loaded and unloaded characterization were both present, so the tuner '
+            'builds a robust PI controller. kP is sized from the lighter plant '
+            'so neither condition is over-driven, while kI is made intentionally '
+            'slow to trim the residual blended-load mismatch.',
+            style: captionStyle,
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.accentColor.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'kP = (min(kA_unloaded, kA_loaded) / τ) / V_nominal',
+                  style: monoStyle,
+                ),
+                Text(
+                  '   = (${kA.toStringAsFixed(5)} / ${tauS.toStringAsFixed(3)}) / 12.0',
+                  style: monoStyle,
+                ),
+                Text(
+                  '   = ${widget.pid.kP.toStringAsFixed(6)}',
+                  style: monoStyle,
+                ),
+                const SizedBox(height: 4),
+                Text('Tᵢ = max(12·τ, 30·τ_plant)', style: monoStyle),
+                Text('   = ${ti.toStringAsFixed(3)} s', style: monoStyle),
+                Text('kI = kP / Tᵢ', style: monoStyle),
+                Text(
+                  '   = ${widget.pid.kI.toStringAsFixed(6)}',
+                  style: monoStyle,
+                ),
+                const SizedBox(height: 4),
+                Text('I-Zone = 2·ΔkG / kI', style: monoStyle),
+                Text(
+                  '      = ${widget.pid.iZone.toStringAsFixed(4)}   (ΔkG = ${deltaKG.toStringAsFixed(3)} V)',
+                  style: monoStyle,
+                ),
+                Text('kD = 0', style: monoStyle),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'This integral term is only present because the blended feedforward can '
+            'sit between unloaded and loaded gravity/load demand. The slower '
+            'integral time constant keeps the response from overshooting while '
+            'still pulling out the remaining steady-state error.',
+            style: captionStyle,
+          ),
+        ];
+      }
       return [
         const Divider(),
         const SizedBox(height: 8),
-        Text('How Velocity PID is derived', style: TextStyle(
-          fontSize: 13, fontWeight: FontWeight.w600, color: theme.accentColor)),
+        Text(
+          'How Velocity PID is derived',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: theme.accentColor,
+          ),
+        ),
         const SizedBox(height: 6),
         Text(
           'The motor + mechanism acts like a first-order system:\n'
@@ -1655,8 +1893,14 @@ class _PidCardState extends State<_PidCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('kP = (kA / \u03c4) / V_nominal', style: monoStyle),
-              Text('   = (${ff.kA.toStringAsFixed(5)} / ${tauS.toStringAsFixed(3)}) / 12.0', style: monoStyle),
-              Text('   = ${widget.pid.kP.toStringAsFixed(6)}', style: monoStyle),
+              Text(
+                '   = (${ff.kA.toStringAsFixed(5)} / ${tauS.toStringAsFixed(3)}) / 12.0',
+                style: monoStyle,
+              ),
+              Text(
+                '   = ${widget.pid.kP.toStringAsFixed(6)}',
+                style: monoStyle,
+              ),
               const SizedBox(height: 4),
               Text('kI = 0  (avoids integral windup)', style: monoStyle),
               Text('kD = 0  (not needed for velocity)', style: monoStyle),
@@ -1668,7 +1912,11 @@ class _PidCardState extends State<_PidCard> {
           'kP controls how aggressively the controller corrects velocity '
           'errors. '
           '${isCustomTau ? "You chose \u03c4 = ${tauMs.round()} ms — " : ""}'
-          '${tauMs < 100 ? "faster than default (more aggressive)." : tauMs > 100 ? "slower than default (more conservative)." : ""}'
+          '${tauMs < 100
+              ? "faster than default (more aggressive)."
+              : tauMs > 100
+              ? "slower than default (more conservative)."
+              : ""}'
           ' Feedforward (kS, kV) is now configured separately '
           'via the controller\u2019s FeedForwardConfig and predicts most '
           'of the output, so PID only handles small corrections.',
@@ -1680,11 +1928,108 @@ class _PidCardState extends State<_PidCard> {
       final bwHz = widget.pid.positionBandwidthHz ?? 5.0;
       final omega = 2.0 * 3.14159265 * bwHz;
       final isCustomBw = bwHz != 5.0;
+      final hasRobustIntegral = widget.ffLoaded != null && widget.pid.kI > 0;
+      if (hasRobustIntegral) {
+        final ffLoaded = widget.ffLoaded!;
+        final kA = math.max(ff.kA, ffLoaded.kA);
+        final kV = math.max(ff.kV, ffLoaded.kV);
+        final plantTau = kV > 0 ? kA / kV : 0.0;
+        final ti = PidAutoTuner.robustPositionIntegralTimeSec(
+          omegaRadPerSec: omega,
+          plantTauSec: plantTau,
+        );
+        final deltaKG = (ffLoaded.kG - ff.kG).abs();
+        return [
+          const Divider(),
+          const SizedBox(height: 8),
+          Text(
+            'How Position PID is derived',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: theme.accentColor,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Loaded and unloaded characterization were both present, so the tuner '
+            'builds a robust PID controller. kP and kD are sized from the heavier '
+            'plant for conservative transient behavior, then a slow integral term '
+            'is added only to trim the residual blended-load bias.',
+            style: captionStyle,
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: theme.accentColor.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'kP = (max(kA_unloaded, kA_loaded) · ω²) / V_nominal',
+                  style: monoStyle,
+                ),
+                Text(
+                  '   = (${kA.toStringAsFixed(5)} · ${omega.toStringAsFixed(1)}²) / 12.0',
+                  style: monoStyle,
+                ),
+                Text(
+                  '   = ${widget.pid.kP.toStringAsFixed(6)}',
+                  style: monoStyle,
+                ),
+                const SizedBox(height: 4),
+                Text('kD = (2·ζ·kA·ω − max(kV)) / V_nominal', style: monoStyle),
+                Text(
+                  '   = ${widget.pid.kD.toStringAsFixed(6)}',
+                  style: monoStyle,
+                ),
+                const SizedBox(height: 4),
+                Text('Tᵢ = max(8/ω, 20·τ_plant)', style: monoStyle),
+                Text('   = ${ti.toStringAsFixed(3)} s', style: monoStyle),
+                Text('kI = kP / Tᵢ', style: monoStyle),
+                Text(
+                  '   = ${widget.pid.kI.toStringAsFixed(6)}',
+                  style: monoStyle,
+                ),
+                const SizedBox(height: 4),
+                Text('I-Zone = ΔkG / kI', style: monoStyle),
+                Text(
+                  '      = ${widget.pid.iZone.toStringAsFixed(4)}   (ΔkG = ${deltaKG.toStringAsFixed(3)} V)',
+                  style: monoStyle,
+                ),
+                if (widget.pid.dFilter > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'D Filter = ${widget.pid.dFilter.toStringAsFixed(4)}',
+                    style: monoStyle,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'The PD portion still shapes the step response. Integral is slowed down '
+            'on purpose so it removes the remaining loaded-vs-unloaded bias '
+            'without causing the overshoot and lazy return that a large kI would create.',
+            style: captionStyle,
+          ),
+        ];
+      }
       return [
         const Divider(),
         const SizedBox(height: 8),
-        Text('How Position PID is derived', style: TextStyle(
-          fontSize: 13, fontWeight: FontWeight.w600, color: theme.accentColor)),
+        Text(
+          'How Position PID is derived',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: theme.accentColor,
+          ),
+        ),
         const SizedBox(height: 6),
         Text(
           'The motor + mechanism from voltage to position is a '
@@ -1706,19 +2051,43 @@ class _PidCardState extends State<_PidCard> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('kP = (kA \u00b7 \u03c9\u00b2) / V_nominal', style: monoStyle),
-              Text('   = (${ff.kA.toStringAsFixed(5)} \u00b7 ${omega.toStringAsFixed(1)}\u00b2) / 12.0', style: monoStyle),
-              Text('   = ${widget.pid.kP.toStringAsFixed(6)}', style: monoStyle),
+              Text(
+                'kP = (kA \u00b7 \u03c9\u00b2) / V_nominal',
+                style: monoStyle,
+              ),
+              Text(
+                '   = (${ff.kA.toStringAsFixed(5)} \u00b7 ${omega.toStringAsFixed(1)}\u00b2) / 12.0',
+                style: monoStyle,
+              ),
+              Text(
+                '   = ${widget.pid.kP.toStringAsFixed(6)}',
+                style: monoStyle,
+              ),
               const SizedBox(height: 4),
-              Text('kD = (2\u00b7kA\u00b7\u03c9 \u2212 kV) / V_nominal', style: monoStyle),
-              Text('   = (2\u00b7${ff.kA.toStringAsFixed(5)}\u00b7${omega.toStringAsFixed(1)} \u2212 ${ff.kV.toStringAsFixed(5)}) / 12.0', style: monoStyle),
-              Text('   = ${widget.pid.kD.toStringAsFixed(6)}  ${widget.pid.kD == 0 ? "(clamped \u2265 0)" : ""}', style: monoStyle),
+              Text(
+                'kD = (2\u00b7kA\u00b7\u03c9 \u2212 kV) / V_nominal',
+                style: monoStyle,
+              ),
+              Text(
+                '   = (2\u00b7${ff.kA.toStringAsFixed(5)}\u00b7${omega.toStringAsFixed(1)} \u2212 ${ff.kV.toStringAsFixed(5)}) / 12.0',
+                style: monoStyle,
+              ),
+              Text(
+                '   = ${widget.pid.kD.toStringAsFixed(6)}  ${widget.pid.kD == 0 ? "(clamped \u2265 0)" : ""}',
+                style: monoStyle,
+              ),
               const SizedBox(height: 4),
               Text('kI = 0  (not needed for position)', style: monoStyle),
               if (widget.pid.dFilter > 0) ...[
                 const SizedBox(height: 4),
-                Text('D Filter = 1 / (1 + 2\u03c0 \u00b7 8 \u00b7 BW \u00b7 T\u209b)', style: monoStyle),
-                Text('        = ${widget.pid.dFilter.toStringAsFixed(4)}  (EMA \u03b1 on derivative)', style: monoStyle),
+                Text(
+                  'D Filter = 1 / (1 + 2\u03c0 \u00b7 8 \u00b7 BW \u00b7 T\u209b)',
+                  style: monoStyle,
+                ),
+                Text(
+                  '        = ${widget.pid.dFilter.toStringAsFixed(4)}  (EMA \u03b1 on derivative)',
+                  style: monoStyle,
+                ),
               ],
             ],
           ),
@@ -1730,7 +2099,11 @@ class _PidCardState extends State<_PidCard> {
           'The "2\u00b7kA\u00b7\u03c9 \u2212 kV" subtracts the system\u2019s '
           'natural damping (kV) so we don\u2019t over-damp.'
           '${isCustomBw ? " Bandwidth set to ${bwHz.toStringAsFixed(1)} Hz" : ""}'
-          '${isCustomBw && bwHz > 5 ? " (faster than default)." : isCustomBw && bwHz < 5 ? " (slower than default)." : ""}',
+          '${isCustomBw && bwHz > 5
+              ? " (faster than default)."
+              : isCustomBw && bwHz < 5
+              ? " (slower than default)."
+              : ""}',
           style: captionStyle,
         ),
       ];
@@ -1821,9 +2194,13 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
           Row(
             children: [
               Expanded(
-                child: Text(chartTitle,
-                    style: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600)),
+                child: Text(
+                  chartTitle,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
               WalkthroughToggle(
                 isActive: _walkthroughActive,
@@ -1837,20 +2214,33 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
             padding: const EdgeInsets.only(top: 2, bottom: 2),
             child: Row(
               children: [
-                Container(width: 8, height: 8,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF4488DD), shape: BoxShape.circle)),
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF4488DD),
+                    shape: BoxShape.circle,
+                  ),
+                ),
                 const SizedBox(width: 4),
                 const Text('Quasistatic', style: TextStyle(fontSize: 9)),
                 const SizedBox(width: 10),
-                Container(width: 8, height: 8,
-                    decoration: BoxDecoration(
-                      color: Colors.orange, shape: BoxShape.circle)),
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    shape: BoxShape.circle,
+                  ),
+                ),
                 const SizedBox(width: 4),
                 const Text('Dynamic', style: TextStyle(fontSize: 9)),
                 const SizedBox(width: 10),
-                Container(width: 12, height: 2,
-                    color: Colors.successPrimaryColor),
+                Container(
+                  width: 12,
+                  height: 2,
+                  color: Colors.successPrimaryColor,
+                ),
                 const SizedBox(width: 4),
                 const Text('Perfect fit', style: TextStyle(fontSize: 9)),
               ],
@@ -1865,8 +2255,7 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((spot) {
                         if (spot.barIndex <= 1) {
-                          final label = spot.barIndex == 0
-                              ? 'QS' : 'Dyn';
+                          final label = spot.barIndex == 0 ? 'QS' : 'Dyn';
                           return LineTooltipItem(
                             '$label — Pred: ${spot.x.toStringAsFixed(2)} V\n'
                             'Actual: ${spot.y.toStringAsFixed(2)} V',
@@ -1890,10 +2279,10 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
                         show: true,
                         getDotPainter: (spot, data, barData, index) =>
                             FlDotCirclePainter(
-                          radius: 1.5,
-                          color: const Color(0xFF4488DD),
-                          strokeWidth: 0,
-                        ),
+                              radius: 1.5,
+                              color: const Color(0xFF4488DD),
+                              strokeWidth: 0,
+                            ),
                       ),
                     ),
                   // Dynamic scatter (orange)
@@ -1907,18 +2296,15 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
                         show: true,
                         getDotPainter: (spot, data, barData, index) =>
                             FlDotCirclePainter(
-                          radius: 1.5,
-                          color: Colors.orange,
-                          strokeWidth: 0,
-                        ),
+                              radius: 1.5,
+                              color: Colors.orange,
+                              strokeWidth: 0,
+                            ),
                       ),
                     ),
                   // Perfect fit reference line (y = x)
                   LineChartBarData(
-                    spots: [
-                      FlSpot(lineMin, lineMin),
-                      FlSpot(lineMax, lineMax),
-                    ],
+                    spots: [FlSpot(lineMin, lineMin), FlSpot(lineMax, lineMax)],
                     isCurved: false,
                     color: Colors.successPrimaryColor,
                     barWidth: 2,
@@ -1928,13 +2314,16 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
                 ],
                 titlesData: FlTitlesData(
                   topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   bottomTitles: AxisTitles(
                     axisNameWidget: Text(
-                        hasGravity ? 'Predicted Voltage (V)' : 'Velocity',
-                        style: const TextStyle(fontSize: 10)),
+                      hasGravity ? 'Predicted Voltage (V)' : 'Velocity',
+                      style: const TextStyle(fontSize: 10),
+                    ),
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 22,
@@ -1945,8 +2334,10 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
                     ),
                   ),
                   leftTitles: AxisTitles(
-                    axisNameWidget: const Text('Actual Voltage (V)',
-                        style: TextStyle(fontSize: 10)),
+                    axisNameWidget: const Text(
+                      'Actual Voltage (V)',
+                      style: TextStyle(fontSize: 10),
+                    ),
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 40,
@@ -1957,8 +2348,7 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
                     ),
                   ),
                 ),
-                gridData:
-                    const FlGridData(show: true, drawVerticalLine: false),
+                gridData: const FlGridData(show: true, drawVerticalLine: false),
                 borderData: FlBorderData(show: false),
               ),
             ),
@@ -1990,9 +2380,9 @@ class _ModelFitPlotState extends State<_ModelFitPlot> {
   }) {
     final gravityDesc = mechanismType == MechanismType.arm
         ? 'kG\u00b7cos(\u03b8) — the torque needed to hold the arm '
-            'against gravity varies with angle'
+              'against gravity varies with angle'
         : 'kG — a constant voltage offset to hold the elevator '
-            'against gravity';
+              'against gravity';
 
     return [
       const WalkthroughStep(
@@ -2074,13 +2464,15 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
           .map((dp) => FlSpot(dp.timestamp, dp.velocity))
           .toList();
       if (spots.isEmpty) continue;
-      lineBars.add(LineChartBarData(
-        spots: spots,
-        isCurved: false,
-        color: _runColors[i % _runColors.length],
-        barWidth: 1.5,
-        dotData: const FlDotData(show: false),
-      ));
+      lineBars.add(
+        LineChartBarData(
+          spots: spots,
+          isCurved: false,
+          color: _runColors[i % _runColors.length],
+          barWidth: 1.5,
+          dotData: const FlDotData(show: false),
+        ),
+      );
     }
 
     if (lineBars.isEmpty) {
@@ -2094,8 +2486,10 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
           Row(
             children: [
               const Expanded(
-                child: Text('Step Response (Dynamic)',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                child: Text(
+                  'Step Response (Dynamic)',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
               ),
               WalkthroughToggle(
                 isActive: _walkthroughActive,
@@ -2124,13 +2518,17 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
                 ),
                 lineBarsData: lineBars,
                 titlesData: FlTitlesData(
-                  topTitles:
-                      const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles:
-                      const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                   bottomTitles: AxisTitles(
-                    axisNameWidget: const Text('Time (s)',
-                        style: TextStyle(fontSize: 10)),
+                    axisNameWidget: const Text(
+                      'Time (s)',
+                      style: TextStyle(fontSize: 10),
+                    ),
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 22,
@@ -2141,8 +2539,10 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
                     ),
                   ),
                   leftTitles: AxisTitles(
-                    axisNameWidget: const Text('Velocity',
-                        style: TextStyle(fontSize: 10)),
+                    axisNameWidget: const Text(
+                      'Velocity',
+                      style: TextStyle(fontSize: 10),
+                    ),
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 44,
@@ -2170,4 +2570,3 @@ class _StepResponsePlotState extends State<_StepResponsePlot> {
     );
   }
 }
-

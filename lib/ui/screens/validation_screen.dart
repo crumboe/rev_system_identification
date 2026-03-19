@@ -39,7 +39,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   ValidationRunner? _runner;
   bool _isRunning = false;
   bool _useStoredControllerGains = false;
-  String _statusMessage = 'Ready — compute and write gains from the Results '
+  String _statusMessage =
+      'Ready — compute and write gains from the Results '
       'page before running a validation test.';
 
   double _currentPosition = 0.0;
@@ -71,6 +72,10 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   // Simulated load mass in kg for arm/elevator
   double? _simulatedLoadMassKg;
 
+  // Validation-only integral overrides. Null means "use the auto-tuned value".
+  double? _velocityIntegralOverride;
+  double? _positionIntegralOverride;
+
   // MAXMotion configuration controllers
   late TextEditingController _mmCruiseCtrl;
   late TextEditingController _mmAccelCtrl;
@@ -87,20 +92,25 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       config.type,
       imperial: config.useImperialUnits,
     );
-    _velSpCtrl =
-        TextEditingController(text: defaults.velocitySetpoint.toString());
-    _posSpCtrl =
-        TextEditingController(text: defaults.positionSetpoint.toString());
+    _velSpCtrl = TextEditingController(
+      text: defaults.velocitySetpoint.toString(),
+    );
+    _posSpCtrl = TextEditingController(
+      text: defaults.positionSetpoint.toString(),
+    );
 
     // Sensible MAXMotion defaults based on mechanism type.
     _mmCruiseCtrl = TextEditingController(
-        text: (defaults.velocitySetpoint * 0.5).toStringAsFixed(1));
+      text: (defaults.velocitySetpoint * 0.5).toStringAsFixed(1),
+    );
     _mmAccelCtrl = TextEditingController(
-        text: (defaults.velocitySetpoint * 2.0).toStringAsFixed(1));
+      text: (defaults.velocitySetpoint * 2.0).toStringAsFixed(1),
+    );
     _mmJerkCtrl = TextEditingController(text: '0');
     _mmErrorCtrl = TextEditingController(text: '0.05');
     _clErrorCtrl = TextEditingController(text: '0');
     _loadCtrl = TextEditingController(text: '0');
+    _clErrorCtrl.addListener(_syncClErrorToProviders);
 
     _positionPollTimer = Timer.periodic(
       const Duration(milliseconds: 100),
@@ -117,6 +127,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _mmAccelCtrl.dispose();
     _mmJerkCtrl.dispose();
     _mmErrorCtrl.dispose();
+    _clErrorCtrl.removeListener(_syncClErrorToProviders);
     _clErrorCtrl.dispose();
     _loadCtrl.dispose();
     _mmFlyoutController.dispose();
@@ -130,7 +141,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     final config = ref.read(mechanismConfigProvider);
     final double rawPos;
     if (config.feedbackSensor == FeedbackSensor.absoluteEncoder) {
-      rawPos = device.connection.lastStatus5?.absoluteEncoderPosition ??
+      rawPos =
+          device.connection.lastStatus5?.absoluteEncoderPosition ??
           (device.connection.lastStatus2?.positionRotations ?? 0.0);
     } else {
       rawPos = device.connection.lastStatus2?.positionRotations ?? 0.0;
@@ -154,14 +166,20 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     final hasGains = ff != null && velPid != null;
     final hasPositionGains = ff != null && posPid != null;
     final usingStored = _useStoredControllerGains;
-    final canRunVelocity = device != null &&
+    final canRunVelocity =
+        device != null &&
         device.isConnected &&
         !_isRunning &&
-      (usingStored || hasGains);
-    final canRunPosition = device != null &&
+        (usingStored || hasGains);
+    final canRunPosition =
+        device != null &&
         device.isConnected &&
         !_isRunning &&
-      (usingStored || hasPositionGains);
+        (usingStored || hasPositionGains);
+    final canRunDisturbance =
+        canRunPosition &&
+        (config.type == MechanismType.arm ||
+            config.type == MechanismType.elevator);
     final canRunMAXMotion = canRunPosition;
 
     // Unit labels
@@ -178,10 +196,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
             const SizedBox(width: 5),
             SizedBox(
               width: 170,
-              child: TextBox(
-                controller: _clErrorCtrl,
-                enabled: !_isRunning,
-              ),
+              child: TextBox(controller: _clErrorCtrl, enabled: !_isRunning),
             ),
           ],
         ),
@@ -198,10 +213,10 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                 color: _isRunning
                     ? Colors.warningPrimaryColor.withValues(alpha: 0.10)
                     : _error != null
-                        ? Colors.red.withValues(alpha: 0.10)
-                        : FluentTheme.of(context)
-                            .resources
-                            .subtleFillColorSecondary,
+                    ? Colors.red.withValues(alpha: 0.10)
+                    : FluentTheme.of(
+                        context,
+                      ).resources.subtleFillColorSecondary,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Row(
@@ -210,8 +225,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                     _isRunning
                         ? FluentIcons.progress_loop_outer
                         : _error != null
-                            ? FluentIcons.error
-                            : FluentIcons.info,
+                        ? FluentIcons.error
+                        : FluentIcons.info,
                     size: 14,
                   ),
                   const SizedBox(width: 8),
@@ -262,7 +277,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                 const SizedBox(width: 12),
                 FilledButton(
                   onPressed: canRunVelocity
-                      ? () => _runTest(ValidationMode.velocity, config, device, ff: ff, velPid: velPid, posPid: posPid)
+                      ? () => _runTest(
+                          ValidationMode.velocity,
+                          config,
+                          device,
+                          ff: ff,
+                          velPid: velPid,
+                          posPid: posPid,
+                        )
                       : null,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -270,8 +292,11 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                       if (_isRunning)
                         const Padding(
                           padding: EdgeInsets.only(right: 6),
-                          child:
-                              SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2)),
+                          child: SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: ProgressRing(strokeWidth: 2),
+                          ),
                         ),
                       const Text('Run Velocity Test'),
                     ],
@@ -296,8 +321,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   const SizedBox(width: 12),
                   FilledButton(
                     onPressed: canRunPosition
-                        ? () =>
-                            _runTest(ValidationMode.position, config, device, ff: ff, velPid: velPid, posPid: posPid)
+                        ? () => _runTest(
+                            ValidationMode.position,
+                            config,
+                            device,
+                            ff: ff,
+                            velPid: velPid,
+                            posPid: posPid,
+                          )
                         : null,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -306,25 +337,35 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                           const Padding(
                             padding: EdgeInsets.only(right: 6),
                             child: SizedBox(
-                                width: 12,
-                                height: 12,
-                                child: ProgressRing(strokeWidth: 2)),
+                              width: 12,
+                              height: 12,
+                              child: ProgressRing(strokeWidth: 2),
+                            ),
                           ),
                         const Text('Run Position Test'),
                       ],
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Button(
+                    onPressed: canRunDisturbance
+                        ? () => _runTest(
+                            ValidationMode.disturbancePosition,
+                            config,
+                            device,
+                            ff: ff,
+                            velPid: velPid,
+                            posPid: posPid,
+                          )
+                        : null,
+                    child: const Text('Run Disturbance Test'),
+                  ),
                 ],
 
                 if (_isRunning) ...[
                   const SizedBox(width: 16),
-                  Button(
-                    onPressed: _abort,
-                    child: const Text('Abort'),
-                  ),
+                  Button(onPressed: _abort, child: const Text('Abort')),
                 ],
-
-                
 
                 // MAXMotion run button + configuration flyout
                 const SizedBox(width: 24),
@@ -338,7 +379,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                               device!,
                               ff: ff,
                               velPid: velPid,
-                              posPid: posPid)
+                              posPid: posPid,
+                            )
                           : null,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -350,9 +392,10 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                             const Padding(
                               padding: EdgeInsets.only(right: 6),
                               child: SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                  child: ProgressRing(strokeWidth: 2)),
+                                width: 12,
+                                height: 12,
+                                child: ProgressRing(strokeWidth: 2),
+                              ),
                             ),
                           const Text('Run MAXMotion Test'),
                         ],
@@ -366,7 +409,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                             ? null
                             : () {
                                 _mmFlyoutController.showFlyout(
-                                  placementMode: FlyoutPlacementMode.rightCenter,
+                                  placementMode:
+                                      FlyoutPlacementMode.rightCenter,
                                   barrierDismissible: true,
                                   dismissOnPointerMoveAway: false,
                                   builder: (context) {
@@ -374,20 +418,28 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                                       builder: (context, setFlyoutState) {
                                         return FlyoutContent(
                                           child: ConstrainedBox(
-                                            constraints: const BoxConstraints(maxWidth: 320),
+                                            constraints: const BoxConstraints(
+                                              maxWidth: 320,
+                                            ),
                                             child: Padding(
                                               padding: const EdgeInsets.all(16),
                                               child: Column(
                                                 mainAxisSize: MainAxisSize.min,
-                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
                                                 children: [
-                                                  const Text('MAXMotion Profile',
-                                                      style: TextStyle(
-                                                          fontWeight: FontWeight.w600,
-                                                          fontSize: 14)),
+                                                  const Text(
+                                                    'MAXMotion Profile',
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
                                                   const SizedBox(height: 12),
                                                   InfoLabel(
-                                                    label: 'Cruise velocity ($velUnit)',
+                                                    label:
+                                                        'Cruise velocity ($velUnit)',
                                                     child: TextBox(
                                                       controller: _mmCruiseCtrl,
                                                       placeholder: velUnit,
@@ -395,7 +447,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                                                   ),
                                                   const SizedBox(height: 8),
                                                   InfoLabel(
-                                                    label: 'Max acceleration ($velUnit/s)',
+                                                    label:
+                                                        'Max acceleration ($velUnit/s)',
                                                     child: TextBox(
                                                       controller: _mmAccelCtrl,
                                                       placeholder: '$velUnit/s',
@@ -403,15 +456,18 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                                                   ),
                                                   const SizedBox(height: 8),
                                                   InfoLabel(
-                                                    label: 'Max jerk ($velUnit/s\u00b2)',
+                                                    label:
+                                                        'Max jerk ($velUnit/s\u00b2)',
                                                     child: TextBox(
                                                       controller: _mmJerkCtrl,
-                                                      placeholder: '0 = trapezoidal',
+                                                      placeholder:
+                                                          '0 = trapezoidal',
                                                     ),
                                                   ),
                                                   const SizedBox(height: 8),
                                                   InfoLabel(
-                                                    label: 'Allowed error ($posUnit)',
+                                                    label:
+                                                        'Allowed error ($posUnit)',
                                                     child: TextBox(
                                                       controller: _mmErrorCtrl,
                                                       placeholder: posUnit,
@@ -426,16 +482,24 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                                                       items: const [
                                                         ComboBoxItem(
                                                           value: 0,
-                                                          child: Text('Trapezoidal'),
+                                                          child: Text(
+                                                            'Trapezoidal',
+                                                          ),
                                                         ),
                                                         ComboBoxItem(
                                                           value: 1,
-                                                          child: Text('S-Curve'),
+                                                          child: Text(
+                                                            'S-Curve',
+                                                          ),
                                                         ),
                                                       ],
                                                       onChanged: (v) {
                                                         if (v != null) {
-                                                          setState(() => _mmPositionMode = v);
+                                                          setState(
+                                                            () =>
+                                                                _mmPositionMode =
+                                                                    v,
+                                                          );
                                                           setFlyoutState(() {});
                                                         }
                                                       },
@@ -479,23 +543,29 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                         value: _simulatedLoadMassKg,
                         onChanged: _isRunning
                             ? null
-                            : (v) {
-                                setState(() => _simulatedLoadMassKg = v);
-                                final conn = device.connection
-                                    as SimulatedSparkConnection;
-                                conn.physics.loadTorqueVolts =
-                                    computeLoadTorqueVolts(
-                                  loadMassKg: v ?? 0.0,
-                                  config: config,
-                                  physics: conn.physics,
-                                );
-                              },
+                            : (v) => _setSimulatedLoadMassKg(
+                                device,
+                                config,
+                                v ?? 0.0,
+                              ),
                         smallChange: 0.1,
                         min: 0,
                         max: 100,
                         clearButton: false,
                         placeholder: '0',
                       ),
+                    ),
+                    const SizedBox(width: 8),
+                    Button(
+                      onPressed: () =>
+                          _adjustSimulatedLoadMassKg(device, config, -0.5),
+                      child: const Text('-0.5 kg'),
+                    ),
+                    const SizedBox(width: 6),
+                    Button(
+                      onPressed: () =>
+                          _adjustSimulatedLoadMassKg(device, config, 0.5),
+                      child: const Text('+0.5 kg'),
                     ),
                     if (_simulatedLoadMassKg != null &&
                         _simulatedLoadMassKg! > 0)
@@ -517,8 +587,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                           placeholder: '0',
                           onChanged: (val) {
                             final load = double.tryParse(val) ?? 0.0;
-                            final conn = device.connection
-                                as SimulatedSparkConnection;
+                            final conn =
+                                device.connection as SimulatedSparkConnection;
                             conn.physics.loadTorqueVolts = load;
                           },
                         ),
@@ -535,193 +605,209 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                 children: [
                   Expanded(
                     child: Row(
-                children: [
-                  // Charts
-                  Expanded(
-                    flex: 3,
-                    child: Column(
                       children: [
-                        // Top row: velocity + voltage
+                        // Charts
                         Expanded(
-                          child: Row(
+                          flex: 3,
+                          child: Column(
                             children: [
+                              // Top row: velocity + voltage
                               Expanded(
-                                child: _ValidationLiveChart(
-                                  title: 'Velocity',
-                                  data: _liveData,
-                                  setpoints: _liveSetpoints,
-                                  yExtractor: (dp) => dp.velocity,
-                                  showSetpoint:
-                                      _result?.mode == ValidationMode.velocity ||
-                                          (_isRunning &&
-                                              _lastMode ==
-                                                  ValidationMode.velocity),
-                                  yLabel: velUnit,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: _ValidationLiveChart(
+                                        title: 'Velocity',
+                                        data: _liveData,
+                                        setpoints: _liveSetpoints,
+                                        yExtractor: (dp) => dp.velocity,
+                                        showSetpoint:
+                                            _result?.mode ==
+                                                ValidationMode.velocity ||
+                                            (_isRunning &&
+                                                _lastMode ==
+                                                    ValidationMode.velocity),
+                                        yLabel: velUnit,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: _ValidationLiveChart(
+                                        title: 'Voltage',
+                                        data: _liveData,
+                                        setpoints: const [],
+                                        yExtractor: (dp) => dp.voltage,
+                                        showSetpoint: false,
+                                        yLabel: 'V',
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(height: 8),
+                              // Bottom row: position + current
                               Expanded(
-                                child: _ValidationLiveChart(
-                                  title: 'Voltage',
-                                  data: _liveData,
-                                  setpoints: const [],
-                                  yExtractor: (dp) => dp.voltage,
-                                  showSetpoint: false,
-                                  yLabel: 'V',
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: _ValidationLiveChart(
+                                        title: 'Position',
+                                        data: _liveData,
+                                        setpoints: _liveSetpoints,
+                                        yExtractor: (dp) => dp.position,
+                                        showSetpoint:
+                                            _result?.mode ==
+                                                ValidationMode.position ||
+                                            _result?.mode ==
+                                                ValidationMode
+                                                    .disturbancePosition ||
+                                            _result?.mode ==
+                                                ValidationMode
+                                                    .maxMotionPosition ||
+                                            (_isRunning &&
+                                                (_lastMode ==
+                                                        ValidationMode
+                                                            .position ||
+                                                    _lastMode ==
+                                                        ValidationMode
+                                                            .disturbancePosition ||
+                                                    _lastMode ==
+                                                        ValidationMode
+                                                            .maxMotionPosition)),
+                                        yLabel: posUnit,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: _ValidationLiveChart(
+                                        title: 'Current',
+                                        data: _liveData,
+                                        setpoints: const [],
+                                        yExtractor: (dp) => dp.current,
+                                        showSetpoint: false,
+                                        yLabel: 'A',
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        // Bottom row: position + current
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: _ValidationLiveChart(
-                                  title: 'Position',
-                                  data: _liveData,
-                                  setpoints: _liveSetpoints,
-                                  yExtractor: (dp) => dp.position,
-                                  showSetpoint:
-                                      _result?.mode == ValidationMode.position ||
-                                          _result?.mode ==
-                                              ValidationMode.maxMotionPosition ||
-                                          (_isRunning &&
-                                              (_lastMode ==
-                                                      ValidationMode.position ||
-                                                  _lastMode ==
-                                                      ValidationMode
-                                                          .maxMotionPosition)),
-                                  yLabel: posUnit,
+
+                        // Mechanism visual panel
+                        if (config.type == MechanismType.arm) ...[
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 260,
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: ArmVisual(
+                                    currentAngleDeg: _currentPosition,
+                                    forwardLimitDeg: config.forwardSoftLimit,
+                                    reverseLimitDeg: config.reverseSoftLimit,
+                                    isDraggable:
+                                        device != null &&
+                                        device.isSimulated &&
+                                        !_isRunning,
+                                    onAngleChanged: (deg) =>
+                                        _onDragPosition(device, config, deg),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _ValidationLiveChart(
-                                  title: 'Current',
-                                  data: _liveData,
-                                  setpoints: const [],
-                                  yExtractor: (dp) => dp.current,
-                                  showSetpoint: false,
-                                  yLabel: 'A',
-                                ),
-                              ),
-                            ],
+                                if (device != null && device.isConnected) ...[
+                                  const SizedBox(height: 4),
+                                  SizedBox(
+                                    height: 190,
+                                    child: JogPanel(
+                                      device: device,
+                                      config: config,
+                                      enabled: !_isRunning,
+                                      onPositionChanged: (pos) => setState(
+                                        () => _currentPosition = pos,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
-                        ),
+                        ],
+                        if (config.type == MechanismType.elevator) ...[
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 260,
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: ElevatorVisual(
+                                    currentPosition: _currentPosition,
+                                    forwardLimit: config.forwardSoftLimit,
+                                    reverseLimit: config.reverseSoftLimit,
+                                    unitLabel: config.useImperialUnits
+                                        ? 'in'
+                                        : 'm',
+                                    isDraggable:
+                                        device != null &&
+                                        device.isSimulated &&
+                                        !_isRunning,
+                                    onPositionChanged: (pos) =>
+                                        _onDragPosition(device, config, pos),
+                                  ),
+                                ),
+                                if (device != null && device.isConnected) ...[
+                                  const SizedBox(height: 4),
+                                  SizedBox(
+                                    height: 190,
+                                    child: JogPanel(
+                                      device: device,
+                                      config: config,
+                                      enabled: !_isRunning,
+                                      onPositionChanged: (pos) => setState(
+                                        () => _currentPosition = pos,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                        if ((config.type == MechanismType.flywheel ||
+                                config.type == MechanismType.simple) &&
+                            device != null &&
+                            device.isConnected) ...[
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            width: 260,
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: FlywheelVisual(
+                                    currentRotations: _currentPosition,
+                                    isDraggable:
+                                        device.isSimulated && !_isRunning,
+                                    onRotationChanged: (rot) =>
+                                        _onDragPosition(device, config, rot),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  height: 190,
+                                  child: JogPanel(
+                                    device: device,
+                                    config: config,
+                                    enabled: !_isRunning,
+                                    onPositionChanged: (pos) =>
+                                        setState(() => _currentPosition = pos),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                  ),
-
-                  // Mechanism visual panel
-                  if (config.type == MechanismType.arm) ...[
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 260,
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: ArmVisual(
-                              currentAngleDeg: _currentPosition,
-                              forwardLimitDeg: config.forwardSoftLimit,
-                              reverseLimitDeg: config.reverseSoftLimit,
-                              isDraggable: device != null &&
-                                  device.isSimulated &&
-                                  !_isRunning,
-                              onAngleChanged: (deg) =>
-                                  _onDragPosition(device, config, deg),
-                            ),
-                          ),
-                          if (device != null && device.isConnected) ...[
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              height: 190,
-                              child: JogPanel(
-                                device: device,
-                                config: config,
-                                enabled: !_isRunning,
-                                onPositionChanged: (pos) =>
-                                    setState(() => _currentPosition = pos),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (config.type == MechanismType.elevator) ...[
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 260,
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: ElevatorVisual(
-                              currentPosition: _currentPosition,
-                              forwardLimit: config.forwardSoftLimit,
-                              reverseLimit: config.reverseSoftLimit,
-                              unitLabel:
-                                  config.useImperialUnits ? 'in' : 'm',
-                              isDraggable: device != null &&
-                                  device.isSimulated &&
-                                  !_isRunning,
-                              onPositionChanged: (pos) =>
-                                  _onDragPosition(device, config, pos),
-                            ),
-                          ),
-                          if (device != null && device.isConnected) ...[
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              height: 190,
-                              child: JogPanel(
-                                device: device,
-                                config: config,
-                                enabled: !_isRunning,
-                                onPositionChanged: (pos) =>
-                                    setState(() => _currentPosition = pos),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                  if ((config.type == MechanismType.flywheel ||
-                          config.type == MechanismType.simple) &&
-                      device != null &&
-                      device.isConnected) ...[
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 260,
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: FlywheelVisual(
-                              currentRotations: _currentPosition,
-                              isDraggable: device.isSimulated && !_isRunning,
-                              onRotationChanged: (rot) =>
-                                  _onDragPosition(device, config, rot),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          SizedBox(
-                            height: 190,
-                            child: JogPanel(
-                              device: device,
-                              config: config,
-                              enabled: !_isRunning,
-                              onPositionChanged: (pos) =>
-                                  setState(() => _currentPosition = pos),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
                   ),
 
                   // Metrics strip (inside Expanded so it doesn't shrink charts)
@@ -729,32 +815,55 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                     const SizedBox(height: 8),
                     _MetricsStrip(
                       result: _result!,
+                      velocityPid: velPid,
+                      positionPid: posPid,
+                      velocityIntegralOverride: _velocityIntegralOverride,
+                      positionIntegralOverride: _positionIntegralOverride,
+                      onVelocityIntegralOverrideChanged: (v) => setState(() {
+                        final tuned = velPid?.kI;
+                        _velocityIntegralOverride =
+                            tuned == null ||
+                                v == null ||
+                                (v - tuned).abs() < 1e-12
+                            ? null
+                            : v;
+                      }),
+                      onPositionIntegralOverrideChanged: (v) => setState(() {
+                        final tuned = posPid?.kI;
+                        _positionIntegralOverride =
+                            tuned == null ||
+                                v == null ||
+                                (v - tuned).abs() < 1e-12
+                            ? null
+                            : v;
+                      }),
                       onApplyAndRetest: _applyTuningAndRetest,
                     ),
                     const SizedBox(height: 4),
                     // Response diagnostics — fix-it bars
                     if (_diagnostics.isNotEmpty)
-                      ..._diagnostics.map((d) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: InfoBar(
-                              title: Text(d.description),
-                              content: Text(d.remedy),
-                              severity: d.type == DiagnosticType.oscillation
-                                  ? InfoBarSeverity.error
-                                  : d.type == DiagnosticType.largeOvershoot
-                                      ? InfoBarSeverity.warning
-                                      : d.type == DiagnosticType.noisyResponse
-                                          ? InfoBarSeverity.warning
-                                          : InfoBarSeverity.info,
-                              action: FilledButton(
-                                child: Text(d.title),
-                                onPressed: () => _applyDiagnosticFix(d),
-                              ),
-                              isLong: true,
+                      ..._diagnostics.map(
+                        (d) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: InfoBar(
+                            title: Text(d.description),
+                            content: Text(d.remedy),
+                            severity: d.type == DiagnosticType.oscillation
+                                ? InfoBarSeverity.error
+                                : d.type == DiagnosticType.largeOvershoot
+                                ? InfoBarSeverity.warning
+                                : d.type == DiagnosticType.noisyResponse
+                                ? InfoBarSeverity.warning
+                                : InfoBarSeverity.info,
+                            action: FilledButton(
+                              child: Text(d.title),
+                              onPressed: () => _applyDiagnosticFix(d),
                             ),
-                          )),
+                            isLong: true,
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 4),
-
                   ],
                 ],
               ),
@@ -771,12 +880,60 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
   ValidationMode? _lastMode;
 
+  static const double _realStartPositionBandwidthScale = 0.7;
+
   /// Apply the user-entered allowed CL error to a PidResult.
   PidResult? _applyClError(PidResult? pid) {
     if (pid == null) return null;
     final val = double.tryParse(_clErrorCtrl.text) ?? 0.0;
     if (val == pid.allowedClosedLoopError) return pid;
     return pid.copyWith(allowedClosedLoopError: val);
+  }
+
+  void _syncClErrorToProviders() {
+    final val = double.tryParse(_clErrorCtrl.text);
+    if (val == null) return;
+
+    final velPid = ref.read(pidResultProvider);
+    if (velPid != null && (velPid.allowedClosedLoopError - val).abs() > 1e-12) {
+      ref.read(pidResultProvider.notifier).state = velPid.copyWith(
+        allowedClosedLoopError: val,
+      );
+    }
+
+    final posPid = ref.read(posPidResultProvider);
+    if (posPid != null && (posPid.allowedClosedLoopError - val).abs() > 1e-12) {
+      ref.read(posPidResultProvider.notifier).state = posPid.copyWith(
+        allowedClosedLoopError: val,
+      );
+    }
+  }
+
+  PidResult? _applyValidationPidOverrides(
+    PidResult? pid, {
+    required bool isVelocity,
+  }) {
+    final adjusted = _applyClError(pid);
+    if (adjusted == null) return null;
+
+    final overrideKi = isVelocity
+        ? _velocityIntegralOverride
+        : _positionIntegralOverride;
+    if (overrideKi == null || (overrideKi - adjusted.kI).abs() < 1e-12) {
+      return adjusted;
+    }
+
+    var iZone = adjusted.iZone;
+    final integralWindowVolts = adjusted.kI.abs() > 1e-12
+        ? adjusted.kI.abs() * adjusted.iZone
+        : 0.0;
+    if (overrideKi.abs() <= 1e-12) {
+      iZone = 0.0;
+    } else if (integralWindowVolts > 0) {
+      iZone = (integralWindowVolts / overrideKi.abs()).clamp(0.0, 100.0);
+    }
+
+    return adjusted.copyWith(kI: overrideKi, iZone: iZone);
   }
 
   Future<void> _runTest(
@@ -787,6 +944,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     PidResult? velPid,
     PidResult? posPid,
   }) async {
+    _applyConservativeRealPositionBandwidthStart(mode, device);
+
     var velSp = double.tryParse(_velSpCtrl.text);
     final posSp = double.tryParse(_posSpCtrl.text);
 
@@ -799,8 +958,11 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       final physics = conn.physics;
       if (physics is FlywheelPhysics && physics.kV > 0) {
         final maxRpm =
-            ((physics.nominalVoltage - physics.kS).clamp(0.0, double.infinity)) /
-                physics.kV;
+            ((physics.nominalVoltage - physics.kS).clamp(
+              0.0,
+              double.infinity,
+            )) /
+            physics.kV;
         if (velSp.abs() > maxRpm) {
           final clamped = maxRpm * 0.95 * velSp.sign;
           simulationLimitMessage =
@@ -816,6 +978,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       return;
     }
     if ((mode == ValidationMode.position ||
+            mode == ValidationMode.disturbancePosition ||
             mode == ValidationMode.maxMotionPosition) &&
         (posSp == null)) {
       setState(() => _error = 'Invalid position setpoint.');
@@ -830,7 +993,10 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       final jerk = double.tryParse(_mmJerkCtrl.text);
       final error = double.tryParse(_mmErrorCtrl.text);
       if (cruise == null || accel == null || cruise <= 0 || accel <= 0) {
-        setState(() => _error = 'Invalid MAXMotion cruise velocity or max acceleration.');
+        setState(
+          () =>
+              _error = 'Invalid MAXMotion cruise velocity or max acceleration.',
+        );
         return;
       }
       maxMotionConfig = MAXMotionConfig(
@@ -860,12 +1026,15 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       _diagnostics = [];
       _statusMessage = mode == ValidationMode.velocity
           ? 'Running velocity step test — setpoint: '
-              '${velSp?.toStringAsFixed(1)} ${config.velocityUnit} ...'
+                '${velSp?.toStringAsFixed(1)} ${config.velocityUnit} ...'
+          : mode == ValidationMode.disturbancePosition
+          ? 'Running disturbance hold test — target: '
+                '${posSp?.toStringAsFixed(2)} ${config.positionUnit} (manual stop) ...'
           : mode == ValidationMode.maxMotionPosition
-              ? 'Running MAXMotion position test — target: '
-                  '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...'
-              : 'Running position step test — setpoint: '
-                  '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...';
+          ? 'Running MAXMotion position test — target: '
+                '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...'
+          : 'Running position step test — setpoint: '
+                '${posSp?.toStringAsFixed(2)} ${config.positionUnit} ...';
       if (simulationLimitMessage != null) {
         _statusMessage = simulationLimitMessage!;
       }
@@ -875,8 +1044,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       device: device,
       mechanismConfig: config,
       feedforwardGains: ff,
-      velocityPidGains: _applyClError(velPid),
-      positionPidGains: _applyClError(posPid),
+      velocityPidGains: _applyValidationPidOverrides(velPid, isVelocity: true),
+      positionPidGains: _applyValidationPidOverrides(posPid, isVelocity: false),
       useStoredControllerGains: _useStoredControllerGains,
     );
 
@@ -884,6 +1053,11 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       late final ValidationResult result;
       if (mode == ValidationMode.velocity) {
         result = await _runner!.runVelocityTest(
+          params: params,
+          onProgress: _onProgress,
+        );
+      } else if (mode == ValidationMode.disturbancePosition) {
+        result = await _runner!.runDisturbancePositionTest(
           params: params,
           onProgress: _onProgress,
         );
@@ -908,7 +1082,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
           _runner = null;
           _statusMessage = result.completed
               ? 'Validation ${mode.name} test completed — '
-                  '${result.data.length} samples.'
+                    '${result.data.length} samples.'
               : 'Test stopped: ${result.error ?? "aborted"}';
           if (result.completed) {
             _diagnostics = ResponseDiagnostics.analyze(
@@ -916,8 +1090,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
               currentTauMs: tuning.velocityTimeConstantMs,
               currentBwHz: tuning.positionBandwidthHz,
               currentDamping: tuning.dampingRatio,
-              currentClosedLoopError:
-                  double.tryParse(_clErrorCtrl.text) ?? 0.0,
+              currentClosedLoopError: double.tryParse(_clErrorCtrl.text) ?? 0.0,
             );
           }
         });
@@ -931,6 +1104,25 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
           _statusMessage = 'Error: $e';
         });
       }
+    }
+  }
+
+  void _applyConservativeRealPositionBandwidthStart(
+    ValidationMode mode,
+    SparkDevice device,
+  ) {
+    if (device.isSimulated || mode == ValidationMode.velocity) return;
+
+    final notifier = ref.read(pidTuningParamsProvider.notifier);
+    if (!notifier.isAtDefaults) return;
+
+    final tuning = ref.read(pidTuningParamsProvider);
+    final conservative = PidTuningParams.clampPositionBw(
+      tuning.positionBandwidthHz * _realStartPositionBandwidthScale,
+    );
+
+    if ((conservative - tuning.positionBandwidthHz).abs() > 1e-9) {
+      notifier.setPositionBandwidth(conservative);
     }
   }
 
@@ -1016,8 +1208,8 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     }
 
     // Store the retuned gains.
-    ref.read(pidResultProvider.notifier).state = velPid;
-    ref.read(posPidResultProvider.notifier).state = posPid;
+    ref.read(pidResultProvider.notifier).state = _applyClError(velPid);
+    ref.read(posPidResultProvider.notifier).state = _applyClError(posPid);
 
     // Rerun the same test with updated gains.
     final device = ref.read(deviceManagerProvider).leader;
@@ -1026,26 +1218,21 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     final mode = _lastMode;
     if (mode == null) return;
 
-    _runTest(
-      mode,
-      config,
-      device,
-      ff: ff,
-      velPid: velPid,
-      posPid: posPid,
-    );
+    _runTest(mode, config, device, ff: ff, velPid: velPid, posPid: posPid);
   }
 
   void _onProgress(ValidationProgress p) {
     if (!mounted) return;
     setState(() {
-      _liveData.add(DataPoint(
-        timestamp: p.elapsedSeconds,
-        voltage: p.voltage,
-        velocity: p.velocity,
-        position: p.position,
-        current: p.current,
-      ));
+      _liveData.add(
+        DataPoint(
+          timestamp: p.elapsedSeconds,
+          voltage: p.voltage,
+          velocity: p.velocity,
+          position: p.position,
+          current: p.current,
+        ),
+      );
       _liveSetpoints.add(p.setpoint);
       _currentPosition = p.position;
     });
@@ -1077,6 +1264,32 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       setState(() => _currentPosition = userUnits);
     }
   }
+
+  void _setSimulatedLoadMassKg(
+    SparkDevice device,
+    MechanismConfig config,
+    double massKg,
+  ) {
+    final clamped = massKg.clamp(0.0, 100.0).toDouble();
+    setState(() {
+      _simulatedLoadMassKg = clamped;
+    });
+    final conn = device.connection as SimulatedSparkConnection;
+    conn.physics.loadTorqueVolts = computeLoadTorqueVolts(
+      loadMassKg: clamped,
+      config: config,
+      physics: conn.physics,
+    );
+  }
+
+  void _adjustSimulatedLoadMassKg(
+    SparkDevice device,
+    MechanismConfig config,
+    double deltaKg,
+  ) {
+    final current = _simulatedLoadMassKg ?? 0.0;
+    _setSimulatedLoadMassKg(device, config, current + deltaKg);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1086,14 +1299,27 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
 class _MetricsStrip extends ConsumerStatefulWidget {
   final ValidationResult result;
+  final PidResult? velocityPid;
+  final PidResult? positionPid;
+  final double? velocityIntegralOverride;
+  final double? positionIntegralOverride;
+  final ValueChanged<double?>? onVelocityIntegralOverrideChanged;
+  final ValueChanged<double?>? onPositionIntegralOverrideChanged;
   final void Function({
     double? velocityTimeConstantMs,
     double? positionBandwidthHz,
     double? dampingRatio,
-  }) onApplyAndRetest;
+  })
+  onApplyAndRetest;
 
   const _MetricsStrip({
     required this.result,
+    this.velocityPid,
+    this.positionPid,
+    this.velocityIntegralOverride,
+    this.positionIntegralOverride,
+    this.onVelocityIntegralOverrideChanged,
+    this.onPositionIntegralOverrideChanged,
     required this.onApplyAndRetest,
   });
 
@@ -1105,12 +1331,14 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
   final _riseTimeFlyout = FlyoutController();
   final _overshootFlyout = FlyoutController();
   final _ssErrorFlyout = FlyoutController();
+  final _integralFlyout = FlyoutController();
 
   @override
   void dispose() {
     _riseTimeFlyout.dispose();
     _overshootFlyout.dispose();
     _ssErrorFlyout.dispose();
+    _integralFlyout.dispose();
     super.dispose();
   }
 
@@ -1122,6 +1350,7 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
     final modeLabel = switch (result.mode) {
       ValidationMode.velocity => 'Velocity',
       ValidationMode.position => 'Position',
+      ValidationMode.disturbancePosition => 'Disturbance Position',
       ValidationMode.maxMotionPosition => 'MAXMotion Position',
     };
 
@@ -1132,15 +1361,42 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
           Text(
             '$modeLabel step — '
             '${result.completed ? "Completed" : "Incomplete"}',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
+          if (result.completed &&
+              (widget.velocityPid != null || widget.positionPid != null)) ...[
+            const SizedBox(width: 12),
+            FlyoutTarget(
+              controller: _integralFlyout,
+              child: Tooltip(
+                message: 'Validation-only kI overrides',
+                child: Button(
+                  onPressed: () {
+                    _integralFlyout.showFlyout(
+                      placementMode: FlyoutPlacementMode.topCenter,
+                      barrierDismissible: true,
+                      dismissOnPointerMoveAway: false,
+                      builder: (_) => _buildIntegralOverrideFlyout(),
+                    );
+                  },
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(FluentIcons.settings, size: 12),
+                      SizedBox(width: 6),
+                      Text('Integral Override'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(width: 24),
           _plainMetric('Samples', '${result.data.length}'),
-          _plainMetric('Duration',
-              '${result.durationSeconds.toStringAsFixed(1)}s'),
+          _plainMetric(
+            'Duration',
+            '${result.durationSeconds.toStringAsFixed(1)}s',
+          ),
           if (result.riseTime != null)
             _clickableMetric(
               label: 'Rise Time',
@@ -1234,9 +1490,13 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
                     children: [
                       Text(label, style: const TextStyle(fontSize: 10)),
                       const SizedBox(width: 3),
-                      Icon(FluentIcons.chevron_up_small, size: 8,
-                          color: FluentTheme.of(context).typography.body?.color
-                              ?.withValues(alpha: 0.5)),
+                      Icon(
+                        FluentIcons.chevron_up_small,
+                        size: 8,
+                        color: FluentTheme.of(
+                          context,
+                        ).typography.body?.color?.withValues(alpha: 0.5),
+                      ),
                     ],
                   ),
                   Text(
@@ -1260,228 +1520,359 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
   // -- Flyout builders -------------------------------------------------------
 
   Widget _buildRiseTimeFlyout() {
-    return StatefulBuilder(builder: (context, setFlyoutState) {
-      final currentTuning = ref.read(pidTuningParamsProvider);
-      return FlyoutContent(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _isVelocity ? 'Velocity Time Constant (\u03c4)' : 'Position Bandwidth',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _isVelocity
-                      ? 'Lower \u03c4 = faster rise but less stability margin'
-                      : 'Higher BW = faster rise but more noise-sensitive',
-                  style: const TextStyle(fontSize: 11),
-                ),
-                const SizedBox(height: 12),
-                if (_isVelocity) ...[
-                  _TuningSlider(
-                    label: '\u03c4',
-                    unit: 'ms',
-                    value: currentTuning.velocityTimeConstantMs,
-                    min: 20, max: 500,
-                    onChanged: (v) {
-                      ref.read(pidTuningParamsProvider.notifier)
-                          .setVelocityTimeConstant(v);
-                      setFlyoutState(() {});
-                    },
+    return StatefulBuilder(
+      builder: (context, setFlyoutState) {
+        final currentTuning = ref.read(pidTuningParamsProvider);
+        return FlyoutContent(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _isVelocity
+                        ? 'Velocity Time Constant (\u03c4)'
+                        : 'Position Bandwidth',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                   ),
-                ] else ...[
-                  _TuningSlider(
-                    label: 'BW',
-                    unit: 'Hz',
-                    value: currentTuning.positionBandwidthHz,
-                    min: 1, max: 20,
-                    onChanged: (v) {
-                      ref.read(pidTuningParamsProvider.notifier)
-                          .setPositionBandwidth(v);
-                      setFlyoutState(() {});
-                    },
+                  const SizedBox(height: 4),
+                  Text(
+                    _isVelocity
+                        ? 'Lower \u03c4 = faster rise but less stability margin'
+                        : 'Higher BW = faster rise but more noise-sensitive',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_isVelocity) ...[
+                    _TuningSlider(
+                      label: '\u03c4',
+                      unit: 'ms',
+                      value: currentTuning.velocityTimeConstantMs,
+                      min: 20,
+                      max: 500,
+                      onChanged: (v) {
+                        ref
+                            .read(pidTuningParamsProvider.notifier)
+                            .setVelocityTimeConstant(v);
+                        setFlyoutState(() {});
+                      },
+                    ),
+                  ] else ...[
+                    _TuningSlider(
+                      label: 'BW',
+                      unit: 'Hz',
+                      value: currentTuning.positionBandwidthHz,
+                      min: 0.5,
+                      max: 40,
+                      onChanged: (v) {
+                        ref
+                            .read(pidTuningParamsProvider.notifier)
+                            .setPositionBandwidth(v);
+                        setFlyoutState(() {});
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  _GainPreview(isVelocity: _isVelocity),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        final t = ref.read(pidTuningParamsProvider);
+                        widget.onApplyAndRetest(
+                          velocityTimeConstantMs: _isVelocity
+                              ? t.velocityTimeConstantMs
+                              : null,
+                          positionBandwidthHz: _isVelocity
+                              ? null
+                              : t.positionBandwidthHz,
+                        );
+                      },
+                      child: const Text('Apply & Retest'),
+                    ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                _GainPreview(isVelocity: _isVelocity),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      final t = ref.read(pidTuningParamsProvider);
-                      widget.onApplyAndRetest(
-                        velocityTimeConstantMs: _isVelocity ? t.velocityTimeConstantMs : null,
-                        positionBandwidthHz: _isVelocity ? null : t.positionBandwidthHz,
-                      );
-                    },
-                    child: const Text('Apply & Retest'),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 
   Widget _buildOvershootFlyout() {
-    return StatefulBuilder(builder: (context, setFlyoutState) {
-      final currentTuning = ref.read(pidTuningParamsProvider);
-      return FlyoutContent(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _isVelocity ? 'Velocity Time Constant (\u03c4)' : 'Damping Ratio (\u03b6)',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _isVelocity
-                      ? 'Increase \u03c4 to slow the response and reduce overshoot'
-                      : '\u03b6 > 1 = overdamped (no overshoot), \u03b6 < 1 = underdamped',
-                  style: const TextStyle(fontSize: 11),
-                ),
-                const SizedBox(height: 12),
-                if (_isVelocity) ...[
-                  _TuningSlider(
-                    label: '\u03c4',
-                    unit: 'ms',
-                    value: currentTuning.velocityTimeConstantMs,
-                    min: 20, max: 500,
-                    onChanged: (v) {
-                      ref.read(pidTuningParamsProvider.notifier)
-                          .setVelocityTimeConstant(v);
-                      setFlyoutState(() {});
-                    },
+    return StatefulBuilder(
+      builder: (context, setFlyoutState) {
+        final currentTuning = ref.read(pidTuningParamsProvider);
+        return FlyoutContent(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _isVelocity
+                        ? 'Velocity Time Constant (\u03c4)'
+                        : 'Damping Ratio (\u03b6)',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                   ),
-                ] else ...[
-                  _TuningSlider(
-                    label: '\u03b6',
-                    unit: '',
-                    value: currentTuning.dampingRatio,
-                    min: 0.3, max: 2.0,
-                    divisions: 17,
-                    onChanged: (v) {
-                      ref.read(pidTuningParamsProvider.notifier)
-                          .setDampingRatio(v);
-                      setFlyoutState(() {});
-                    },
+                  const SizedBox(height: 4),
+                  Text(
+                    _isVelocity
+                        ? 'Increase \u03c4 to slow the response and reduce overshoot'
+                        : '\u03b6 > 1 = overdamped (no overshoot), \u03b6 < 1 = underdamped',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_isVelocity) ...[
+                    _TuningSlider(
+                      label: '\u03c4',
+                      unit: 'ms',
+                      value: currentTuning.velocityTimeConstantMs,
+                      min: 20,
+                      max: 500,
+                      onChanged: (v) {
+                        ref
+                            .read(pidTuningParamsProvider.notifier)
+                            .setVelocityTimeConstant(v);
+                        setFlyoutState(() {});
+                      },
+                    ),
+                  ] else ...[
+                    _TuningSlider(
+                      label: '\u03b6',
+                      unit: '',
+                      value: currentTuning.dampingRatio,
+                      min: 0.1,
+                      max: 5.0,
+                      divisions: 49,
+                      onChanged: (v) {
+                        ref
+                            .read(pidTuningParamsProvider.notifier)
+                            .setDampingRatio(v);
+                        setFlyoutState(() {});
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  _GainPreview(isVelocity: _isVelocity),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        final t = ref.read(pidTuningParamsProvider);
+                        widget.onApplyAndRetest(
+                          velocityTimeConstantMs: _isVelocity
+                              ? t.velocityTimeConstantMs
+                              : null,
+                          dampingRatio: _isVelocity ? null : t.dampingRatio,
+                        );
+                      },
+                      child: const Text('Apply & Retest'),
+                    ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                _GainPreview(isVelocity: _isVelocity),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      final t = ref.read(pidTuningParamsProvider);
-                      widget.onApplyAndRetest(
-                        velocityTimeConstantMs: _isVelocity ? t.velocityTimeConstantMs : null,
-                        dampingRatio: _isVelocity ? null : t.dampingRatio,
-                      );
-                    },
-                    child: const Text('Apply & Retest'),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 
   Widget _buildSsErrorFlyout() {
-    return StatefulBuilder(builder: (context, setFlyoutState) {
-      final currentTuning = ref.read(pidTuningParamsProvider);
-      return FlyoutContent(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _isVelocity
-                      ? 'Velocity Time Constant (\u03c4)'
-                      : 'Position Bandwidth',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _isVelocity
-                      ? 'Increase \u03c4 if tracking lags; also check FF accuracy'
-                      : 'Reduce BW or increase allowed CL error to improve tracking',
-                  style: const TextStyle(fontSize: 11),
-                ),
-                const SizedBox(height: 12),
-                if (_isVelocity) ...[
-                  _TuningSlider(
-                    label: '\u03c4',
-                    unit: 'ms',
-                    value: currentTuning.velocityTimeConstantMs,
-                    min: 20, max: 500,
-                    onChanged: (v) {
-                      ref.read(pidTuningParamsProvider.notifier)
-                          .setVelocityTimeConstant(v);
-                      setFlyoutState(() {});
-                    },
+    return StatefulBuilder(
+      builder: (context, setFlyoutState) {
+        final currentTuning = ref.read(pidTuningParamsProvider);
+        return FlyoutContent(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _isVelocity
+                        ? 'Velocity Time Constant (\u03c4)'
+                        : 'Position Bandwidth',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
                   ),
-                ] else ...[
-                  _TuningSlider(
-                    label: 'BW',
-                    unit: 'Hz',
-                    value: currentTuning.positionBandwidthHz,
-                    min: 1, max: 20,
-                    onChanged: (v) {
-                      ref.read(pidTuningParamsProvider.notifier)
-                          .setPositionBandwidth(v);
-                      setFlyoutState(() {});
-                    },
+                  const SizedBox(height: 4),
+                  Text(
+                    _isVelocity
+                        ? 'Increase \u03c4 if tracking lags; also check FF accuracy'
+                        : 'Reduce BW or increase allowed CL error to improve tracking',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_isVelocity) ...[
+                    _TuningSlider(
+                      label: '\u03c4',
+                      unit: 'ms',
+                      value: currentTuning.velocityTimeConstantMs,
+                      min: 20,
+                      max: 500,
+                      onChanged: (v) {
+                        ref
+                            .read(pidTuningParamsProvider.notifier)
+                            .setVelocityTimeConstant(v);
+                        setFlyoutState(() {});
+                      },
+                    ),
+                  ] else ...[
+                    _TuningSlider(
+                      label: 'BW',
+                      unit: 'Hz',
+                      value: currentTuning.positionBandwidthHz,
+                      min: 0.5,
+                      max: 40,
+                      onChanged: (v) {
+                        ref
+                            .read(pidTuningParamsProvider.notifier)
+                            .setPositionBandwidth(v);
+                        setFlyoutState(() {});
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  _GainPreview(isVelocity: _isVelocity),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                        final t = ref.read(pidTuningParamsProvider);
+                        widget.onApplyAndRetest(
+                          velocityTimeConstantMs: _isVelocity
+                              ? t.velocityTimeConstantMs
+                              : null,
+                          positionBandwidthHz: _isVelocity
+                              ? null
+                              : t.positionBandwidthHz,
+                        );
+                      },
+                      child: const Text('Apply & Retest'),
+                    ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                _GainPreview(isVelocity: _isVelocity),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      final t = ref.read(pidTuningParamsProvider);
-                      widget.onApplyAndRetest(
-                        velocityTimeConstantMs: _isVelocity ? t.velocityTimeConstantMs : null,
-                        positionBandwidthHz: _isVelocity ? null : t.positionBandwidthHz,
-                      );
-                    },
-                    child: const Text('Apply & Retest'),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
+        );
+      },
+    );
+  }
+
+  Widget _buildIntegralOverrideFlyout() {
+    return FlyoutContent(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 340),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Validation-Only Integral Override',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Overrides apply to future validation runs only. '
+                'Use Auto restores the computed kI.',
+                style: TextStyle(fontSize: 11),
+              ),
+              const SizedBox(height: 12),
+              if (widget.velocityPid != null)
+                _integralOverrideControl(
+                  label: 'Velocity kI',
+                  tunedValue: widget.velocityPid!.kI,
+                  overrideValue: widget.velocityIntegralOverride,
+                  onChanged: widget.onVelocityIntegralOverrideChanged,
+                ),
+              if (widget.positionPid != null) ...[
+                const SizedBox(height: 10),
+                _integralOverrideControl(
+                  label: 'Position kI',
+                  tunedValue: widget.positionPid!.kI,
+                  overrideValue: widget.positionIntegralOverride,
+                  onChanged: widget.onPositionIntegralOverrideChanged,
+                ),
+              ],
+            ],
+          ),
         ),
-      );
-    });
+      ),
+    );
+  }
+
+  Widget _integralOverrideControl({
+    required String label,
+    required double tunedValue,
+    required double? overrideValue,
+    required ValueChanged<double?>? onChanged,
+  }) {
+    final active =
+        overrideValue != null && (overrideValue - tunedValue).abs() > 1e-12;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '$label${active ? ' (override)' : ''}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Button(
+              onPressed: onChanged == null ? null : () => onChanged(null),
+              child: const Text('Use Auto'),
+            ),
+          ],
+        ),
+        NumberBox<double>(
+          value: overrideValue ?? tunedValue,
+          min: 0,
+          max: 10,
+          smallChange: 0.0001,
+          clearButton: true,
+          mode: SpinButtonPlacementMode.inline,
+          onChanged: onChanged,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Auto-tuned: ${tunedValue.toStringAsFixed(6)}',
+          style: const TextStyle(fontSize: 11),
+        ),
+      ],
+    );
   }
 }
 
@@ -1510,7 +1901,7 @@ class _TuningSlider extends StatelessWidget {
   Widget build(BuildContext context) {
     final displayValue = unit == 'ms'
         ? value.toStringAsFixed(0)
-        : value.toStringAsFixed(2);
+        : value.toStringAsFixed(1);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -1532,7 +1923,9 @@ class _TuningSlider extends StatelessWidget {
           value: value.clamp(min, max),
           min: min,
           max: max,
-          divisions: divisions ?? ((max - min) / (unit == 'ms' ? 10 : 0.5)).round().clamp(10, 100),
+          divisions:
+              divisions ??
+              ((max - min) / (unit == 'ms' ? 10 : 0.1)).round().clamp(10, 400),
           onChanged: onChanged,
         ),
       ],
@@ -1560,29 +1953,39 @@ class _GainPreview extends ConsumerWidget {
     if (isVelocity) {
       preview = ffLoaded != null
           ? PidAutoTuner.tuneRobustVelocity(
-              ffUnloaded: ff, ffLoaded: ffLoaded,
+              ffUnloaded: ff,
+              ffLoaded: ffLoaded,
               mechanismType: config.type,
-              desiredTimeConstantMs: tuning.velocityTimeConstantMs)
+              desiredTimeConstantMs: tuning.velocityTimeConstantMs,
+            )
           : PidAutoTuner.tuneVelocity(
-              ff: ff, mechanismType: config.type,
-              desiredTimeConstantMs: tuning.velocityTimeConstantMs);
+              ff: ff,
+              mechanismType: config.type,
+              desiredTimeConstantMs: tuning.velocityTimeConstantMs,
+            );
     } else {
       preview = ffLoaded != null
           ? PidAutoTuner.tuneRobustPosition(
-              ffUnloaded: ff, ffLoaded: ffLoaded,
+              ffUnloaded: ff,
+              ffLoaded: ffLoaded,
               mechanismType: config.type,
               desiredBandwidthHz: tuning.positionBandwidthHz,
-              dampingRatio: tuning.dampingRatio)
+              dampingRatio: tuning.dampingRatio,
+            )
           : PidAutoTuner.tunePosition(
-              ff: ff, mechanismType: config.type,
+              ff: ff,
+              mechanismType: config.type,
               desiredBandwidthHz: tuning.positionBandwidthHz,
-              dampingRatio: tuning.dampingRatio);
+              dampingRatio: tuning.dampingRatio,
+            );
     }
 
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: FluentTheme.of(context).micaBackgroundColor.withValues(alpha: 0.5),
+        color: FluentTheme.of(
+          context,
+        ).micaBackgroundColor.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Row(
@@ -1672,10 +2075,7 @@ class _ValidationLiveChart extends StatelessWidget {
         ),
     ];
 
-    final allSpots = <FlSpot>[
-      ...measuredSpots,
-      ...setpointSpots,
-    ];
+    final allSpots = <FlSpot>[...measuredSpots, ...setpointSpots];
     final minX = allSpots.isEmpty
         ? 0.0
         : allSpots.map((s) => s.x).reduce((a, b) => a < b ? a : b);
@@ -1701,7 +2101,11 @@ class _ValidationLiveChart extends StatelessWidget {
               ),
               if (showSetpoint) ...[
                 const Spacer(),
-                Container(width: 12, height: 2, color: Colors.successPrimaryColor),
+                Container(
+                  width: 12,
+                  height: 2,
+                  color: Colors.successPrimaryColor,
+                ),
                 const SizedBox(width: 3),
                 const Text('Setpoint', style: TextStyle(fontSize: 9)),
                 const SizedBox(width: 8),
@@ -1744,8 +2148,10 @@ class _ValidationLiveChart extends StatelessWidget {
                           sideTitles: SideTitles(showTitles: false),
                         ),
                         bottomTitles: AxisTitles(
-                          axisNameWidget: const Text('Time (s)',
-                              style: TextStyle(fontSize: 10)),
+                          axisNameWidget: const Text(
+                            'Time (s)',
+                            style: TextStyle(fontSize: 10),
+                          ),
                           sideTitles: SideTitles(
                             showTitles: true,
                             reservedSize: 22,

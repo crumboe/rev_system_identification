@@ -33,6 +33,27 @@ class PidAutoTuner {
   /// adding minimal phase lag at frequencies the controller cares about.
   static const _dFilterBandwidthMultiplier = 8.0;
 
+  /// Robust velocity tuning uses a much slower integral loop than the
+  /// proportional loop so load/gravity mismatch is corrected gradually
+  /// instead of injecting overshoot.
+  static double robustVelocityIntegralTimeSec({
+    required double closedLoopTauSec,
+    required double plantTauSec,
+  }) {
+    return math.max(12.0 * closedLoopTauSec, 30.0 * plantTauSec);
+  }
+
+  /// Robust position tuning uses a slow integral loop relative to both the
+  /// commanded bandwidth and the plant time constant to avoid long tail
+  /// settling from windup-like behavior.
+  static double robustPositionIntegralTimeSec({
+    required double omegaRadPerSec,
+    required double plantTauSec,
+  }) {
+    if (omegaRadPerSec <= 0) return 20.0 * plantTauSec;
+    return math.max(8.0 / omegaRadPerSec, 20.0 * plantTauSec);
+  }
+
   /// Compute plant-optimal default tuning parameters from feedforward gains.
   ///
   /// Returns (velocityTimeConstantMs, positionBandwidthHz) representing the
@@ -347,9 +368,14 @@ class PidAutoTuner {
 
     final kP = (kA / tau) / nominalVoltage;
 
-    // Integral gain: rejects the gravity disturbance ΔkG.
-    // Settling time ≈ 10 × τ_plant.
-    final kI = kP / (10.0 * plantTau);
+    // Integral gain: reject the blended-load mismatch slowly enough that the
+    // proportional loop remains dominant. A slower integral loop reduces
+    // overshoot and long tail settling after the step response reaches target.
+    final integralTimeSec = robustVelocityIntegralTimeSec(
+      closedLoopTauSec: tau,
+      plantTauSec: plantTau,
+    );
+    final kI = kP / integralTimeSec;
 
     // I-zone: bound accumulation to 2× |ΔkG| to prevent windup.
     final deltaKG = (ffLoaded.kG - ffUnloaded.kG).abs();
@@ -357,8 +383,9 @@ class PidAutoTuner {
 
     warnings.add(
       'Robust gains: kP uses lighter kA = ${kA.toStringAsFixed(4)}. '
-      'kI = ${kI.toStringAsFixed(6)} rejects gravity disturbance '
-      'ΔkG = ${deltaKG.toStringAsFixed(3)} V.');
+      'kI = ${kI.toStringAsFixed(6)} uses Tᵢ = '
+      '${integralTimeSec.toStringAsFixed(2)} s to reject load disturbance '
+      'ΔkG = ${deltaKG.toStringAsFixed(3)} V without making the response ring.');
 
     return PidResult(
       kP: kP,
@@ -445,8 +472,13 @@ class PidAutoTuner {
     final kP = kPVolts / nominalVoltage;
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
 
-    // Integral: slow correction for gravity disturbance.
-    final kI = kP * omega / 20.0;
+    // Integral: correct residual blended-gravity mismatch slowly so PD still
+    // shapes the transient while I only trims the final error.
+    final integralTimeSec = robustPositionIntegralTimeSec(
+      omegaRadPerSec: omega,
+      plantTauSec: plantTau,
+    );
+    final kI = kP / integralTimeSec;
 
     // I-zone: |ΔkG| / kI bounds accumulation.
     final deltaKG = (ffLoaded.kG - ffUnloaded.kG).abs();
@@ -458,8 +490,9 @@ class PidAutoTuner {
 
     warnings.add(
       'Robust gains: kP/kD use heavier kA = ${kA.toStringAsFixed(4)}. '
-      'kI = ${kI.toStringAsFixed(6)} rejects ΔkG = '
-      '${deltaKG.toStringAsFixed(3)} V.');
+      'kI = ${kI.toStringAsFixed(6)} uses Tᵢ = '
+      '${integralTimeSec.toStringAsFixed(2)} s to trim residual ΔkG = '
+      '${deltaKG.toStringAsFixed(3)} V after the PD transient settles.');
 
     return PidResult(
       kP: kP,
