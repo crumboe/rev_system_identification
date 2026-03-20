@@ -811,6 +811,11 @@ class SimulatedControlApi implements IControlApi {
       setSetpoint(amps, kControlTypeCurrent, pidSlot: pidSlot);
 
   @override
+  void setEncoderPosition(double position) {
+    _physics.setPositionRotations(position);
+  }
+
+  @override
   void stop() {
     _activeControlType = kControlTypeVoltage;
     _activeSetpoint = 0.0;

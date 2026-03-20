@@ -24,7 +24,8 @@ class PidPlayground extends StatefulWidget {
 
   /// Called whenever the user adjusts position PID gains.
   final ValueChanged<PidResult>? onPosPidChanged;
-
+  /// Called when the user presses "Reset to Identified Values".
+  final VoidCallback? onReset;
   /// When true, show position step response instead of velocity.
   final bool isPositionMode;
 
@@ -45,6 +46,7 @@ class PidPlayground extends StatefulWidget {
     this.initialPosPid,
     this.onPidChanged,
     this.onPosPidChanged,
+    this.onReset,
     this.isPositionMode = false,
     this.onModeChanged,
     this.mechanismConfig,
@@ -347,6 +349,8 @@ class _PidPlaygroundState extends State<PidPlayground>
     final posQuantum = 0.004 * backlashSeverity;
     final velQuantum = 8.0 * backlashSeverity;
 
+    final bool isArm = widget.mechanismConfig?.type == MechanismType.arm;
+
     double integral = 0;
     double prevError = setpoint;
     double velocity = 0;
@@ -386,10 +390,14 @@ class _PidPlaygroundState extends State<PidPlayground>
       // kV applied to measured velocity, kA to acceleration.
       final ffAccel = (i == 1) ? 0.0
           : (velocity - _prevPlaygroundVelocity) / dt;
+      // For arms, gravity FF is angle-dependent: kG·cos(θ).
+      final ffGravity = isArm
+          ? _kG * math.cos(outputPosition * math.pi / 180.0)
+          : _kG;
       final ffOutput = _kS * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0))
           + _kV * measuredVelocity
           + _kA * ffAccel
-          + _kG;
+          + ffGravity;
         final requestedVoltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
 
@@ -404,6 +412,10 @@ class _PidPlaygroundState extends State<PidPlayground>
         }
 
       // Plant dynamics (velocity domain).
+      // For arms, gravity is angle-dependent: kG·cos(θ).
+      final plantGravity = isArm
+          ? plant.kG * math.cos(outputPosition * math.pi / 180.0)
+          : plant.kG;
         final velSign = velocity >= 0 ? 1.0 : -1.0;
         final frictionTerm = velocity.abs() > 35.0
           ? plant.kS * velSign
@@ -411,7 +423,7 @@ class _PidPlaygroundState extends State<PidPlayground>
             ? (plant.kS + stictionExtra) * appliedVoltage.sign
             : appliedVoltage;
       final acceleration =
-          (appliedVoltage - frictionTerm - plant.kV * velocity - plant.kG) /
+          (appliedVoltage - frictionTerm - plant.kV * velocity - plantGravity) /
               plant.kA;
       velocity += acceleration * dt;
       _prevPlaygroundVelocity = velocity;
@@ -508,6 +520,13 @@ class _PidPlaygroundState extends State<PidPlayground>
   }
 
   void _resetToAutoTuned() {
+    if (widget.onReset != null) {
+      // Re-run the full analysis (same as "Compute Feedforward & PID").
+      // The parent will update props, and didUpdateWidget will snap
+      // identified baselines, sliders, and simulation automatically.
+      widget.onReset!.call();
+      return;
+    }
     setState(() {
       if (widget.isPositionMode) {
         _posKP = _identifiedPosKP;

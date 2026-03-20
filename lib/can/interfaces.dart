@@ -226,6 +226,7 @@ abstract class IControlApi {
   void setPosition(double rotations, {int pidSlot = 0});
   void setSmartMotion(double rotations, {int pidSlot = 0});
   void setCurrent(double amps, {int pidSlot = 0});
+  void setEncoderPosition(double position);
   void stop();
 
   Future<SparkResponse> identify();

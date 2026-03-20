@@ -142,6 +142,37 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     }
   }
 
+  Future<void> _zeroEncoder() async {
+    final device = ref.read(deviceManagerProvider).leader;
+    if (device == null || !device.isConnected) return;
+    final config = ref.read(mechanismConfigProvider);
+
+    if (config.feedbackSensor == FeedbackSensor.absoluteEncoder) {
+      await _zeroAbsoluteEncoder();
+    } else {
+      // Primary (relative) encoder: send a "set encoder position to 0"
+      // control command so the firmware resets its accumulator.
+      device.control.setEncoderPosition(0.0);
+
+      if (mounted) {
+        setState(() => _currentPosition = 0.0);
+        await displayInfoBar(context, builder: (ctx, close) {
+          return InfoBar(
+            title: const Text('Encoder Zeroed'),
+            content: const Text(
+              'Primary encoder position reset to 0.',
+            ),
+            severity: InfoBarSeverity.success,
+            action: IconButton(
+              icon: const Icon(FluentIcons.clear),
+              onPressed: close,
+            ),
+          );
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final config = ref.watch(mechanismConfigProvider);
@@ -378,52 +409,60 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
             ),
           ),
         ),
-        // Soft limits (only for arms and elevators)
+        // Soft limits
+        const SizedBox(height: 24),
+        const Text(
+          'Soft Limits',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        InfoBar(
+          title: Text(config.type.requiresSoftLimits
+              ? 'Required for safety'
+              : 'Optional'),
+          content: Text(
+            config.type.requiresSoftLimits
+                ? 'Set the maximum and minimum travel positions in your chosen units. '
+                  'The motor will be stopped if it approaches these limits during testing.'
+                : 'Soft limits are optional for this mechanism type but recommended if '
+                  'you have mechanical travel limits. The motor will be stopped if it '
+                  'approaches these limits during testing.',
+          ),
+          severity: config.type.requiresSoftLimits
+              ? InfoBarSeverity.warning
+              : InfoBarSeverity.info,
+          isLong: true,
+        ),
+        const SizedBox(height: 8),
+        _ConfigRow(
+          label:
+              'Forward Limit (${config.positionUnit})',
+          child: SizedBox(
+            width: 210,
+            child: NumberBox<double>(
+              value: config.forwardSoftLimit,
+              onChanged: (v) {
+                if (v != null) configNotifier.setForwardSoftLimit(v);
+              },
+              placeholder: 'Max position',
+            ),
+          ),
+        ),
+        _ConfigRow(
+          label:
+              'Reverse Limit (${config.positionUnit})',
+          child: SizedBox(
+            width: 210,
+            child: NumberBox<double>(
+              value: config.reverseSoftLimit,
+              onChanged: (v) {
+                if (v != null) configNotifier.setReverseSoftLimit(v);
+              },
+              placeholder: 'Min position',
+            ),
+          ),
+        ),
         if (config.type.requiresSoftLimits) ...[
-          const SizedBox(height: 24),
-          const Text(
-            'Soft Limits',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const InfoBar(
-            title: Text('Required for safety'),
-            content: Text(
-              'Set the maximum and minimum travel positions in your chosen units. '
-              'The motor will be stopped if it approaches these limits during testing.',
-            ),
-            severity: InfoBarSeverity.warning,
-            isLong: true,
-          ),
-          const SizedBox(height: 8),
-          _ConfigRow(
-            label:
-                'Forward Limit (${config.positionUnit})',
-            child: SizedBox(
-              width: 210,
-              child: NumberBox<double>(
-                value: config.forwardSoftLimit,
-                onChanged: (v) {
-                  if (v != null) configNotifier.setForwardSoftLimit(v);
-                },
-                placeholder: 'Max position',
-              ),
-            ),
-          ),
-          _ConfigRow(
-            label:
-                'Reverse Limit (${config.positionUnit})',
-            child: SizedBox(
-              width: 210,
-              child: NumberBox<double>(
-                value: config.reverseSoftLimit,
-                onChanged: (v) {
-                  if (v != null) configNotifier.setReverseSoftLimit(v);
-                },
-                placeholder: 'Min position',
-              ),
-            ),
-          ),
           const SizedBox(height: 12),
           Expander(
             header: const Text('Safe Operation Guide'),
@@ -456,80 +495,66 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               ],
             ),
           ),
-
-          // Mechanism visual + jog panel for arms/elevators
-          if (isConnected) ...[
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Mechanism visual (arm or elevator)
-                if (config.type == MechanismType.arm)
-                  SizedBox(
-                    width: 280,
-                    height: 320,
-                    child: ArmVisual(
-                      currentAngleDeg: _currentPosition,
-                      forwardLimitDeg: config.forwardSoftLimit,
-                      reverseLimitDeg: config.reverseSoftLimit,
-                    ),
-                  ),
-                if (config.type == MechanismType.elevator)
-                  SizedBox(
-                    width: 280,
-                    height: 320,
-                    child: ElevatorVisual(
-                      currentPosition: _currentPosition,
-                      forwardLimit: config.forwardSoftLimit,
-                      reverseLimit: config.reverseSoftLimit,
-                      unitLabel:
-                          config.useImperialUnits ? 'in' : 'm',
-                    ),
-                  ),
-                const SizedBox(width: 12),
-                // Jog + zero encoder
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      JogPanel(
-                        device: device,
-                        config: config,
-                        onSetForwardLimit: (pos) =>
-                            configNotifier.setForwardSoftLimit(pos),
-                        onSetReverseLimit: (pos) =>
-                            configNotifier.setReverseSoftLimit(pos),
-                        onPositionChanged: (pos) =>
-                            setState(() => _currentPosition = pos),
-                      ),
-                      if (config.feedbackSensor ==
-                          FeedbackSensor.absoluteEncoder) ...[
-                        const SizedBox(height: 12),
-                        _ZeroEncoderCard(
-                          currentPosition: _currentPosition,
-                          positionUnit: config.positionUnit,
-                          onZero: _zeroAbsoluteEncoder,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
 
-        // Jog panel for flywheels (no soft limits section, show standalone)
-        if (!config.type.requiresSoftLimits && isConnected) ...[
-          const SizedBox(height: 16),
-          const Text(
-            'Manual Jog',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          JogPanel(
-            device: device,
-            config: config,
+        // Mechanism visual + jog panel + zero encoder
+        if (isConnected) ...[
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Mechanism visual (arm or elevator)
+              if (config.type == MechanismType.arm)
+                SizedBox(
+                  width: 280,
+                  height: 320,
+                  child: ArmVisual(
+                    currentAngleDeg: _currentPosition,
+                    forwardLimitDeg: config.forwardSoftLimit,
+                    reverseLimitDeg: config.reverseSoftLimit,
+                  ),
+                ),
+              if (config.type == MechanismType.elevator)
+                SizedBox(
+                  width: 280,
+                  height: 320,
+                  child: ElevatorVisual(
+                    currentPosition: _currentPosition,
+                    forwardLimit: config.forwardSoftLimit,
+                    reverseLimit: config.reverseSoftLimit,
+                    unitLabel:
+                        config.useImperialUnits ? 'in' : 'm',
+                  ),
+                ),
+              if (config.type == MechanismType.arm ||
+                  config.type == MechanismType.elevator)
+                const SizedBox(width: 12),
+              // Jog + zero encoder
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    JogPanel(
+                      device: device,
+                      config: config,
+                      onSetForwardLimit: (pos) =>
+                          configNotifier.setForwardSoftLimit(pos),
+                      onSetReverseLimit: (pos) =>
+                          configNotifier.setReverseSoftLimit(pos),
+                      onPositionChanged: (pos) =>
+                          setState(() => _currentPosition = pos),
+                    ),
+                    const SizedBox(height: 12),
+                    _ZeroEncoderCard(
+                      currentPosition: _currentPosition,
+                      positionUnit: config.positionUnit,
+                      feedbackSensor: config.feedbackSensor,
+                      onZero: _zeroEncoder,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
 
@@ -783,17 +808,28 @@ Widget _guideStep(int number, String text) {
 class _ZeroEncoderCard extends StatelessWidget {
   final double currentPosition;
   final String positionUnit;
+  final FeedbackSensor feedbackSensor;
   final VoidCallback onZero;
 
   const _ZeroEncoderCard({
     required this.currentPosition,
     required this.positionUnit,
+    required this.feedbackSensor,
     required this.onZero,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = FluentTheme.of(context);
+    final isAbsolute = feedbackSensor == FeedbackSensor.absoluteEncoder;
+    final title = isAbsolute ? 'Zero Absolute Encoder' : 'Zero Encoder';
+    final description = isAbsolute
+        ? 'Jog the mechanism to its desired zero position, then press '
+          'the button below to set the absolute encoder offset so this '
+          'position reads as 0.'
+        : 'Jog the mechanism to its desired zero position, then press '
+          'the button below to reset the encoder so this position '
+          'reads as 0.';
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -802,9 +838,9 @@ class _ZeroEncoderCard extends StatelessWidget {
             children: [
               const Icon(FluentIcons.location, size: 14),
               const SizedBox(width: 6),
-              const Text(
-                'Zero Absolute Encoder',
-                style: TextStyle(
+              Text(
+                title,
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -823,9 +859,7 @@ class _ZeroEncoderCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Jog the mechanism to its desired zero position, then press '
-            'the button below to set the absolute encoder offset so this '
-            'position reads as 0.',
+            description,
             style: TextStyle(
               fontSize: 11,
               color: theme.typography.body?.color?.withValues(alpha: 0.7),

@@ -77,6 +77,21 @@ class ControlApi implements IControlApi {
   void setCurrent(double amps, {int pidSlot = 0}) =>
       setSetpoint(amps, kControlTypeCurrent, pidSlot: pidSlot);
 
+  /// Set the primary encoder position to [position] rotations.
+  ///
+  /// Sends a control frame with API index 0x06 to reset the encoder
+  /// accumulator to the given value.  Use `setEncoderPosition(0)` to
+  /// zero the relative encoder at the current physical position.
+  void setEncoderPosition(double position) {
+    final arbId = buildArbId(
+      apiClass: kApiClassControl,
+      apiIndex: kControlIndexSetEncoderPosition,
+      deviceId: _deviceId,
+    );
+    final payload = buildSetpointPayload(position);
+    _conn.sendCommand(arbId, payload);
+  }
+
   /// Send zero voltage (stop the motor).
   void stop() => setVoltage(0.0);
 

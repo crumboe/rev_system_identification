@@ -37,6 +37,7 @@ const int kControlIndexDutyCycle = 0x02;
 const int kControlIndexPosition = 0x04;
 const int kControlIndexVelocity = 0x00;
 const int kControlIndexVoltage = 0x05;
+const int kControlIndexSetEncoderPosition = 0x06;
 // MAXMotion setpoints observed from REV Hardware Client 2 logs.
 const int kControlIndexMAXMotionPosition = 0x08;
 const int kControlIndexMAXMotionVelocity = 0x09;
