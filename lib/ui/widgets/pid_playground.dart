@@ -298,6 +298,7 @@ class _PidPlaygroundState extends State<PidPlayground>
     double outputPosition = 0;
     double backlashRemaining = 0;
     double backlashDirection = 0;
+    double _prevPlaygroundVelocity = 0.0;
     final voltageDelayQueue = <double>[];
     _firstPositionTick = true;
 
@@ -325,8 +326,13 @@ class _PidPlaygroundState extends State<PidPlayground>
       final pidOutput =
           (_kP * error + _kI * integral + _kD * derivative) * nominalVoltage;
 
-      // Position FF: kS·sign(error) + kG (no kV in position mode per REV).
+      // Position FF (firmware ≥25.0 / 2026): kS, kV, kA all active.
+      // kV applied to measured velocity, kA to acceleration.
+      final ffAccel = (i == 1) ? 0.0
+          : (velocity - _prevPlaygroundVelocity) / dt;
       final ffOutput = _kS * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0))
+          + _kV * measuredVelocity
+          + _kA * ffAccel
           + _kG;
         final requestedVoltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
@@ -352,6 +358,7 @@ class _PidPlaygroundState extends State<PidPlayground>
           (appliedVoltage - frictionTerm - plant.kV * velocity - plant.kG) /
               plant.kA;
       velocity += acceleration * dt;
+      _prevPlaygroundVelocity = velocity;
       final prevMotorPosition = motorPosition;
       motorPosition += (velocity / r) * dt;
       final motorDelta = motorPosition - prevMotorPosition;

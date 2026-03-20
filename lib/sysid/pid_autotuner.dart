@@ -20,10 +20,11 @@ class PidAutoTuner {
   /// 1 kHz: sensor-to-actuation pipeline (~1 ms) + filtering (~1 ms).
   static const defaultTransportDelaySec = 0.002; // 2 ms
 
-  /// Maximum ω·τ_plant product for position control.  Beyond this, the
-  /// controller bandwidth exceeds what the plant dynamics can linearly
-  /// track, amplifying stiction and backlash nonlinearities.
-  static const _maxOmegaTauProduct = 2.0;
+  /// Maximum ω·τ_plant product for position control.  With kV/kA
+  /// feedforward active (firmware ≥25.0) the plant is largely linearised,
+  /// so the cap is less critical — but still limits bandwidth to avoid
+  /// actuator saturation and amplifying stiction/backlash.
+  static const _maxOmegaTauProduct = 3.0;
 
   /// SPARK controller internal loop period (seconds).
   static const _sparkControlPeriodSec = 0.001; // 1 ms
@@ -152,11 +153,16 @@ class PidAutoTuner {
 
   /// Compute PID gains for position control.
   ///
-  /// Uses pole placement for a second-order system.
-  /// The plant from voltage to position is:
-  ///   G(s) = 1 / (r·kA·s² + r·kV·s)
+  /// Uses pole placement for a second-order system.  With firmware ≥25.0
+  /// the SPARK applies kV and kA feedforward in position mode, so the
+  /// effective plant seen by the PID is a near-pure double integrator:
+  ///   G_eff(s) ≈ 1 / (r·kA·s²)
   ///
-  /// where `r` is the ratio between the velocity user unit and the position
+  /// The raw plant from voltage to position is:
+  ///   G(s) = 1 / (r·kA·s² + r·kV·s)
+  /// but kV·measured_velocity feedforward cancels the kV·s damping term.
+  ///
+  /// `r` is the ratio between the velocity user unit and the position
   /// rate (d(pos_user)/dt).  For mechanisms where velocity is already the
   /// time-derivative of position (arm: deg/s↔deg, elevator: m/s↔m), r=1.
   /// For flywheel/simple where velocity is RPM and position is rotations,
@@ -236,22 +242,22 @@ class PidAutoTuner {
       }
     }
 
-    // The plant transfer function from voltage to position (user units):
-    //   G(s) = 1 / (r·kA·s² + r·kV·s)
+    // With kV/kA feedforward active (firmware ≥25.0), the SPARK outputs:
+    //   V = (kP·pos_error + kD·(-vel) + kI·∫(error))·V_nom
+    //       + kV·measured_vel + kA·accel + kS·sign(error)
     //
-    // The SPARK PID computes:
-    //   output_dc = kP·pos_error + kD·(-velocity_user)
-    //   V = output_dc × V_nom
+    // The kV·vel feedforward cancels the plant's natural kV·ω damping,
+    // leaving an effective plant ≈ 1/(r·kA·s²)  (double integrator).
     //
     // Closed-loop characteristic equation (dividing by r·kA):
-    //   s² + (kV + V_nom·kD)/kA · s + V_nom·kP/(r·kA) = 0
+    //   s² + V_nom·kD/kA · s + V_nom·kP/(r·kA) = 0
     //
     // Matching to desired poles s² + 2·ζ·ω_n·s + ω_n² = 0:
     //   ω_n² = V_nom·kP / (r·kA)  →  kP = r·kA·ω_n² / V_nom
-    //   2·ζ·ω_n = (kV + V_nom·kD)/kA  →  kD = (2·ζ·kA·ω_n − kV) / V_nom
+    //   2·ζ·ω_n = V_nom·kD / kA   →  kD = 2·ζ·kA·ω_n / V_nom
 
     final kPVolts = r * ff.kA * omega * omega;
-    final kDVolts = (2.0 * zeta * ff.kA * omega - ff.kV);
+    final kDVolts = 2.0 * zeta * ff.kA * omega;
 
     final kP = kPVolts / nominalVoltage;
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
@@ -467,8 +473,10 @@ class PidAutoTuner {
     }
 
     // Pole placement (same derivation as single-plant tunePosition).
+    // With kV/kA feedforward active, kV damping is cancelled — D term
+    // must provide all damping:  kD = 2·ζ·kA·ω / V_nom.
     final kPVolts = r * kA * omega * omega;
-    final kDVolts = (2.0 * zeta * kA * omega - kV);
+    final kDVolts = 2.0 * zeta * kA * omega;
     final kP = kPVolts / nominalVoltage;
     final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
 

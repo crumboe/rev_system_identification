@@ -95,9 +95,9 @@ void main() {
   group('PidAutoTuner.tunePosition', () {
     const ff = FeedforwardGains(kS: 0.14, kV: 0.0185, kA: 0.003);
     // plantTau = 0.003/0.0185 ≈ 162 ms
-    // maxOmega = 2.0 / 0.162 ≈ 12.3 rad/s ≈ 1.96 Hz
+    // maxOmega = 3.0 / 0.162 ≈ 18.5 rad/s ≈ 2.94 Hz
     final plantTau = ff.kA / ff.kV;
-    final maxOmega = 2.0 / plantTau;
+    final maxOmega = 3.0 / plantTau;
     final maxBwHz = maxOmega / (2.0 * math.pi);
 
     test('bandwidth is capped by omega*tau <= 2 for flywheel', () {
@@ -313,12 +313,14 @@ void main() {
       expect(pid.warnings.any((w) => w.contains('Low inertia')), isTrue);
       // kD should reflect the increased damping.
       final omega = 2.0 * math.pi * pid.positionBandwidthHz!;
-      final kDNoBoostedZeta = (2.0 * 1.0 * lowFf.kA * omega - lowFf.kV) / 12.0;
+      // With kV/kA FF active, kD = 2·ζ·kA·ω / V_nom (no kV subtraction).
+      // Without the low-inertia boost, ζ = 1.0:
+      final kDNoBoostedZeta = 2.0 * 1.0 * lowFf.kA * omega / 12.0;
       expect(pid.kD, greaterThan(kDNoBoostedZeta.clamp(0, double.infinity)));
     });
 
     test('position: normal-inertia plant is still bandwidth-capped', () {
-      // normalFf: plantTau ≈ 162 ms → maxBw = 2.0/(2π×0.162) ≈ 1.96 Hz
+      // normalFf: plantTau ≈ 162 ms → maxBw = 3.0/(2π×0.162) ≈ 2.94 Hz
       final pid = PidAutoTuner.tunePosition(
         ff: normalFf,
         mechanismType: MechanismType.flywheel,

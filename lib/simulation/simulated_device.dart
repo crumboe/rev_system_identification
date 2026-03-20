@@ -303,7 +303,10 @@ class SimulatedPidFfController {
   double _prevError = 0.0;
   double _filteredDerivative = 0.0;
   double _prevVelocitySetpointRpm = 0.0;
+  double _prevPositionSetpoint = 0.0;
+  double _prevPositionVelocitySetpoint = 0.0;
   bool _firstVelocityTick = true;
+  bool _firstPositionTick = true;
   bool _firstTick = true;
 
   SimulatedPidFfController(this._params, this._physics);
@@ -314,7 +317,10 @@ class SimulatedPidFfController {
     _prevError = 0.0;
     _filteredDerivative = 0.0;
     _prevVelocitySetpointRpm = 0.0;
+    _prevPositionSetpoint = 0.0;
+    _prevPositionVelocitySetpoint = 0.0;
     _firstVelocityTick = true;
+    _firstPositionTick = true;
     _firstTick = true;
   }
 
@@ -413,6 +419,8 @@ class SimulatedPidFfController {
     final minOut = _params.getParamSync(_pidMinOutBySlot[s]);
 
     final ffKs = _params.getParamSync(_ffKsBySlot[s]);
+    final ffKv = _params.getParamSync(_ffKvBySlot[s]);
+    final ffKa = _params.getParamSync(_ffKaBySlot[s]);
     final ffKg = _params.getParamSync(_ffKgBySlot[s]);
     final ffKcos = _params.getParamSync(_ffKcosBySlot[s]);
     final ffKcosRatio = _params.getParamSync(_ffKcosRatioBySlot[s]);
@@ -423,7 +431,20 @@ class SimulatedPidFfController {
 
     // Convert raw measurement to user units via onboard CF.
     final measuredPos = _physics.noisyPositionRotations * pcf;
+    final measuredVelUser = _physics.noisyVelocityRpm * vcf;
     final error = setpointUserUnits - measuredPos;
+
+    // Compute setpoint velocity and acceleration from position setpoint
+    // differences (mirrors how kA is derived from setpoint in velocity mode).
+    final setpointVelocity = _firstPositionTick
+        ? 0.0
+        : (setpointUserUnits - _prevPositionSetpoint) / dtSeconds;
+    final setpointAccel = _firstPositionTick
+        ? 0.0
+        : (setpointVelocity - _prevPositionVelocitySetpoint) / dtSeconds;
+    _prevPositionSetpoint = setpointUserUnits;
+    _prevPositionVelocitySetpoint = setpointVelocity;
+    _firstPositionTick = false;
 
     // Integral with anti-windup
     if (iZone <= 0 || error.abs() < iZone) {
@@ -434,7 +455,7 @@ class SimulatedPidFfController {
 
     // Derivative: SPARK position PID uses measured velocity for the D term.
     // Convert raw velocity to user units via VCF.
-    double derivative = _firstTick ? 0.0 : -_physics.noisyVelocityRpm * vcf;
+    double derivative = _firstTick ? 0.0 : -measuredVelUser;
     _prevError = error;
     _firstTick = false;
 
@@ -449,9 +470,11 @@ class SimulatedPidFfController {
     final nomV = _physics.nominalVoltage;
     final pidOutput = (kP * error + kI * _integralAccum + kD * derivative) * nomV;
 
-    // FeedForward: kS*sign(error) + kG (elevator) or kCos*cos(pos) (arm)
-    // kV is NOT applied in position mode per REV docs
+    // FeedForward (firmware ≥25.0 / 2026): all terms active in position mode.
+    // kV applied to measured velocity, kA applied to setpoint acceleration.
     double ffOutput = ffKs * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0));
+    ffOutput += ffKv * measuredVelUser;
+    ffOutput += ffKa * setpointAccel;
     ffOutput += ffKg; // constant gravity (elevators); 0 for non-elevator
     if (ffKcos != 0.0) {
       // Arm gravity: kCos * cos(position * kCosRatio * 2π)

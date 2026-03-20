@@ -15,8 +15,9 @@ void main() {
   // ── Second-order position plant ──
   // G_p(s) = 1 / (kA·s² + kV·s) with kA = 0.1, kV = 2.0
   const ffPosition = FeedforwardGains(kS: 0.5, kV: 2.0, kA: 0.1);
-  // Position PID: kP = kA·ω²/12, kD = (2·kA·ω - kV)/12, ω=2π·5
-  // ω ≈ 31.4 → kP = 0.1·31.4²/12 ≈ 8.22, kD = (2·0.1·31.4 - 2)/12 ≈ 0.356
+  // Position PID: kP = kA·ω²/12, kD = 2·kA·ω/12, ω=2π·5
+  // ω ≈ 31.4 → kP = 0.1·31.4²/12 ≈ 8.22, kD = 2·0.1·31.4/12 ≈ 0.524
+  // (values below from older formula; used as-is for bode analysis tests)
   const posPid = PidResult(kP: 8.22, kI: 0.0, kD: 0.356);
 
   group('FrequencyResponse data model', () {

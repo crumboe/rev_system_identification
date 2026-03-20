@@ -184,12 +184,12 @@ void main() {
         desiredBandwidthHz: 5.0,
       );
       // plantTau = max(kA)/max(kV) = 0.004/0.020 = 0.2s
-      // maxOmega = 2.0 / 0.2 = 10 rad/s (~1.59 Hz, clamped from 5 Hz)
+      // maxOmega = 3.0 / 0.2 = 15 rad/s (~2.39 Hz, clamped from 5 Hz)
       // kP = r * max(kA) * omega^2 / Vnom
       const kA = 0.004;
       const kV = 0.020;
       final plantTau = kA / kV;
-      final omega = 2.0 / plantTau; // clamped
+      final omega = 3.0 / plantTau; // clamped
       final expected = 1.0 * kA * omega * omega / 12.0;
       expect(pid.kP, closeTo(expected, 0.001));
     });
@@ -211,7 +211,7 @@ void main() {
       );
       const kA = 0.004;
       const kV = 0.020;
-      const omega = 10.0; // bandwidth is clamped from 5 Hz to plant limit
+      const omega = 15.0; // bandwidth is clamped from 5 Hz to 3.0/plantTau
       const plantTau = kA / kV;
       final kP = kA * omega * omega / 12.0;
       final ti = PidAutoTuner.robustPositionIntegralTimeSec(
@@ -231,7 +231,7 @@ void main() {
       expect(pid.iZone, greaterThan(0));
     });
 
-    test('kD uses max(kV) in calculation', () {
+    test('kD is non-negative', () {
       final pid = PidAutoTuner.tuneRobustPosition(
         ffUnloaded: ffU,
         ffLoaded: ffL,
@@ -239,7 +239,7 @@ void main() {
         desiredBandwidthHz: 5.0,
         dampingRatio: 1.0,
       );
-      // kD should be non-negative
+      // With kV/kA FF active, kD = 2·ζ·kA·ω / V_nom (always positive)
       expect(pid.kD, greaterThanOrEqualTo(0));
     });
 
