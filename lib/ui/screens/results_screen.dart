@@ -8,6 +8,9 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+// Needed for PointerDeviceKind
+import 'dart:ui';
+
 import '../../data/test_data.dart';
 import '../../data/csv_exporter.dart';
 import '../../data/notebook_exporter.dart';
@@ -42,6 +45,23 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   String? _analysisError;
   bool _analyzed = false;
   bool _isPositionMode = false;
+
+  // Legacy PID calculation toggle (hidden, only for sim)
+  bool _legacyPidMode = false;
+
+  // Helper: returns true if all test runs are simulated
+  bool get _isSimulation {
+    final testRuns = ref.read(testRunsProvider);
+    // If any run is not simulated, treat as not sim
+    return testRuns.isNotEmpty && testRuns.every((r) => r.isSimulated == true);
+  }
+
+  // Hidden toggle activation: long-press on PID Gains title
+  void _toggleLegacyPidMode() {
+    if (_isSimulation) {
+      setState(() => _legacyPidMode = !_legacyPidMode);
+    }
+  }
 
   void _setLoopMode(bool isPosition) {
     if (isPosition != _isPositionMode) {
@@ -214,9 +234,48 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 24),
 
           // PID gains
-          const Text(
-            'PID Gains (Auto-Tuned)',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+
+          // PID Gains title with hidden legacy toggle (only in sim)
+          Listener(
+            onPointerDown: (event) {
+              if (_isSimulation) {
+                // Right-click (secondary button)
+                if (event.kind == PointerDeviceKind.mouse && event.buttons == 2) {
+                  _toggleLegacyPidMode();
+                }
+              }
+            },
+            child: GestureDetector(
+              onLongPress: _isSimulation ? _toggleLegacyPidMode : null,
+              onDoubleTap: _isSimulation ? _toggleLegacyPidMode : null,
+              child: Row(
+                children: [
+                  const Text(
+                    'PID Gains (Auto-Tuned)',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  if (_isSimulation && _legacyPidMode) ...[
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Color(0xFFB8860B),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'LEGACY PID',
+                        style: TextStyle(
+                          color: Color(0xFFFFFFFF),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 12),
 
@@ -752,7 +811,21 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       PidResult velPid;
       PidResult posPid;
 
-      if (ffLoaded != null) {
+
+      if (_isSimulation && _legacyPidMode) {
+        // Use legacy PID calculation for sim/legacy mode
+        velPid = PidAutoTuner.tuneVelocityLegacy(
+          ff: primaryFF,
+          mechanismType: config.type,
+          desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
+        );
+        posPid = PidAutoTuner.tunePositionLegacy(
+          ff: primaryFF,
+          mechanismType: config.type,
+          desiredBandwidthHz: tuningParams.positionBandwidthHz,
+          dampingRatio: tuningParams.dampingRatio,
+        );
+      } else if (ffLoaded != null) {
         // Robust PID: stable for both unloaded and loaded conditions.
         velPid = PidAutoTuner.tuneRobustVelocity(
           ffUnloaded: ff,
@@ -768,7 +841,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           dampingRatio: tuningParams.dampingRatio,
         );
       } else {
-        // Single-condition PID (existing behavior).
+        // Single-condition PID (current behavior).
         velPid = PidAutoTuner.tuneVelocity(
           ff: primaryFF,
           mechanismType: config.type,

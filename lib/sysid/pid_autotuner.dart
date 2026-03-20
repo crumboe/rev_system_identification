@@ -11,6 +11,66 @@ import '../mechanisms/mechanism.dart';
 
 /// Computes PID gains from identified feedforward constants.
 class PidAutoTuner {
+
+    /// Legacy: Compute PID gains for velocity control (ignores kV/kA, uses only kS)
+    static PidResult tuneVelocityLegacy({
+      required FeedforwardGains ff,
+      required MechanismType mechanismType,
+      double desiredTimeConstantMs = 100.0,
+      double controlPeriodMs = 1.0,
+      double transportDelaySec = defaultTransportDelaySec,
+    }) {
+      // Legacy: treat plant as 1/kV, ignore kA
+      const nominalVoltage = 12.0;
+      final warnings = <String>[];
+      final kV = ff.kV > 0 ? ff.kV : 1.0; // avoid div by zero
+      final tau = desiredTimeConstantMs / 1000.0;
+      // Legacy: kP = 1 / (kV * tau * V_nom)
+      final kP = 1.0 / (kV * tau * nominalVoltage);
+      const kI = 0.0;
+      const kD = 0.0;
+      return PidResult(
+        kP: kP,
+        kI: kI,
+        kD: kD,
+        velocityTimeConstantMs: tau * 1000.0,
+        warnings: warnings,
+      );
+    }
+
+    /// Legacy: Compute PID gains for position control (ignores kV/kA, uses only kS)
+    static PidResult tunePositionLegacy({
+      required FeedforwardGains ff,
+      required MechanismType mechanismType,
+      double desiredBandwidthHz = 5.0,
+      double dampingRatio = 1.0,
+      double controlPeriodMs = 1.0,
+      double? maxVelocity,
+      double transportDelaySec = defaultTransportDelaySec,
+    }) {
+      // Legacy: treat plant as 1/(kV * s), ignore kA
+      const nominalVoltage = 12.0;
+      final warnings = <String>[];
+      final kV = ff.kV > 0 ? ff.kV : 1.0;
+      final r = _velocityToPositionRateFactor(mechanismType);
+      final omega = 2.0 * math.pi * desiredBandwidthHz;
+      final zeta = dampingRatio;
+      // Legacy: kP = r * kV * omega^2 / V_nom
+      final kP = r * kV * omega * omega / nominalVoltage;
+      // Legacy: kD = 2 * zeta * kV * omega / V_nom
+      final kD = 2.0 * zeta * kV * omega / nominalVoltage;
+      const kI = 0.0;
+      // D-filter as in new method
+      final dFilter = kD > 0 ? computeDFilter(omega / (2.0 * math.pi)) : 0.0;
+      return PidResult(
+        kP: kP,
+        kI: kI,
+        kD: kD,
+        dFilter: dFilter,
+        positionBandwidthHz: omega / (2.0 * math.pi),
+        warnings: warnings,
+      );
+    }
   /// Plant time constant threshold (seconds).  Below this, the system has very
   /// low inertia and gains are automatically de-rated for robustness against
   /// nonlinearities like backlash and stiction.

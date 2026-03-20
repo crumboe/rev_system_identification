@@ -124,6 +124,9 @@ class TestRun {
   /// The load mass (kg) applied during this run (metadata).
   final double? loadMassKg;
 
+  /// True if this test run was performed in simulation.
+  final bool isSimulated;
+
   TestRun({
     required this.id,
     required this.startTime,
@@ -134,6 +137,7 @@ class TestRun {
     required this.testParams,
     this.loadCondition,
     this.loadMassKg,
+    this.isSimulated = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -146,22 +150,24 @@ class TestRun {
         'data': data.map((d) => d.toJson()).toList(),
         if (loadCondition != null) 'loadCondition': loadCondition!.name,
         if (loadMassKg != null) 'loadMassKg': loadMassKg,
+        'isSimulated': isSimulated,
       };
 
-  factory TestRun.fromJson(Map<String, dynamic> json) => TestRun(
-        id: json['id'] as String,
-        startTime: DateTime.parse(json['startTime'] as String),
-        mechanismType: MechanismType.values.byName(json['mechanismType'] as String),
-        testType: TestType.values.byName(json['testType'] as String),
-        durationSeconds: (json['durationSeconds'] as num).toDouble(),
-        testParams: SysIdTestParams.fromJson(json['testParams'] as Map<String, dynamic>),
-        data: (json['data'] as List)
-            .map((d) => DataPoint.fromJson(d as Map<String, dynamic>))
-            .toList(),
-        loadCondition: json['loadCondition'] != null
-            ? LoadCondition.values.byName(json['loadCondition'] as String)
-            : null,
-        loadMassKg: (json['loadMassKg'] as num?)?.toDouble(),
+    factory TestRun.fromJson(Map<String, dynamic> json) => TestRun(
+      id: json['id'] as String,
+      startTime: DateTime.parse(json['startTime'] as String),
+      mechanismType: MechanismType.values.byName(json['mechanismType'] as String),
+      testType: TestType.values.byName(json['testType'] as String),
+      durationSeconds: (json['durationSeconds'] as num).toDouble(),
+      testParams: SysIdTestParams.fromJson(json['testParams'] as Map<String, dynamic>),
+      data: (json['data'] as List)
+        .map((d) => DataPoint.fromJson(d as Map<String, dynamic>))
+        .toList(),
+      loadCondition: json['loadCondition'] != null
+        ? LoadCondition.values.byName(json['loadCondition'] as String)
+        : null,
+      loadMassKg: (json['loadMassKg'] as num?)?.toDouble(),
+      isSimulated: json['isSimulated'] == true,
       );
 
   /// Number of data points recorded.

@@ -450,6 +450,7 @@ class TestRunner {
       testParams: testParams,
       loadCondition: loadCondition,
       loadMassKg: loadMassKg,
+      isSimulated: device.isSimulated,
     );
 
     return TestExecutionResult(
