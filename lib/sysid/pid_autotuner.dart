@@ -82,13 +82,25 @@ class PidAutoTuner {
 
   /// Compute PID gains for velocity control.
   ///
-  /// The plant transfer function from voltage to velocity is approximately:
+  /// The raw plant from voltage to velocity is:
   ///   G(s) = 1 / (kA·s + kV)
+  /// with static friction kS·sign(ω) acting as a disturbance.
   ///
-  /// We design a PI controller for velocity using model-inversion:
-  ///   kP ≈ kA / (desired time constant)
-  ///   kI = 0 (usually not needed; risks windup)
-  ///   kF = kV (feedforward term)
+  /// With firmware ≥25.0 the controller applies all three feedforward
+  /// terms in velocity mode:
+  ///   V_ff = kV·setpoint + kA·d(setpoint)/dt + kS·sign(setpoint)
+  ///
+  /// At or near steady state (velocity ≈ setpoint):
+  ///   • kV·setpoint cancels the plant’s kV·ω back-EMF term
+  ///   • kS·sign(setpoint) cancels the plant’s kS·sign(ω) friction
+  ///   • kA·d(setpoint)/dt cancels the kA·α inertia term for smooth
+  ///     setpoint changes (zero for step inputs after the first tick)
+  ///
+  /// The effective plant seen by the PID after feedforward cancellation
+  /// is approximately a pure integrator: G_eff(s) ≈ 1/(kA·s).
+  ///
+  /// P control on a pure integrator gives closed-loop pole at -1/τ:
+  ///   kP = kA / (τ · V_nom)
   ///
   /// [controlPeriodMs] is the SPARK controller's internal loop period (default 1ms).
   static PidResult tuneVelocity({
@@ -154,13 +166,15 @@ class PidAutoTuner {
   /// Compute PID gains for position control.
   ///
   /// Uses pole placement for a second-order system.  With firmware ≥25.0
-  /// the SPARK applies kV and kA feedforward in position mode, so the
+  /// the SPARK applies kS, kV, and kA feedforward in position mode, so the
   /// effective plant seen by the PID is a near-pure double integrator:
   ///   G_eff(s) ≈ 1 / (r·kA·s²)
   ///
   /// The raw plant from voltage to position is:
-  ///   G(s) = 1 / (r·kA·s² + r·kV·s)
-  /// but kV·measured_velocity feedforward cancels the kV·s damping term.
+  ///   G(s) = 1 / (r·kA·s² + r·kV·s)    (plus kS·sign(ω) friction)
+  /// but kV·measured_velocity feedforward cancels the kV·s damping term,
+  /// kS·sign(error) opposes static friction, and kA·setpoint_accel
+  /// compensates the inertia term for smooth profiles.
   ///
   /// `r` is the ratio between the velocity user unit and the position
   /// rate (d(pos_user)/dt).  For mechanisms where velocity is already the
@@ -326,6 +340,10 @@ class PidAutoTuner {
   /// Compute robust velocity PID gains stable for both unloaded and loaded
   /// plant conditions.
   ///
+  /// With kS/kV/kA feedforward active (firmware ≥25.0), the effective plant
+  /// is a pure integrator 1/(kA·s).  The PID handles only residual error
+  /// from feedforward model mismatch between loaded and unloaded conditions.
+  ///
   /// - kP sized for the lighter plant (min kA) so proportional action
   ///   never exceeds what either plant can track.
   /// - kI is a slow integral to reject the gravity/weight disturbance ΔkG.
@@ -405,6 +423,10 @@ class PidAutoTuner {
 
   /// Compute robust position PID gains stable for both unloaded and loaded
   /// plant conditions.
+  ///
+  /// With kS/kV/kA feedforward active (firmware ≥25.0), the effective plant
+  /// is a double integrator 1/(r·kA·s²).  The PID provides all damping and
+  /// handles residual FF mismatch between loaded and unloaded conditions.
   ///
   /// - kP and kD sized for **heavier** kA (max) to avoid over-driving the
   ///   loaded plant — the lighter plant simply settles faster (no overshoot).

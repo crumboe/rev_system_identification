@@ -203,6 +203,7 @@ class _PidPlaygroundState extends State<PidPlayground>
     double integral = 0;
     double prevError = setpoint;
     double velocity = 0;
+    double prevSetpoint = 0.0; // for kA: d(setpoint)/dt
 
     final actual = <FlSpot>[];
     final reference = <FlSpot>[];
@@ -225,7 +226,9 @@ class _PidPlaygroundState extends State<PidPlayground>
           (_kP * error + _kI * integral + _kD * derivative) * nominalVoltage;
 
       final setpointSign = setpoint >= 0 ? 1.0 : -1.0;
-      final ffOutput = _kS * setpointSign + _kV * setpoint + _kG;
+      final setpointAccel = (setpoint - prevSetpoint) / dt;
+      prevSetpoint = setpoint;
+      final ffOutput = _kS * setpointSign + _kV * setpoint + _kA * setpointAccel + _kG;
       final voltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
 

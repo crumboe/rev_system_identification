@@ -358,6 +358,17 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
           kCos: kCos,
           kCosRatio: kCosRatio,
         );
+        // When deploying both velocity (Slot 0) + position (Slot 1),
+        // write FF to Slot 1 as well so position closed-loop has
+        // kS/kV/kA feedforward active.
+        if (mode == _DeployPidMode.both) {
+          await device.parameters.setParameter(kParamSlot1FfKs, ff.kS);
+          await device.parameters.setParameter(kParamSlot1FfKv, ff.kV);
+          await device.parameters.setParameter(kParamSlot1FfKa, ff.kA);
+          await device.parameters.setParameter(kParamSlot1FfKg, kG);
+          await device.parameters.setParameter(kParamSlot1FfKcos, kCos);
+          await device.parameters.setParameter(kParamSlot1FfKcosRatio, kCosRatio);
+        }
       } on ParameterWriteException catch (e) {
         errors.add(
           'FF param ${e.paramId} (sent ${e.sentValue}, got ${e.readBackValue})',
