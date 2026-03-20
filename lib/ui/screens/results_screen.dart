@@ -49,18 +49,9 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   // Legacy PID calculation toggle (hidden, only for sim)
   bool _legacyPidMode = false;
 
-  // Helper: returns true if all test runs are simulated
-  bool get _isSimulation {
-    final testRuns = ref.read(testRunsProvider);
-    // If any run is not simulated, treat as not sim
-    return testRuns.isNotEmpty && testRuns.every((r) => r.isSimulated == true);
-  }
-
   // Hidden toggle activation: long-press on PID Gains title
   void _toggleLegacyPidMode() {
-    if (_isSimulation) {
-      setState(() => _legacyPidMode = !_legacyPidMode);
-    }
+    setState(() => _legacyPidMode = !_legacyPidMode);
   }
 
   void _setLoopMode(bool isPosition) {
@@ -237,24 +228,23 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
 
           // PID Gains title with hidden legacy toggle (only in sim)
           Listener(
+            behavior: HitTestBehavior.translucent,
             onPointerDown: (event) {
-              if (_isSimulation) {
-                // Right-click (secondary button)
-                if (event.kind == PointerDeviceKind.mouse && event.buttons == 2) {
-                  _toggleLegacyPidMode();
-                }
+              // Right-click (secondary button)
+              if (event.kind == PointerDeviceKind.mouse && event.buttons == 2) {
+                _toggleLegacyPidMode();
               }
             },
             child: GestureDetector(
-              onLongPress: _isSimulation ? _toggleLegacyPidMode : null,
-              onDoubleTap: _isSimulation ? _toggleLegacyPidMode : null,
+              onLongPress: _toggleLegacyPidMode,
+              onDoubleTap: _toggleLegacyPidMode,
               child: Row(
                 children: [
                   const Text(
                     'PID Gains (Auto-Tuned)',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  if (_isSimulation && _legacyPidMode) ...[
+                  if (_legacyPidMode) ...[
                     const SizedBox(width: 10),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -812,7 +802,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       PidResult posPid;
 
 
-      if (_isSimulation && _legacyPidMode) {
+      if (_legacyPidMode) {
         // Use legacy PID calculation for sim/legacy mode
         velPid = PidAutoTuner.tuneVelocityLegacy(
           ff: primaryFF,
