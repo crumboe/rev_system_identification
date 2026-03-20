@@ -211,25 +211,42 @@ class ControlApi implements IControlApi {
   /// Sends both the legacy frame-rate CAN commands (apiClass 0x07) AND
   /// writes the status-period parameters (IDs 158–165, 199, 224) so that
   /// both old (<25.0) and new (≥25.0) firmware respects the settings.
-  void configureForSysId() {
+  ///
+  /// A short delay is inserted between each command so the controller has
+  /// time to process each frame-rate change before the next arrives.
+  Future<void> configureForSysId() async {
+    const gap = Duration(milliseconds: 15);
     // Legacy frame-rate commands (apiClass 0x07).
     setStatusFrameRate(0, 10); // Applied output — 10ms
+    await Future<void>.delayed(gap);
     setStatusFrameRate(1, 10); // Velocity, voltage, current — 10ms
+    await Future<void>.delayed(gap);
     setStatusFrameRate(2, 10); // Position — 10ms
+    await Future<void>.delayed(gap);
     setStatusFrameRate(3, 500); // Analog — slow
+    await Future<void>.delayed(gap);
     setStatusFrameRate(4, 500); // Alt encoder — slow
+    await Future<void>.delayed(gap);
     setStatusFrameRate(5, 10); // Abs encoder position — 10ms (for absolute encoder feedback)
+    await Future<void>.delayed(gap);
     setStatusFrameRate(6, 500); // Abs encoder vel — slow
   }
 
   /// Restore default frame rates.
-  void restoreDefaultFrameRates() {
+  Future<void> restoreDefaultFrameRates() async {
+    const gap = Duration(milliseconds: 15);
     setStatusFrameRate(0, 10);
+    await Future<void>.delayed(gap);
     setStatusFrameRate(1, 20);
+    await Future<void>.delayed(gap);
     setStatusFrameRate(2, 20);
+    await Future<void>.delayed(gap);
     setStatusFrameRate(3, 50);
+    await Future<void>.delayed(gap);
     setStatusFrameRate(4, 20);
+    await Future<void>.delayed(gap);
     setStatusFrameRate(5, 200);
+    await Future<void>.delayed(gap);
     setStatusFrameRate(6, 200);
   }
 }

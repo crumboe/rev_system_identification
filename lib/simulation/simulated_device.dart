@@ -832,12 +832,12 @@ class SimulatedControlApi implements IControlApi {
   }
 
   @override
-  void configureForSysId() {
+  Future<void> configureForSysId() async {
     // No-op for simulation.
   }
 
   @override
-  void restoreDefaultFrameRates() {
+  Future<void> restoreDefaultFrameRates() async {
     // No-op for simulation.
   }
 }

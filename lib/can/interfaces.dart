@@ -233,6 +233,6 @@ abstract class IControlApi {
   Future<SparkResponse> factoryReset();
 
   void setStatusFrameRate(int statusIndex, int rateMs);
-  void configureForSysId();
-  void restoreDefaultFrameRates();
+  Future<void> configureForSysId();
+  Future<void> restoreDefaultFrameRates();
 }

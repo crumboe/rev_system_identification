@@ -668,10 +668,7 @@ class ValidationRunner {
 
       // Set fast frame rates so voltage, current, position, and velocity
       // telemetry arrive at their highest rate during the test.
-      device.control.configureForSysId();
-
-      // Allow the frame-rate configuration to settle before further writes.
-      await Future<void>.delayed(const Duration(milliseconds: 25));
+      await device.control.configureForSysId();
 
       // Set the closed-loop feedback sensor on the controller.
       await device.parameters.setClosedLoopFeedbackSensor(
@@ -778,7 +775,7 @@ class ValidationRunner {
 
       try {
         device.control.stop();
-        device.control.restoreDefaultFrameRates();
+        await device.control.restoreDefaultFrameRates();
         device.heartbeat.disable();
       } catch (_) {}
 

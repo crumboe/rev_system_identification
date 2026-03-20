@@ -176,16 +176,13 @@ class TestRunner {
     }
 
     // Set fast frame rates for data collection.
-    device.control.configureForSysId();
-
-    // Small delay for settings to take effect.
-    await Future.delayed(const Duration(milliseconds: 100));
+    await device.control.configureForSysId();
   }
 
   /// Restore controller to safe default settings after testing.
   Future<void> _restoreController() async {
     device.control.stop();
-    device.control.restoreDefaultFrameRates();
+    await device.control.restoreDefaultFrameRates();
     await device.parameters.setIdleMode(kIdleModeBrake);
   }
 
