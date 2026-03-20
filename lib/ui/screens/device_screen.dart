@@ -8,6 +8,8 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../can/status_parser.dart';
+
+import '../tutorials/tutorial_keys.dart';
 import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../devices/serial_port_factory.dart'
@@ -384,6 +386,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             children: [
               Flexible(
                 child: ComboBox<String>(
+                  key: TutorialKeys.devicePortDropdown,
                   placeholder: const Text('Select COM port'),
                   isExpanded: true,
                   value: _selectedPort,
@@ -403,6 +406,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               ),
               const SizedBox(width: 8),
               Button(
+                key: TutorialKeys.deviceConnectButton,
                 onPressed: _selectedPort != null && !_connecting && !_autoConnecting
                     ? _connect
                     : null,

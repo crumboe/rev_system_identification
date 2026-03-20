@@ -8,6 +8,8 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+import '../tutorials/tutorial_keys.dart';
+
 // Needed for PointerDeviceKind
 import 'dart:ui';
 
@@ -83,6 +85,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             ),
             const CommandBarSeparator(),
             CommandBarButton(
+              key: TutorialKeys.exportButton,
               icon: const Icon(FluentIcons.download),
               label: const Text('Export CSV'),
               onPressed: testRuns.isNotEmpty
@@ -169,9 +172,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 24),
 
           // Feedforward gains
-          const Text(
+          Text(
+            key: TutorialKeys.feedforwardGainsCard,
             'Feedforward Constants',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           if (_ffLoaded != null && _ffBlended != null) ...[
@@ -270,6 +274,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 12),
 
           Row(
+            key: TutorialKeys.pidGainsCard,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_velPid != null)

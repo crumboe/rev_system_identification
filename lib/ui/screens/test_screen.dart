@@ -13,6 +13,8 @@ import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../simulation/project_physics_factory.dart';
+
+import '../tutorials/tutorial_keys.dart';
 import '../../simulation/simulated_device.dart';
 import '../../state/app_state.dart';
 import '../../sysid/test_runner.dart';
@@ -278,6 +280,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
 
             // Test buttons
             Wrap(
+              key: TutorialKeys.testTypeSelector,
               spacing: 8,
               runSpacing: 8,
               children: [
@@ -319,6 +322,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 ),
                 const SizedBox(width: 16),
                 FilledButton(
+                  key: TutorialKeys.startTestButton,
                   onPressed: canRunForward
                       ? () => _runFullCharacterization(device, config, testParams)
                       : null,
@@ -339,6 +343,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                   Expanded(
                     flex: 3,
                     child: ChartWalkthrough(
+                      key: TutorialKeys.testChart,
                       isActive: _walkthroughActive,
                       steps: liveChartWalkthroughSteps(),
                       onDismiss: () =>

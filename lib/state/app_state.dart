@@ -14,6 +14,7 @@ import '../data/test_data.dart';
 import '../sysid/test_runner.dart' show TestProgress;
 import '../sysid/validation_runner.dart'
     show ValidationParams, ValidationResult, ValidationProgress;
+import '../ui/tutorials/tutorial_models.dart' show TutorialTopic;
 
 // ---------------------------------------------------------------------------
 // Communication log
@@ -249,6 +250,42 @@ final testProgressProvider = StateProvider<TestProgress?>((ref) => null);
 final walkthroughSeenProvider = StateProvider.family<bool, String>(
   (ref, chartKey) => false,
 );
+
+// ---------------------------------------------------------------------------
+// Tutorial system state
+// ---------------------------------------------------------------------------
+
+/// Currently active tutorial topic (null when no tutorial is active).
+final activeTutorialProvider = StateProvider<TutorialTopic?>((ref) => null);
+
+/// Current step index within the active tutorial.
+final activeTutorialStepProvider = StateProvider<int>((ref) => 0);
+
+/// Whether the user has visited a given screen index (for suggestion banners).
+final screenVisitedProvider = StateProvider.family<bool, int>(
+  (ref, screenIndex) => false,
+);
+
+/// Tracks which tutorial topics the user has completed this session.
+final tutorialCompletionProvider =
+    StateNotifierProvider<TutorialCompletionNotifier, Set<String>>((ref) {
+  return TutorialCompletionNotifier();
+});
+
+/// Notifier tracking completed tutorial topic IDs.
+class TutorialCompletionNotifier extends StateNotifier<Set<String>> {
+  TutorialCompletionNotifier() : super({});
+
+  void markComplete(String topicId) {
+    state = {...state, topicId};
+  }
+
+  bool isComplete(String topicId) => state.contains(topicId);
+
+  void reset() {
+    state = {};
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Theme

@@ -8,6 +8,8 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../can/spark_protocol.dart';
+
+import '../tutorials/tutorial_keys.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../state/app_state.dart';
@@ -241,6 +243,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         ),
         const SizedBox(height: 12),
         RadioGroup<MechanismType>(
+          key: TutorialKeys.mechanismTypeSelector,
           groupValue: config.type,
           onChanged: (value) {
             if (value != null) {
@@ -335,6 +338,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           ),
         ),
         _ConfigRow(
+          key: TutorialKeys.encoderConfigSection,
           label: 'Feedback Sensor',
           child: ComboBox<FeedbackSensor>(
             value: config.feedbackSensor,
@@ -386,6 +390,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
           child: SizedBox(
             width: 210,
             child: ExpressionField(
+              key: TutorialKeys.conversionFactorField,
               value: config.positionConversionFactor,
               placeholder: _positionCfPlaceholder(config),
               onChanged: (v) {
@@ -411,9 +416,10 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
         ),
         // Soft limits
         const SizedBox(height: 24),
-        const Text(
+        Text(
+          key: TutorialKeys.softLimitsSection,
           'Soft Limits',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         InfoBar(
@@ -535,6 +541,7 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     JogPanel(
+                      key: TutorialKeys.jogControls,
                       device: device,
                       config: config,
                       onSetForwardLimit: (pos) =>
@@ -767,7 +774,7 @@ class _ConfigRow extends StatelessWidget {
   final String label;
   final Widget child;
 
-  const _ConfigRow({required this.label, required this.child});
+  const _ConfigRow({super.key, required this.label, required this.child});
 
   @override
   Widget build(BuildContext context) {
