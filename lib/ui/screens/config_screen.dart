@@ -159,7 +159,34 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     } else {
       // Primary (relative) encoder: send a "set encoder position to 0"
       // control command so the firmware resets its accumulator.
+      //
+      // The SPARK controller only processes control frames while the
+      // heartbeat is running and enabled.  Enable it temporarily so the
+      // setEncoderPosition frame is accepted, then restore the previous
+      // heartbeat state.
+      final wasRunning = device.heartbeat.isRunning;
+      final wasEnabled = device.heartbeat.isEnabled;
+
+      if (!wasRunning) {
+        device.heartbeat.start(enabled: true);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      } else if (!wasEnabled) {
+        device.heartbeat.enable();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+
       device.control.setEncoderPosition(0.0);
+
+      // Brief pause so the frame reaches the controller before we
+      // restore the disabled heartbeat.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Restore previous heartbeat state.
+      if (!wasRunning) {
+        device.heartbeat.stop();
+      } else if (!wasEnabled) {
+        device.heartbeat.disable();
+      }
 
       if (mounted) {
         setState(() => _currentPosition = 0.0);
