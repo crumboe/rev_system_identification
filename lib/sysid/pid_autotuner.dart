@@ -399,7 +399,11 @@ class PidAutoTuner {
       closedLoopTauSec: tau,
       plantTauSec: plantTau,
     );
-    final kI = kP / integralTimeSec;
+    // The SPARK firmware accumulates error without multiplying by dt:
+    //   iAccum += error   (once per 1 ms tick)
+    // so the effective integral is 1/dt ≈ 1000× larger than continuous-time.
+    // Scale kI down by the control period to compensate.
+    final kI = (kP / integralTimeSec) * _sparkControlPeriodSec;
 
     // I-zone: bound accumulation to 2× |ΔkG| to prevent windup.
     final deltaKG = (ffLoaded.kG - ffUnloaded.kG).abs();
@@ -508,7 +512,8 @@ class PidAutoTuner {
       omegaRadPerSec: omega,
       plantTauSec: plantTau,
     );
-    final kI = kP / integralTimeSec;
+    // Scale by control period — see comment in tuneRobustVelocity.
+    final kI = (kP / integralTimeSec) * _sparkControlPeriodSec;
 
     // I-zone: |ΔkG| / kI bounds accumulation.
     final deltaKG = (ffLoaded.kG - ffUnloaded.kG).abs();

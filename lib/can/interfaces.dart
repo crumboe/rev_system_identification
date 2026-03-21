@@ -35,6 +35,9 @@ abstract class ISparkConnection {
   /// The latest parsed Status Frame 2 (position).
   StatusFrame2? get lastStatus2;
 
+  /// The latest parsed Status Frame 3 (analog sensor data).
+  StatusFrame3? get lastStatus3;
+
   /// The latest parsed Status Frame 5 (absolute encoder position).
   StatusFrame5? get lastStatus5;
 

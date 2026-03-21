@@ -124,6 +124,21 @@ class TestRunner {
     return filtered;
   }
 
+  /// Read position from the status frame matching the configured feedback sensor.
+  double? _readPosition(MechanismConfig config) {
+    final conn = device.connection;
+    return switch (config.feedbackSensor) {
+      FeedbackSensor.absoluteEncoder =>
+        conn.lastStatus5?.absoluteEncoderPosition ??
+            conn.lastStatus2?.positionRotations,
+      FeedbackSensor.analogSensor =>
+        conn.lastStatus3?.analogPosition ??
+            conn.lastStatus2?.positionRotations,
+      FeedbackSensor.primaryEncoder =>
+        conn.lastStatus2?.positionRotations,
+    };
+  }
+
   // -----------------------------------------------------------------------
   // Test preparation
   // -----------------------------------------------------------------------
@@ -333,7 +348,7 @@ class TestRunner {
         // Only check the limit in the test's travel direction — the
         // mechanism starts at/near one limit and moves toward the other.
         if (mechanismConfig.hasSoftLimits && elapsedSeconds > 0.5) {
-          final pos = device.connection.lastStatus2?.positionRotations;
+          final pos = _readPosition(mechanismConfig);
           final vel = device.connection.lastStatus1?.velocityRpm;
           if (pos != null && vel != null) {
             // Status frames already report in user units (onboard CFs).
@@ -382,7 +397,7 @@ class TestRunner {
         if (status1 != null && _prevVoltage != null) {
           // Status frames already report in user units (onboard CFs).
           final velocity = status1.velocityRpm;
-          final position = status2?.positionRotations ?? 0.0;
+          final position = _readPosition(mechanismConfig) ?? 0.0;
           final current =
               filteredCurrent ?? _filterCurrentForDisplay(status1.outputCurrentAmps);
 
@@ -408,7 +423,7 @@ class TestRunner {
           elapsedSeconds: elapsedSeconds,
           currentVoltage: targetVoltage,
           currentVelocity: status1?.velocityRpm ?? 0.0,
-          currentPosition: status2?.positionRotations ?? 0.0,
+          currentPosition: _readPosition(mechanismConfig) ?? 0.0,
           currentCurrent: filteredCurrent ??
               _filteredCurrentAmps ??
               status1?.outputCurrentAmps ??

@@ -78,9 +78,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       notifier.setMotorInverted(inverted >= 0.5);
       if (currentLimit > 0) notifier.setCurrentLimit(currentLimit);
       notifier.setFeedbackSensor(
-        sensorVal >= 1.5
-            ? FeedbackSensor.absoluteEncoder
-            : FeedbackSensor.primaryEncoder,
+        switch (sensorVal.round()) {
+          0 => FeedbackSensor.analogSensor,
+          2 => FeedbackSensor.absoluteEncoder,
+          _ => FeedbackSensor.primaryEncoder,
+        },
       );
       if (pcf != 0) notifier.setPositionConversionFactor(pcf);
       if (vcf != 0) notifier.setVelocityConversionFactor(vcf);
@@ -101,6 +103,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     double rawPos;
     if (config.feedbackSensor == FeedbackSensor.absoluteEncoder) {
       rawPos = device.connection.lastStatus5?.absoluteEncoderPosition ??
+          (device.connection.lastStatus2?.positionRotations ?? 0.0);
+    } else if (config.feedbackSensor == FeedbackSensor.analogSensor) {
+      rawPos = device.connection.lastStatus3?.analogPosition ??
           (device.connection.lastStatus2?.positionRotations ?? 0.0);
     } else {
       rawPos = device.connection.lastStatus2?.positionRotations ?? 0.0;
@@ -404,7 +409,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               child: NumberBox<double>(
                 value: config.forwardSoftLimit,
                 onChanged: (v) {
-                  if (v != null) configNotifier.setForwardSoftLimit(v);
+                  if (v != null) {
+                    configNotifier.setForwardSoftLimit(v);
+                    device?.parameters.setForwardSoftLimit(v);
+                    device?.parameters.setForwardSoftLimitEnabled(true);
+                  }
                 },
                 placeholder: 'Max position',
               ),
@@ -418,7 +427,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               child: NumberBox<double>(
                 value: config.reverseSoftLimit,
                 onChanged: (v) {
-                  if (v != null) configNotifier.setReverseSoftLimit(v);
+                  if (v != null) {
+                    configNotifier.setReverseSoftLimit(v);
+                    device?.parameters.setReverseSoftLimit(v);
+                    device?.parameters.setReverseSoftLimitEnabled(true);
+                  }
                 },
                 placeholder: 'Min position',
               ),
@@ -495,10 +508,16 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                       JogPanel(
                         device: device,
                         config: config,
-                        onSetForwardLimit: (pos) =>
-                            configNotifier.setForwardSoftLimit(pos),
-                        onSetReverseLimit: (pos) =>
-                            configNotifier.setReverseSoftLimit(pos),
+                        onSetForwardLimit: (pos) {
+                            configNotifier.setForwardSoftLimit(pos);
+                            device?.parameters.setForwardSoftLimit(pos);
+                            device?.parameters.setForwardSoftLimitEnabled(true);
+                        },
+                        onSetReverseLimit: (pos) {
+                            configNotifier.setReverseSoftLimit(pos);
+                            device?.parameters.setReverseSoftLimit(pos);
+                            device?.parameters.setReverseSoftLimitEnabled(true);
+                        },
                         onPositionChanged: (pos) =>
                             setState(() => _currentPosition = pos),
                       ),

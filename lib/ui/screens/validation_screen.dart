@@ -144,6 +144,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       rawPos =
           device.connection.lastStatus5?.absoluteEncoderPosition ??
           (device.connection.lastStatus2?.positionRotations ?? 0.0);
+    } else if (config.feedbackSensor == FeedbackSensor.analogSensor) {
+      rawPos = device.connection.lastStatus3?.analogPosition ??
+          (device.connection.lastStatus2?.positionRotations ?? 0.0);
     } else {
       rawPos = device.connection.lastStatus2?.positionRotations ?? 0.0;
     }

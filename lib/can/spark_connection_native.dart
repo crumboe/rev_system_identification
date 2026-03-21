@@ -39,6 +39,7 @@ class SparkConnection implements ISparkConnection {
   StatusFrame0? lastStatus0;
   StatusFrame1? lastStatus1;
   StatusFrame2? lastStatus2;
+  StatusFrame3? lastStatus3;
   StatusFrame5? lastStatus5;
 
   /// Faults & warnings from new-protocol Status Frame 1.
@@ -435,6 +436,7 @@ class SparkConnection implements ISparkConnection {
       if (parsed is StatusFrame0) lastStatus0 = parsed;
       if (parsed is StatusFrame1) lastStatus1 = parsed;
       if (parsed is StatusFrame2) lastStatus2 = parsed;
+      if (parsed is StatusFrame3) lastStatus3 = parsed;
       if (parsed is StatusFrame5) lastStatus5 = parsed;
     }
 
