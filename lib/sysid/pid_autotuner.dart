@@ -11,6 +11,126 @@ import '../mechanisms/mechanism.dart';
 
 /// Computes PID gains from identified feedforward constants.
 class PidAutoTuner {
+
+    /// Legacy: Compute PID gains for velocity control.
+    ///
+    /// Replicates the pre-v2.0.8 formula (before kV feedforward cancellation
+    /// was accounted for). Formula: kP = kA / (tau * V_nom), same tau-clamping
+    /// as the current tuner. The velocity formula was unchanged between the
+    /// legacy and new versions — only position kD differed.
+    static PidResult tuneVelocityLegacy({
+      required FeedforwardGains ff,
+      required MechanismType mechanismType,
+      double desiredTimeConstantMs = 100.0,
+      double controlPeriodMs = 1.0,
+      double transportDelaySec = defaultTransportDelaySec,
+    }) {
+      // Velocity formula was identical between legacy and new versions.
+      return tuneVelocity(
+        ff: ff,
+        mechanismType: mechanismType,
+        desiredTimeConstantMs: desiredTimeConstantMs,
+        controlPeriodMs: controlPeriodMs,
+        transportDelaySec: transportDelaySec,
+      );
+    }
+
+    /// Legacy: Compute PID gains for position control.
+    ///
+    /// Replicates the pre-v2.0.8 formula (before kV feedforward cancellation
+    /// was accounted for in position mode). The key difference from the current
+    /// tuner:
+    ///   - kD = (2·ζ·kA·ω - kV) / V_nom   (subtracts kV, the plant's natural
+    ///     damping that the PID must overcome — because firmware did NOT apply
+    ///     kV FF in position mode at the time)
+    ///   - omega capped at maxOmegaTau/plantTau with _maxOmegaTauProduct = 2.0
+    ///     (tighter cap, before the feedforward linearization relaxed it)
+    static PidResult tunePositionLegacy({
+      required FeedforwardGains ff,
+      required MechanismType mechanismType,
+      double desiredBandwidthHz = 5.0,
+      double dampingRatio = 1.0,
+      double controlPeriodMs = 1.0,
+      double? maxVelocity,
+      double transportDelaySec = defaultTransportDelaySec,
+    }) {
+      const nominalVoltage = 12.0;
+      // Legacy omega cap: tighter than the current 3.0 because kV damping
+      // was NOT cancelled by feedforward, so higher bandwidth risked instability.
+      const legacyMaxOmegaTauProduct = 2.0;
+      var omega = 2.0 * math.pi * desiredBandwidthHz;
+      var zeta = dampingRatio;
+      final warnings = <String>[];
+      final double r = _velocityToPositionRateFactor(mechanismType);
+
+      if (ff.kA > 0 && ff.kV > 0) {
+        final plantTau = ff.kA / ff.kV;
+
+        // Bandwidth cap (legacy: tighter at 2.0).
+        final maxOmegaTau = legacyMaxOmegaTauProduct / plantTau;
+        if (omega > maxOmegaTau) {
+          final oldBw = omega / (2.0 * math.pi);
+          omega = maxOmegaTau;
+          warnings.add(
+            'Plant \u03c4 = ${(plantTau * 1000).toStringAsFixed(1)} ms. '
+            'Position bandwidth reduced from '
+            '${oldBw.toStringAsFixed(1)} Hz to '
+            '${(omega / (2.0 * math.pi)).toStringAsFixed(1)} Hz '
+            '(\u03c9\u00b7\u03c4 \u2264 ${legacyMaxOmegaTauProduct.toStringAsFixed(1)}).');
+        }
+
+        // Transport-delay damping compensation.
+        if (transportDelaySec > 0) {
+          final phaseLag = omega * transportDelaySec;
+          final zetaLoss = phaseLag / 2.0;
+          if (zetaLoss > 0.01) {
+            final oldZeta = zeta;
+            zeta += zetaLoss;
+            warnings.add(
+              'Transport delay \u2248 ${(transportDelaySec * 1000).toStringAsFixed(0)} ms '
+              'reduces effective damping. \u03b6 increased from '
+              '${oldZeta.toStringAsFixed(2)} to ${zeta.toStringAsFixed(2)} '
+              'to compensate.');
+          }
+        }
+
+        // Low-inertia de-rating.
+        if (plantTau < _lowInertiaTauThreshold) {
+          final dampingBoost = (_lowInertiaTauThreshold / plantTau).clamp(1.0, 2.5);
+          if (dampingBoost > 1.01) {
+            final oldZeta = zeta;
+            zeta *= dampingBoost;
+            warnings.add(
+              'Low inertia detected (plant \u03c4 = '
+              '${(plantTau * 1000).toStringAsFixed(1)} ms). '
+              'Damping ratio increased from ${oldZeta.toStringAsFixed(2)} '
+              'to ${zeta.toStringAsFixed(2)} for robustness.');
+          }
+        }
+      }
+
+      // Legacy pole placement:
+      //   G(s) = 1 / (r·kA·s² + r·kV·s)   (no kV feedforward cancellation)
+      //   s² + (kV + V_nom·kD)/kA · s + V_nom·kP/(r·kA) = 0
+      //   → kP = r·kA·ω² / V_nom
+      //   → kD = (2·ζ·kA·ω − kV) / V_nom
+      final kPVolts = r * ff.kA * omega * omega;
+      final kDVolts = (2.0 * zeta * ff.kA * omega - ff.kV);
+      final kP = kPVolts / nominalVoltage;
+      final kD = kDVolts > 0 ? kDVolts / nominalVoltage : 0.0;
+      const kI = 0.0;
+      final dFilter = kD > 0 ? computeDFilter(omega / (2.0 * math.pi)) : 0.0;
+
+      return PidResult(
+        kP: kP,
+        kI: kI,
+        kD: kD,
+        dFilter: dFilter,
+        positionBandwidthHz: omega / (2.0 * math.pi),
+        warnings: warnings,
+      );
+    }
+
   /// Plant time constant threshold (seconds).  Below this, the system has very
   /// low inertia and gains are automatically de-rated for robustness against
   /// nonlinearities like backlash and stiction.

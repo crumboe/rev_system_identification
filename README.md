@@ -147,6 +147,15 @@ All three simulations share these characteristics:
 
 ## Getting Started
 
+### Adding a Tutorial Topic
+
+The in-app tutorial system lives under `lib/ui/tutorials/`. To add a new topic:
+
+1. **Define the topic** in `tutorial_data.dart` — add a `TutorialTopic` entry to the `allTutorials` list with a unique `id`, a `TutorialCategory`, and one or more `TutorialStep`s.
+2. **Create a diagram** (optional) — add a `CustomPaint` widget under `diagrams/` and reference it via the step's `customContent` builder.
+3. **Add highlight targets** (optional) — register new `GlobalKey`s in `tutorial_keys.dart` and attach them to screen widgets with `key: TutorialKeys.yourKey`. Reference these keys as `HighlightTarget`s in the step's `highlights` list.
+4. **Run tests** — `flutter test test/tutorial_data_test.dart` validates uniqueness, non-empty fields, and category coverage.
+
 ### Prerequisites
 
 - Flutter SDK ≥ 3.11.0

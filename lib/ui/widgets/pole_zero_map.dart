@@ -39,6 +39,15 @@ class PoleZeroMap extends StatefulWidget {
   /// Called when the user changes the mode selector.
   final ValueChanged<PoleZeroMode>? onModeChanged;
 
+  /// Whether position feedforward (kV·ω + kA·α) is active in firmware.
+  ///
+  /// When `true` (default — matches the simulator and ≥2025 firmware), the kV
+  /// term is cancelled from the effective position plant, leaving
+  /// G(s) = 1/(r·kA·s²).  Legacy firmware (no position FF) should pass `false`,
+  /// in which case the natural kV damping remains and the characteristic
+  /// equation for position PD is r·kA·s² + r·(kV+kD)·s + kP = 0.
+  final bool positionFfActive;
+
   const PoleZeroMap({
     super.key,
     required this.ff,
@@ -47,6 +56,7 @@ class PoleZeroMap extends StatefulWidget {
     this.mechanismType,
     this.mode,
     this.onModeChanged,
+    this.positionFfActive = true,
   });
 
   @override
@@ -70,9 +80,11 @@ class _PoleZeroMapState extends State<PoleZeroMap>
   Widget build(BuildContext context) {
     super.build(context);
     final pid = _activePid;
-    final poles = _computePoles(widget.ff, pid, _mode, widget.mechanismType);
+    final poles = _computePoles(widget.ff, pid, _mode, widget.mechanismType,
+        widget.positionFfActive);
     final delayPoles = _computeDelayAdjustedPoles(
-        widget.ff, pid, _mode, widget.mechanismType);
+        widget.ff, pid, _mode, widget.mechanismType,
+        PidAutoTuner.defaultTransportDelaySec, widget.positionFfActive);
 
     final chart = Card(
       child: Column(
@@ -155,6 +167,7 @@ class _PoleZeroMapState extends State<PoleZeroMap>
               ff: widget.ff,
               pid: pid,
               mode: _mode,
+              positionFfActive: widget.positionFfActive,
             ),
           ),
         ],
@@ -265,7 +278,7 @@ double _velocityToPositionRateFactor(MechanismType? type) {
 
 List<_Complex> _computePoles(
     FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
-    [MechanismType? mechanismType]) {
+    [MechanismType? mechanismType, bool positionFfActive = true]) {
   final kA = ff.kA;
   final kV = ff.kV;
 
@@ -296,11 +309,14 @@ List<_Complex> _computePoles(
       final kPv = (pid?.kP ?? 0.0) * nomV;
       final kDv = (pid?.kD ?? 0.0) * nomV;
       final kIv = (pid?.kI ?? 0.0) * nomV;
+      // When FF is active, kV feedforward cancels the natural velocity
+      // damping in the plant: effective plant G(s) = 1/(r·kA·s²).
+      final kVeff = positionFfActive ? 0.0 : kV;
 
       if (kIv.abs() < 1e-12) {
-        return _solveQuadratic(r * kA, r * (kV + kDv), kPv);
+        return _solveQuadratic(r * kA, r * (kVeff + kDv), kPv);
       }
-      return _solveCubic(r * kA, r * (kV + kDv), kPv, kIv);
+      return _solveCubic(r * kA, r * (kVeff + kDv), kPv, kIv);
   }
 }
 
@@ -317,7 +333,8 @@ List<_Complex> _computePoles(
 List<_Complex> _computeDelayAdjustedPoles(
     FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
     [MechanismType? mechanismType,
-    double transportDelaySec = PidAutoTuner.defaultTransportDelaySec]) {
+    double transportDelaySec = PidAutoTuner.defaultTransportDelaySec,
+    bool positionFfActive = true]) {
   final kA = ff.kA;
   final kV = ff.kV;
   if (kA <= 0 || transportDelaySec <= 0) return [];
@@ -344,37 +361,39 @@ List<_Complex> _computeDelayAdjustedPoles(
       final kPv = pid.kP * nomV;
       final kDv = pid.kD * nomV;
       final kIv = pid.kI * nomV;
+      // When FF is active, kV is cancelled from the effective plant.
+      final kVeff = positionFfActive ? 0.0 : kV;
 
       if (kIv.abs() < 1e-12) {
         // PD case: ideal is 2nd-order → delay makes 3rd-order
-        // (r·kA·s² + r·kV·s)(1 + hs) + (kPv + kDv·s)(1 - hs) = 0
+        // (r·kA·s² + r·kVeff·s)(1 + hs) + (kPv + kDv·s)(1 - hs) = 0
         // s³: r·kA·h
-        // s²: r·kA + r·kV·h − kDv·h
-        // s¹: r·kV − kPv·h + kDv
+        // s²: r·kA + r·kVeff·h − kDv·h
+        // s¹: r·kVeff − kPv·h + kDv
         // s⁰: kPv
         return _solveCubic(
           r * kA * h,
-          r * kA + r * kV * h - kDv * h,
-          r * kV - kPv * h + kDv,
+          r * kA + r * kVeff * h - kDv * h,
+          r * kVeff - kPv * h + kDv,
           kPv,
         );
       }
       // PID case: ideal is 3rd-order → delay makes 4th-order
-      // (r·kA·s³ + r·(kV+kDv)·s² + kPv·s + kIv)(1 + hs)
+      // (r·kA·s³ + r·(kVeff+kDv)·s² + kPv·s + kIv)(1 + hs)
       //   but we need the full closed-loop expansion with Padé.
-      // Plant denominator: D(s) = r·kA·s² + r·kV·s
+      // Plant denominator: D(s) = r·kA·s² + r·kVeff·s
       // Controller: C(s) = kPv + kDv·s + kIv/s
       // With Padé: 1 + C(s)/D(s) · (1-hs)/(1+hs) = 0
       // → D(s)(1+hs) + [kPv·s + kDv·s² + kIv](1-hs) = 0
       // s⁴: r·kA·h
-      // s³: r·kA + r·kV·h − kDv·h
-      // s²: r·kV − kPv·h + kDv
+      // s³: r·kA + r·kVeff·h − kDv·h
+      // s²: r·kVeff − kPv·h + kDv
       // s¹: kPv − kIv·h
       // s⁰: kIv
       return _solveQuartic(
         r * kA * h,
-        r * kA + r * kV * h - kDv * h,
-        r * kV - kPv * h + kDv,
+        r * kA + r * kVeff * h - kDv * h,
+        r * kVeff - kPv * h + kDv,
         kPv - kIv * h,
         kIv,
       );
@@ -548,6 +567,7 @@ class _SPlaneCanvas extends StatefulWidget {
   final FeedforwardGains ff;
   final PidResult? pid;
   final PoleZeroMode mode;
+  final bool positionFfActive;
 
   const _SPlaneCanvas({
     required this.poles,
@@ -555,6 +575,7 @@ class _SPlaneCanvas extends StatefulWidget {
     required this.ff,
     this.pid,
     required this.mode,
+    this.positionFfActive = true,
   });
 
   @override
@@ -764,7 +785,8 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
     }
 
     // Check open-loop poles
-    final olPoles = _computeOpenLoopPolesFor(widget.ff, widget.pid, widget.mode);
+    final olPoles = _computeOpenLoopPolesFor(widget.ff, widget.pid, widget.mode,
+        widget.positionFfActive);
     final olDrawn = <int>{};
     for (int i = 0; i < olPoles.length; i++) {
       if (olDrawn.contains(i)) continue;
@@ -1091,6 +1113,7 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
                       realMax: ext.realMax,
                       imagMin: ext.imagMin,
                       imagMax: ext.imagMax,
+                      positionFfActive: widget.positionFfActive,
                     ),
                   ),
                   if (_isViewModified)
@@ -1130,7 +1153,8 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
 
 /// Compute open-loop poles (shared between painter and hit-test).
 List<_Complex> _computeOpenLoopPolesFor(
-    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode) {
+    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
+    [bool positionFfActive = true]) {
   final kA = ff.kA;
   final kV = ff.kV;
   if (kA <= 0) return [];
@@ -1144,14 +1168,28 @@ List<_Complex> _computeOpenLoopPolesFor(
       }
       return [_Complex(-kV / kA, 0)];
     case PoleZeroMode.position:
-      if (hasIntegrator) {
-        return [
-          const _Complex(0, 0),
-          const _Complex(0, 0),
-          _Complex(-kV / kA, 0),
-        ];
+      if (positionFfActive) {
+        // FF cancels kV: effective plant G(s) = 1/(r·kA·s²) — double integrator.
+        // OL poles come from the plant integrators + any controller integrator.
+        if (hasIntegrator) {
+          return [
+            const _Complex(0, 0),
+            const _Complex(0, 0),
+            const _Complex(0, 0),
+          ];
+        }
+        return [const _Complex(0, 0), const _Complex(0, 0)];
+      } else {
+        // No FF: plant G(s) = 1/(r·kA·s(s + kV/kA)), poles at {0, -kV/kA}.
+        if (hasIntegrator) {
+          return [
+            const _Complex(0, 0),
+            const _Complex(0, 0),
+            _Complex(-kV / kA, 0),
+          ];
+        }
+        return [const _Complex(0, 0), _Complex(-kV / kA, 0)];
       }
-      return [const _Complex(0, 0), _Complex(-kV / kA, 0)];
   }
 }
 
@@ -1165,6 +1203,7 @@ class _SPlanePainter extends CustomPainter {
   final double realMax;
   final double imagMin;
   final double imagMax;
+  final bool positionFfActive;
 
   const _SPlanePainter({
     required this.poles,
@@ -1176,6 +1215,7 @@ class _SPlanePainter extends CustomPainter {
     required this.realMax,
     required this.imagMin,
     required this.imagMax,
+    this.positionFfActive = true,
   });
 
   @override
@@ -1337,7 +1377,7 @@ class _SPlanePainter extends CustomPainter {
     _drawRootLocus(canvas, size, toX, toY);
 
     // ── Open-loop poles ───────────────────────────────────────────────
-    final olPoles = _computeOpenLoopPolesFor(ff, pid, mode);
+    final olPoles = _computeOpenLoopPolesFor(ff, pid, mode, positionFfActive);
     // ── Open-loop poles (with multiplicity) ─────────────────────────
     final olDrawn = <int>{};
     for (int i = 0; i < olPoles.length; i++) {
@@ -1517,6 +1557,8 @@ class _SPlanePainter extends CustomPainter {
     final kA = ff.kA;
     final kV = ff.kV;
     if (kA <= 0) return;
+    // When FF is active in position mode, kV is cancelled from the plant.
+    final kVeff = (mode == PoleZeroMode.position && positionFfActive) ? 0.0 : kV;
 
     const steps = 200;
 
@@ -1546,23 +1588,23 @@ class _SPlanePainter extends CustomPainter {
 
       case PoleZeroMode.position:
         if (hasIntegrator) {
-          // PID: 3 OL poles {0, 0, -kV/kA}. Sweep K in kA·s³ + kV·s² + K = 0
-          gainMax = kV * kV * kV / (kA * kA) * 0.5;
+          // PID: OL poles {0, 0, -kVeff/kA}. Sweep K in kA·s³ + kVeff·s² + K = 0
+          gainMax = kVeff * kVeff * kVeff / (kA * kA) * 0.5;
           if (gainMax < 1) gainMax = 100;
           for (int i = 0; i <= steps; i++) {
             final k = gainMax * i / steps;
-            final roots = _solveCubic(kA, kV, 0, k);
+            final roots = _solveCubic(kA, kVeff, 0, k);
             if (roots.isNotEmpty) branch1.add(Offset(toX(roots[0].re), toY(roots[0].im)));
             if (roots.length > 1) branch2.add(Offset(toX(roots[1].re), toY(roots[1].im)));
             if (roots.length > 2) branch3.add(Offset(toX(roots[2].re), toY(roots[2].im)));
           }
         } else {
-          // PD: 2 OL poles {0, -kV/kA}. Sweep K in kA·s² + kV·s + K = 0
-          gainMax = (kV * kV / kA) * 2.0;
+          // PD: OL poles {0, -kVeff/kA}. Sweep K in kA·s² + kVeff·s + K = 0
+          gainMax = (kVeff * kVeff / kA) * 2.0;
           if (gainMax < 1) gainMax = 100;
           for (int i = 0; i <= steps; i++) {
             final k = gainMax * i / steps;
-            final roots = _solveQuadratic(kA, kV, k);
+            final roots = _solveQuadratic(kA, kVeff, k);
             if (roots.isNotEmpty) branch1.add(Offset(toX(roots[0].re), toY(roots[0].im)));
             if (roots.length > 1) branch2.add(Offset(toX(roots[1].re), toY(roots[1].im)));
           }
@@ -1594,7 +1636,8 @@ class _SPlanePainter extends CustomPainter {
       old.poles != poles || old.delayPoles != delayPoles ||
       old.ff != ff || old.pid != pid || old.mode != mode ||
       old.realMin != realMin || old.realMax != realMax ||
-      old.imagMin != imagMin || old.imagMax != imagMax;
+      old.imagMin != imagMin || old.imagMax != imagMax ||
+      old.positionFfActive != positionFfActive;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1748,15 +1791,16 @@ class PolePlotData {
 /// Compute closed-loop poles for the given plant model and PID gains.
 List<PolePlotData> computeClosedLoopPoles(
     FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
-    [MechanismType? mechanismType]) {
-  return _computePoles(ff, pid, mode, mechanismType)
+    [MechanismType? mechanismType, bool positionFfActive = true]) {
+  return _computePoles(ff, pid, mode, mechanismType, positionFfActive)
       .map((c) => PolePlotData(c.re, c.im))
       .toList();
 }
 
 /// Compute open-loop poles (plant poles + controller integrators).
 List<PolePlotData> computeOpenLoopPoles(
-    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode) {
+    FeedforwardGains ff, PidResult? pid, PoleZeroMode mode,
+    [bool positionFfActive = true]) {
   final kA = ff.kA;
   final kV = ff.kV;
   if (kA <= 0) return [];
@@ -1770,13 +1814,24 @@ List<PolePlotData> computeOpenLoopPoles(
       }
       return [PolePlotData(-kV / kA, 0)];
     case PoleZeroMode.position:
-      if (hasIntegrator) {
-        return [
-          const PolePlotData(0, 0),
-          const PolePlotData(0, 0),
-          PolePlotData(-kV / kA, 0),
-        ];
+      if (positionFfActive) {
+        if (hasIntegrator) {
+          return [
+            const PolePlotData(0, 0),
+            const PolePlotData(0, 0),
+            const PolePlotData(0, 0),
+          ];
+        }
+        return [const PolePlotData(0, 0), const PolePlotData(0, 0)];
+      } else {
+        if (hasIntegrator) {
+          return [
+            const PolePlotData(0, 0),
+            const PolePlotData(0, 0),
+            PolePlotData(-kV / kA, 0),
+          ];
+        }
+        return [const PolePlotData(0, 0), PolePlotData(-kV / kA, 0)];
       }
-      return [const PolePlotData(0, 0), PolePlotData(-kV / kA, 0)];
   }
 }

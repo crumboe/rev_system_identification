@@ -8,6 +8,8 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../can/parameter_api.dart';
+
+import '../tutorials/tutorial_keys.dart';
 import '../../can/spark_protocol.dart';
 import '../../data/code_snippet_exporter.dart';
 import '../../data/test_data.dart';
@@ -175,6 +177,7 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
             runSpacing: 12,
             children: [
               FilledButton(
+                key: TutorialKeys.burnFlashButton,
                 onPressed: device == null || _deploying
                     ? null
                     : () => _burnToFlash(
@@ -211,6 +214,7 @@ class _DeployScreenState extends ConsumerState<DeployScreen> {
                 ),
               ),
               Button(
+                key: TutorialKeys.codeSnippetArea,
                 onPressed: () => _showCodeExport(
                   config,
                   ff,

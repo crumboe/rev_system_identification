@@ -9,6 +9,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../data/project_file.dart';
 import '../devices/serial_port_factory.dart' show isWebSerialAvailable;
 import '../state/app_state.dart';
+import 'tutorials/tutorial_modal.dart';
+import 'tutorials/tutorial_browser.dart';
 import 'screens/home_screen.dart';
 import 'screens/device_screen.dart';
 import 'screens/device_config_screen.dart';
@@ -110,6 +112,13 @@ class _AppShellState extends ConsumerState<AppShell> {
     }
   }
 
+  void _showTutorialBrowser(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => const TutorialBrowser(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedIndex = ref.watch(selectedPageProvider);
@@ -177,6 +186,11 @@ class _AppShellState extends ConsumerState<AppShell> {
         ],
         footerItems: [
           PaneItemAction(
+            icon: const Icon(FluentIcons.help),
+            title: const Text('Tutorials'),
+            onTap: () => _showTutorialBrowser(context),
+          ),
+          PaneItemAction(
             icon: const Icon(FluentIcons.heart),
             title: const Text('Leave a Tip'),
             onTap: () => launchUrl(
@@ -206,7 +220,14 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
     );
 
-    if (!showWebBanner) return nav;
+    final withTutorial = Stack(
+      children: [
+        nav,
+        const TutorialModal(),
+      ],
+    );
+
+    if (!showWebBanner) return withTutorial;
 
     return Column(
       children: [
@@ -228,7 +249,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ],
           ),
         ),
-        Expanded(child: nav),
+        Expanded(child: withTutorial),
       ],
     );
   }

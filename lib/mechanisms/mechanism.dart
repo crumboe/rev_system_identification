@@ -87,6 +87,9 @@ extension MechanismTypeX on MechanismType {
   /// Whether soft limits are required for safety.
   bool get requiresSoftLimits => this == MechanismType.arm || this == MechanismType.elevator;
 
+  /// Whether this mechanism supports soft limits (required or optional).
+  bool get supportsSoftLimits => true;
+
   /// The form of gravity compensation.
   String get gravityDescription => switch (this) {
         MechanismType.arm => 'kG · cos(θ)',

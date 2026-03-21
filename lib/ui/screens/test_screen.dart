@@ -3,6 +3,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,8 @@ import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../simulation/project_physics_factory.dart';
+
+import '../tutorials/tutorial_keys.dart';
 import '../../simulation/simulated_device.dart';
 import '../../state/app_state.dart';
 import '../../sysid/test_runner.dart';
@@ -277,6 +280,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
 
             // Test buttons
             Wrap(
+              key: TutorialKeys.testTypeSelector,
               spacing: 8,
               runSpacing: 8,
               children: [
@@ -318,6 +322,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                 ),
                 const SizedBox(width: 16),
                 FilledButton(
+                  key: TutorialKeys.startTestButton,
                   onPressed: canRunForward
                       ? () => _runFullCharacterization(device, config, testParams)
                       : null,
@@ -338,6 +343,7 @@ class _TestScreenState extends ConsumerState<TestScreen> {
                   Expanded(
                     flex: 3,
                     child: ChartWalkthrough(
+                      key: TutorialKeys.testChart,
                       isActive: _walkthroughActive,
                       steps: liveChartWalkthroughSteps(),
                       onDismiss: () =>
@@ -881,7 +887,7 @@ class _TestButton extends StatelessWidget {
   }
 }
 
-class _LiveChart extends StatelessWidget {
+class _LiveChart extends StatefulWidget {
   final String title;
   final List<List<DataPoint>> segments;
   final List<Color> segmentColors;
@@ -902,16 +908,27 @@ class _LiveChart extends StatelessWidget {
   });
 
   @override
+  State<_LiveChart> createState() => _LiveChartState();
+}
+
+class _LiveChartState extends State<_LiveChart> {
+  // Sticky Y-axis bounds: expand immediately, contract slowly so that
+  // sharp noise peaks scrolling off the left edge don't cause visible
+  // squish/grow artefacts.
+  double? _stickyMinY;
+  double? _stickyMaxY;
+
+  @override
   Widget build(BuildContext context) {
     // Build a separate line bar per segment so tests don't connect.
     final lineBars = <LineChartBarData>[];
-    for (var i = 0; i < segments.length; i++) {
-      final seg = segments[i];
+    for (var i = 0; i < widget.segments.length; i++) {
+      final seg = widget.segments[i];
       if (seg.isEmpty) continue;
       lineBars.add(LineChartBarData(
-        spots: seg.map((dp) => FlSpot(dp.timestamp, yExtractor(dp))).toList(),
+        spots: seg.map((dp) => FlSpot(dp.timestamp, widget.yExtractor(dp))).toList(),
         isCurved: false,
-        color: segmentColors[i % segmentColors.length],
+        color: widget.segmentColors[i % widget.segmentColors.length],
         barWidth: 1.5,
         dotData: const FlDotData(show: false),
       ));
@@ -920,7 +937,7 @@ class _LiveChart extends StatelessWidget {
     // Compute X axis bounds.
     double? minX;
     double? maxX;
-    if (rollingWindow != null && lineBars.isNotEmpty) {
+    if (widget.rollingWindow != null && lineBars.isNotEmpty) {
       // Find the latest timestamp across all segments.
       double latest = 0;
       for (final bar in lineBars) {
@@ -929,8 +946,47 @@ class _LiveChart extends StatelessWidget {
         }
       }
       maxX = latest;
-      minX = latest - rollingWindow!;
+      minX = latest - widget.rollingWindow!;
       if (minX < 0) minX = 0;
+    }
+
+    // Compute Y bounds from ALL stored points (not just the visible window).
+    // Preview data is already trimmed to ~10 s, so including points just
+    // off-screen gives a stable range that doesn't jitter as individual
+    // points cross the rolling-window boundary.
+    double? stableMinY;
+    double? stableMaxY;
+    if (lineBars.isNotEmpty) {
+      double yMin = double.infinity;
+      double yMax = double.negativeInfinity;
+      for (final bar in lineBars) {
+        for (final spot in bar.spots) {
+          if (spot.y < yMin) yMin = spot.y;
+          if (spot.y > yMax) yMax = spot.y;
+        }
+      }
+      if (!yMin.isInfinite) {
+        final range = yMax - yMin;
+        final step = _niceNum(math.max(range, 1e-6) / 4);
+        final desiredMin = (yMin / step).floorToDouble() * step - step;
+        final desiredMax = (yMax / step).ceilToDouble() * step + step;
+
+        if (_stickyMinY == null || _stickyMaxY == null) {
+          _stickyMinY = desiredMin;
+          _stickyMaxY = desiredMax;
+        } else {
+          // Only expand, never shrink ("high-water-mark").  Bounds reset
+          // when all data is cleared (see the else-branch below).
+          if (desiredMin < _stickyMinY!) _stickyMinY = desiredMin;
+          if (desiredMax > _stickyMaxY!) _stickyMaxY = desiredMax;
+        }
+        stableMinY = _stickyMinY;
+        stableMaxY = _stickyMaxY;
+      }
+    } else {
+      // No data — reset sticky state.
+      _stickyMinY = null;
+      _stickyMaxY = null;
     }
 
     return Card(
@@ -938,7 +994,7 @@ class _LiveChart extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '$title ($yLabel)',
+            '${widget.title} (${widget.yLabel})',
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -952,12 +1008,14 @@ class _LiveChart extends StatelessWidget {
                     LineChartData(
                       minX: minX ?? 0,
                       maxX: maxX,
+                      minY: stableMinY,
+                      maxY: stableMaxY,
                       lineTouchData: LineTouchData(
                         touchTooltipData: LineTouchTooltipData(
                           getTooltipItems: (touchedSpots) {
                             return touchedSpots.map((spot) {
                               return LineTooltipItem(
-                                '${spot.y.toStringAsFixed(2)} $yLabel\n'
+                                '${spot.y.toStringAsFixed(2)} ${widget.yLabel}\n'
                                 't=${spot.x.toStringAsFixed(1)}s',
                                 const TextStyle(fontSize: 10),
                               );
@@ -1012,5 +1070,25 @@ class _LiveChart extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Returns a "nice" number >= [value] from the 1-2-5 sequence.
+  /// Used to quantize axis bounds so they don't jitter with every frame.
+  static double _niceNum(double value) {
+    if (value <= 0) return 1.0;
+    final exponent = (math.log(value) / math.ln10).floorToDouble();
+    final base = math.pow(10.0, exponent);
+    final fraction = value / base;
+    double nice;
+    if (fraction <= 1.0) {
+      nice = 1.0;
+    } else if (fraction <= 2.0) {
+      nice = 2.0;
+    } else if (fraction <= 5.0) {
+      nice = 5.0;
+    } else {
+      nice = 10.0;
+    }
+    return nice * base;
   }
 }

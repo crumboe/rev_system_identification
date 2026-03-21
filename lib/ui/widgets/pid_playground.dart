@@ -24,7 +24,8 @@ class PidPlayground extends StatefulWidget {
 
   /// Called whenever the user adjusts position PID gains.
   final ValueChanged<PidResult>? onPosPidChanged;
-
+  /// Called when the user presses "Reset to Identified Values".
+  final VoidCallback? onReset;
   /// When true, show position step response instead of velocity.
   final bool isPositionMode;
 
@@ -45,6 +46,7 @@ class PidPlayground extends StatefulWidget {
     this.initialPosPid,
     this.onPidChanged,
     this.onPosPidChanged,
+    this.onReset,
     this.isPositionMode = false,
     this.onModeChanged,
     this.mechanismConfig,
@@ -64,20 +66,20 @@ class _PidPlaygroundState extends State<PidPlayground>
   late double _velKI;
   late double _velKD;
 
-  // Baseline identified velocity PID gains captured at widget init.
-  late final double _identifiedVelKP;
-  late final double _identifiedVelKI;
-  late final double _identifiedVelKD;
+  // Baseline identified velocity PID gains — updated whenever prop changes.
+  late double _identifiedVelKP;
+  late double _identifiedVelKI;
+  late double _identifiedVelKD;
 
   // --- Position PID gains (stored when switching modes) ---
   late double _posKP;
   late double _posKI;
   late double _posKD;
 
-  // Baseline identified position PID gains captured at widget init.
-  late final double _identifiedPosKP;
-  late final double _identifiedPosKI;
-  late final double _identifiedPosKD;
+  // Baseline identified position PID gains — updated whenever prop changes.
+  late double _identifiedPosKP;
+  late double _identifiedPosKI;
+  late double _identifiedPosKD;
 
   // Active PID gains (pointers into vel or pos depending on mode)
   double get _kP => widget.isPositionMode ? _posKP : _velKP;
@@ -99,11 +101,11 @@ class _PidPlaygroundState extends State<PidPlayground>
   late double _kA;
   late double _kG;
 
-  // Baseline identified feedforward gains captured at widget init.
-  late final double _identifiedKS;
-  late final double _identifiedKV;
-  late final double _identifiedKA;
-  late final double _identifiedKG;
+  // Baseline identified feedforward gains — updated whenever prop changes.
+  late double _identifiedKS;
+  late double _identifiedKV;
+  late double _identifiedKA;
+  late double _identifiedKG;
 
   // Slider upper bounds — 5× the identified value or a sensible minimum.
   late double _kPMax;
@@ -122,6 +124,12 @@ class _PidPlaygroundState extends State<PidPlayground>
   double _steadyStateError = 0;
 
   bool _prevIsPositionMode = false;
+
+  // True while didUpdateWidget is propagating new prop values into the sliders.
+  // Prevents the onPidChanged/onPosPidChanged callbacks from bouncing a new
+  // PidResult back to the parent, which would re-trigger didUpdateWidget and
+  // cause an infinite rebuild loop.
+  bool _suppressCallbacks = false;
 
   @override
   void initState() {
@@ -160,10 +168,55 @@ class _PidPlaygroundState extends State<PidPlayground>
   @override
   void didUpdateWidget(covariant PidPlayground oldWidget) {
     super.didUpdateWidget(oldWidget);
+
+    // When a new PID is calculated (e.g. after re-analysis or toggling legacy
+    // mode), snap both the identified baselines AND the live slider values to
+    // the new gains, then refresh bounds and chart.
+    bool gainsChanged = false;
+
+    if (widget.initialPid != oldWidget.initialPid && widget.initialPid != null) {
+      _identifiedVelKP = widget.initialPid!.kP;
+      _identifiedVelKI = widget.initialPid!.kI;
+      _identifiedVelKD = widget.initialPid!.kD;
+      _velKP = _identifiedVelKP;
+      _velKI = _identifiedVelKI;
+      _velKD = _identifiedVelKD;
+      gainsChanged = true;
+    }
+    if (widget.initialPosPid != oldWidget.initialPosPid && widget.initialPosPid != null) {
+      _identifiedPosKP = widget.initialPosPid!.kP;
+      _identifiedPosKI = widget.initialPosPid!.kI;
+      _identifiedPosKD = widget.initialPosPid!.kD;
+      _posKP = _identifiedPosKP;
+      _posKI = _identifiedPosKI;
+      _posKD = _identifiedPosKD;
+      gainsChanged = true;
+    }
+    if (widget.ff != oldWidget.ff) {
+      _identifiedKS = widget.ff.kS;
+      _identifiedKV = widget.ff.kV;
+      _identifiedKA = widget.ff.kA;
+      _identifiedKG = widget.ff.kG;
+      _kS = _identifiedKS;
+      _kV = _identifiedKV;
+      _kA = _identifiedKA;
+      _kG = _identifiedKG;
+      gainsChanged = true;
+    }
+
     if (widget.isPositionMode != _prevIsPositionMode) {
       _prevIsPositionMode = widget.isPositionMode;
-      _updateSliderBounds();
-      _runSimulation();
+      gainsChanged = true;
+    }
+
+    if (gainsChanged) {
+      _suppressCallbacks = true;
+      try {
+        _updateSliderBounds();
+        _runSimulation();
+      } finally {
+        _suppressCallbacks = false;
+      }
     }
   }
 
@@ -262,7 +315,9 @@ class _PidPlaygroundState extends State<PidPlayground>
       _steadyStateError = (setpoint - velocity).abs();
     });
 
-    widget.onPidChanged?.call(PidResult(kP: _velKP, kI: _velKI, kD: _velKD));
+    if (!_suppressCallbacks) {
+      widget.onPidChanged?.call(PidResult(kP: _velKP, kI: _velKI, kD: _velKD));
+    }
   }
 
   void _runPositionSimulation() {
@@ -293,6 +348,8 @@ class _PidPlaygroundState extends State<PidPlayground>
     final delaySteps = (1 + 2 * backlashSeverity).round();
     final posQuantum = 0.004 * backlashSeverity;
     final velQuantum = 8.0 * backlashSeverity;
+
+    final bool isArm = widget.mechanismConfig?.type == MechanismType.arm;
 
     double integral = 0;
     double prevError = setpoint;
@@ -333,10 +390,14 @@ class _PidPlaygroundState extends State<PidPlayground>
       // kV applied to measured velocity, kA to acceleration.
       final ffAccel = (i == 1) ? 0.0
           : (velocity - _prevPlaygroundVelocity) / dt;
+      // For arms, gravity FF is angle-dependent: kG·cos(θ).
+      final ffGravity = isArm
+          ? _kG * math.cos(outputPosition * math.pi / 180.0)
+          : _kG;
       final ffOutput = _kS * (error > 0 ? 1.0 : (error < 0 ? -1.0 : 0.0))
           + _kV * measuredVelocity
           + _kA * ffAccel
-          + _kG;
+          + ffGravity;
         final requestedVoltage =
           (pidOutput + ffOutput).clamp(-nominalVoltage, nominalVoltage);
 
@@ -351,6 +412,10 @@ class _PidPlaygroundState extends State<PidPlayground>
         }
 
       // Plant dynamics (velocity domain).
+      // For arms, gravity is angle-dependent: kG·cos(θ).
+      final plantGravity = isArm
+          ? plant.kG * math.cos(outputPosition * math.pi / 180.0)
+          : plant.kG;
         final velSign = velocity >= 0 ? 1.0 : -1.0;
         final frictionTerm = velocity.abs() > 35.0
           ? plant.kS * velSign
@@ -358,7 +423,7 @@ class _PidPlaygroundState extends State<PidPlayground>
             ? (plant.kS + stictionExtra) * appliedVoltage.sign
             : appliedVoltage;
       final acceleration =
-          (appliedVoltage - frictionTerm - plant.kV * velocity - plant.kG) /
+          (appliedVoltage - frictionTerm - plant.kV * velocity - plantGravity) /
               plant.kA;
       velocity += acceleration * dt;
       _prevPlaygroundVelocity = velocity;
@@ -414,7 +479,9 @@ class _PidPlaygroundState extends State<PidPlayground>
           setpoint.abs() > 1e-9 ? ((setpoint - outputPosition).abs() / setpoint.abs()) : (setpoint - outputPosition).abs();
     });
 
-    widget.onPosPidChanged?.call(PidResult(kP: _posKP, kI: _posKI, kD: _posKD));
+    if (!_suppressCallbacks) {
+      widget.onPosPidChanged?.call(PidResult(kP: _posKP, kI: _posKI, kD: _posKD));
+    }
   }
 
   bool _firstPositionTick = true;
@@ -453,6 +520,13 @@ class _PidPlaygroundState extends State<PidPlayground>
   }
 
   void _resetToAutoTuned() {
+    if (widget.onReset != null) {
+      // Re-run the full analysis (same as "Compute Feedforward & PID").
+      // The parent will update props, and didUpdateWidget will snap
+      // identified baselines, sliders, and simulation automatically.
+      widget.onReset!.call();
+      return;
+    }
     setState(() {
       if (widget.isPositionMode) {
         _posKP = _identifiedPosKP;

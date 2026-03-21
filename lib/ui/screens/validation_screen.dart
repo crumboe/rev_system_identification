@@ -13,6 +13,8 @@ import 'package:fl_chart/fl_chart.dart';
 
 import '../../data/test_data.dart';
 import '../../devices/device_manager.dart';
+
+import '../tutorials/tutorial_keys.dart';
 import '../../mechanisms/mechanism.dart';
 import '../../simulation/project_physics_factory.dart';
 import '../../simulation/simulated_device.dart';
@@ -264,6 +266,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
             // Setpoint controls + run buttons
             Row(
+              key: TutorialKeys.validationTestSelector,
               children: [
                 // Velocity setpoint
                 SizedBox(
@@ -604,6 +607,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
             // Live charts + mechanism visual
             Expanded(
+              key: TutorialKeys.validationChart,
               child: Column(
                 children: [
                   Expanded(

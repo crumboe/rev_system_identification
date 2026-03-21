@@ -8,6 +8,11 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 
+import '../tutorials/tutorial_keys.dart';
+
+// Needed for PointerDeviceKind
+import 'dart:ui';
+
 import '../../data/test_data.dart';
 import '../../data/csv_exporter.dart';
 import '../../data/notebook_exporter.dart';
@@ -43,6 +48,14 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
   bool _analyzed = false;
   bool _isPositionMode = false;
 
+  // Legacy PID calculation toggle (hidden, only for sim)
+  bool _legacyPidMode = false;
+
+  // Hidden toggle activation: long-press on PID Gains title
+  void _toggleLegacyPidMode() {
+    setState(() => _legacyPidMode = !_legacyPidMode);
+  }
+
   void _setLoopMode(bool isPosition) {
     if (isPosition != _isPositionMode) {
       setState(() => _isPositionMode = isPosition);
@@ -72,6 +85,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
             ),
             const CommandBarSeparator(),
             CommandBarButton(
+              key: TutorialKeys.exportButton,
               icon: const Icon(FluentIcons.download),
               label: const Text('Export CSV'),
               onPressed: testRuns.isNotEmpty
@@ -158,9 +172,10 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 24),
 
           // Feedforward gains
-          const Text(
+          Text(
+            key: TutorialKeys.feedforwardGainsCard,
             'Feedforward Constants',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           if (_ffLoaded != null && _ffBlended != null) ...[
@@ -214,13 +229,52 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           const SizedBox(height: 24),
 
           // PID gains
-          const Text(
-            'PID Gains (Auto-Tuned)',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+
+          // PID Gains title with hidden legacy toggle (only in sim)
+          Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (event) {
+              // Right-click (secondary button)
+              if (event.kind == PointerDeviceKind.mouse && event.buttons == 2) {
+                _toggleLegacyPidMode();
+              }
+            },
+            child: GestureDetector(
+              onLongPress: _toggleLegacyPidMode,
+              onDoubleTap: _toggleLegacyPidMode,
+              child: Row(
+                children: [
+                  const Text(
+                    'PID Gains (Auto-Tuned)',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  if (_legacyPidMode) ...[
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Color(0xFFB8860B),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'LEGACY PID',
+                        style: TextStyle(
+                          color: Color(0xFFFFFFFF),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 12),
 
           Row(
+            key: TutorialKeys.pidGainsCard,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (_velPid != null)
@@ -280,6 +334,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               initialPosPid: _posPid,
               isPositionMode: _isPositionMode,
               onModeChanged: _setLoopMode,
+              onReset: () => _runAnalysis(qsRuns, dynRuns, config),
               mechanismConfig: config,
               onPidChanged: (pid) {
                 setState(() => _velPid = pid);
@@ -752,7 +807,21 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       PidResult velPid;
       PidResult posPid;
 
-      if (ffLoaded != null) {
+
+      if (_legacyPidMode) {
+        // Use legacy PID calculation for sim/legacy mode
+        velPid = PidAutoTuner.tuneVelocityLegacy(
+          ff: primaryFF,
+          mechanismType: config.type,
+          desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
+        );
+        posPid = PidAutoTuner.tunePositionLegacy(
+          ff: primaryFF,
+          mechanismType: config.type,
+          desiredBandwidthHz: tuningParams.positionBandwidthHz,
+          dampingRatio: tuningParams.dampingRatio,
+        );
+      } else if (ffLoaded != null) {
         // Robust PID: stable for both unloaded and loaded conditions.
         velPid = PidAutoTuner.tuneRobustVelocity(
           ffUnloaded: ff,
@@ -768,7 +837,7 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           dampingRatio: tuningParams.dampingRatio,
         );
       } else {
-        // Single-condition PID (existing behavior).
+        // Single-condition PID (current behavior).
         velPid = PidAutoTuner.tuneVelocity(
           ff: primaryFF,
           mechanismType: config.type,
