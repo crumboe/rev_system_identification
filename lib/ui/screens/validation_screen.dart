@@ -101,15 +101,64 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       text: defaults.positionSetpoint.toString(),
     );
 
-    // Sensible MAXMotion defaults based on mechanism type.
-    _mmCruiseCtrl = TextEditingController(
-      text: (defaults.velocitySetpoint * 0.5).toStringAsFixed(1),
-    );
-    _mmAccelCtrl = TextEditingController(
-      text: (defaults.velocitySetpoint * 2.0).toStringAsFixed(1),
-    );
+    // MAXMotion defaults derived from the identified system and soft-limit range.
+    const nominalVoltage = 12.0;
+    // Guard against unrealistically large static friction (> 90 % of bus voltage).
+    const maxKsFraction = 0.9;
+    // Use 75 % of theoretical peak velocity and 50 % of theoretical peak accel
+    // as conservative safe cruise/accel defaults.
+    const cruiseFraction = 0.75;
+    const accelFraction = 0.50;
+    // Target 1 % of the working range as the allowed error (capped at 10 %).
+    const errorRangePercent = 0.01;
+    const maxErrorRangePercent = 0.1;
+
+    final ff = ref.read(feedforwardGainsProvider);
+    final fwdLimit = config.forwardSoftLimit;
+    final revLimit = config.reverseSoftLimit;
+
+    // Effective voltage available for motion after overcoming static friction.
+    final effectiveVoltage = ff != null
+        ? nominalVoltage - ff.kS.clamp(0.0, nominalVoltage * maxKsFraction)
+        : 0.0;
+
+    // Cruise velocity: cruiseFraction of the theoretical maximum velocity from kV.
+    // Plant model: V = kS + kV·vel + kA·accel (V in volts, user units).
+    // At nominal voltage with no acceleration: max_vel = (V_nom - kS) / kV.
+    // Falls back to half the validation velocity setpoint when gains are absent.
+    final double mmCruise;
+    if (ff != null && ff.kV > 0) {
+      final maxVel = effectiveVoltage / ff.kV;
+      mmCruise = (maxVel * cruiseFraction).clamp(1.0, double.infinity);
+    } else {
+      mmCruise = defaults.velocitySetpoint * 0.5;
+    }
+
+    // Max acceleration: accelFraction of the theoretical maximum from kA.
+    // At nominal voltage from rest: max_accel = (V_nom - kS) / kA.
+    // Falls back to twice the validation velocity setpoint when gains are absent.
+    final double mmAccel;
+    if (ff != null && ff.kA > 0) {
+      final maxAccel = effectiveVoltage / ff.kA;
+      mmAccel = (maxAccel * accelFraction).clamp(1.0, double.infinity);
+    } else {
+      mmAccel = defaults.velocitySetpoint * 2.0;
+    }
+
+    // Allowed error: errorRangePercent of the soft-limit working range.
+    // Falls back to 1 % of the position setpoint (minimum 0.01).
+    final double mmError;
+    if (fwdLimit != null && revLimit != null) {
+      final range = (fwdLimit - revLimit).abs();
+      mmError = (range * errorRangePercent).clamp(0.01, range * maxErrorRangePercent);
+    } else {
+      mmError = (defaults.positionSetpoint * errorRangePercent).clamp(0.01, 1.0);
+    }
+
+    _mmCruiseCtrl = TextEditingController(text: mmCruise.toStringAsFixed(1));
+    _mmAccelCtrl = TextEditingController(text: mmAccel.toStringAsFixed(1));
     _mmJerkCtrl = TextEditingController(text: '0');
-    _mmErrorCtrl = TextEditingController(text: '0.05');
+    _mmErrorCtrl = TextEditingController(text: mmError.toStringAsFixed(4));
     _clErrorCtrl = TextEditingController(text: '0');
     _loadCtrl = TextEditingController(text: '0');
     _clErrorCtrl.addListener(_syncClErrorToProviders);
