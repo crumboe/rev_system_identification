@@ -48,6 +48,10 @@ class PoleZeroMap extends StatefulWidget {
   /// equation for position PD is r·kA·s² + r·(kV+kD)·s + kP = 0.
   final bool positionFfActive;
 
+  /// Total transport delay (seconds) to model in the Padé approximation.
+  /// Should be the sum of the base pipeline delay and the encoder filter delay.
+  final double transportDelaySec;
+
   const PoleZeroMap({
     super.key,
     required this.ff,
@@ -57,6 +61,7 @@ class PoleZeroMap extends StatefulWidget {
     this.mode,
     this.onModeChanged,
     this.positionFfActive = true,
+    this.transportDelaySec = PidAutoTuner.defaultTransportDelaySec,
   });
 
   @override
@@ -84,7 +89,7 @@ class _PoleZeroMapState extends State<PoleZeroMap>
         widget.positionFfActive);
     final delayPoles = _computeDelayAdjustedPoles(
         widget.ff, pid, _mode, widget.mechanismType,
-        PidAutoTuner.defaultTransportDelaySec, widget.positionFfActive);
+        widget.transportDelaySec, widget.positionFfActive);
 
     final chart = Card(
       child: Column(
@@ -167,6 +172,7 @@ class _PoleZeroMapState extends State<PoleZeroMap>
               ff: widget.ff,
               pid: pid,
               mode: _mode,
+              transportDelaySec: widget.transportDelaySec,
               positionFfActive: widget.positionFfActive,
             ),
           ),
@@ -567,6 +573,7 @@ class _SPlaneCanvas extends StatefulWidget {
   final FeedforwardGains ff;
   final PidResult? pid;
   final PoleZeroMode mode;
+  final double transportDelaySec;
   final bool positionFfActive;
 
   const _SPlaneCanvas({
@@ -575,6 +582,7 @@ class _SPlaneCanvas extends StatefulWidget {
     required this.ff,
     this.pid,
     required this.mode,
+    this.transportDelaySec = PidAutoTuner.defaultTransportDelaySec,
     this.positionFfActive = true,
   });
 
@@ -854,7 +862,7 @@ class _SPlaneCanvasState extends State<_SPlaneCanvas> {
         buf.writeln('Delay-Adjusted Pole$multStr');
         buf.writeln('s = $p');
         buf.writeln('');
-        buf.writeln('This pole includes the effect of ~${(PidAutoTuner.defaultTransportDelaySec * 1000).round()} ms on-controller '
+        buf.writeln('This pole includes the effect of ~${(widget.transportDelaySec * 1000).round()} ms on-controller '
             'transport delay (sensor → PID → PWM) using a first-order '
             'Padé approximation. This is what the REAL system sees.');
         buf.writeln('');

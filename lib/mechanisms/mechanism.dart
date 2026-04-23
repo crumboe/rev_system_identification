@@ -191,6 +191,35 @@ class MechanismConfig {
   /// Only meaningful for arm and elevator simulations.
   final double? simulatedLoadMassKg;
 
+  /// Encoder velocity averaging depth (1–64).  Firmware default: 64.
+  ///
+  /// The firmware computes velocity as a moving average of [encoderAverageDepth]
+  /// individual velocity measurements.  Higher values reduce noise but add
+  /// group-delay phase lag to the velocity feedback loop.
+  final int encoderAverageDepth;
+
+  /// Encoder velocity sample delta in 500 µs increments (1–255).
+  /// Firmware default: 200 (= 100 ms measurement window).
+  ///
+  /// Each individual velocity sample is computed over a window of
+  /// `encoderSampleDelta × 500 µs`.  The centre of that window arrives with a
+  /// dead-time of half the window length before being available to the
+  /// controller.
+  final int encoderSampleDelta;
+
+  /// Estimated phase lag added to the velocity feedback loop by the encoder
+  /// velocity filter, in seconds.
+  ///
+  /// Two components:
+  /// 1. Dead-time from the measurement window: `encoderSampleDelta × 500 µs / 2`
+  /// 2. MA group delay at the 1 kHz control rate: `(encoderAverageDepth − 1) / 2 × 1 ms`
+  ///
+  /// With firmware defaults (sampleDelta = 200, averageDepth = 64) this is
+  /// approximately 81.5 ms.
+  double get filterPhaseDelaySec =>
+      encoderSampleDelta * 500e-6 / 2 +
+      (encoderAverageDepth - 1) / 2 * 0.001;
+
   /// Position unit for the current config (respects [useImperialUnits]).
   String get positionUnit => useImperialUnits
       ? type.positionUnitImperial
@@ -213,6 +242,8 @@ class MechanismConfig {
     this.isBrushless = true,
     this.currentLimitAmps = 40.0,
     this.feedbackSensor = FeedbackSensor.primaryEncoder,
+    this.encoderAverageDepth = 64,
+    this.encoderSampleDelta = 200,
     this.simulatedArmMassLbs,
     this.simulatedArmLengthIn,
     this.simulatedFlywheelMassKg,
@@ -233,6 +264,8 @@ class MechanismConfig {
         'isBrushless': isBrushless,
         'currentLimitAmps': currentLimitAmps,
         'feedbackSensor': feedbackSensor.name,
+        'encoderAverageDepth': encoderAverageDepth,
+        'encoderSampleDelta': encoderSampleDelta,
         if (simulatedArmMassLbs != null)
           'simulatedArmMassLbs': simulatedArmMassLbs,
         if (simulatedArmLengthIn != null)
@@ -267,6 +300,10 @@ class MechanismConfig {
         feedbackSensor: json['feedbackSensor'] != null
             ? FeedbackSensor.values.byName(json['feedbackSensor'] as String)
             : FeedbackSensor.primaryEncoder,
+        encoderAverageDepth:
+            (json['encoderAverageDepth'] as num?)?.toInt() ?? 64,
+        encoderSampleDelta:
+            (json['encoderSampleDelta'] as num?)?.toInt() ?? 200,
         simulatedArmMassLbs:
           (json['simulatedArmMassLbs'] as num?)?.toDouble(),
         simulatedArmLengthIn:
@@ -322,6 +359,8 @@ class MechanismConfig {
     bool? isBrushless,
     double? currentLimitAmps,
     FeedbackSensor? feedbackSensor,
+    int? encoderAverageDepth,
+    int? encoderSampleDelta,
     double? Function()? simulatedArmMassLbs,
     double? Function()? simulatedArmLengthIn,
     double? Function()? simulatedFlywheelMassKg,
@@ -343,6 +382,8 @@ class MechanismConfig {
       isBrushless: isBrushless ?? this.isBrushless,
       currentLimitAmps: currentLimitAmps ?? this.currentLimitAmps,
       feedbackSensor: feedbackSensor ?? this.feedbackSensor,
+      encoderAverageDepth: encoderAverageDepth ?? this.encoderAverageDepth,
+      encoderSampleDelta: encoderSampleDelta ?? this.encoderSampleDelta,
       simulatedArmMassLbs: simulatedArmMassLbs != null
           ? simulatedArmMassLbs()
           : this.simulatedArmMassLbs,

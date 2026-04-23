@@ -383,6 +383,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               ff: _ff!,
               velPid: _velPid,
               posPid: _posPid,
+              transportDelaySec: PidAutoTuner.defaultTransportDelaySec +
+                  config.filterPhaseDelaySec,
               mode: _isPositionMode
                   ? BodePlotMode.position
                   : BodePlotMode.velocity,
@@ -404,6 +406,8 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
               velPid: _velPid,
               posPid: _posPid,
               mechanismType: config.type,
+              transportDelaySec: PidAutoTuner.defaultTransportDelaySec +
+                  config.filterPhaseDelaySec,
               mode: _isPositionMode
                   ? PoleZeroMode.position
                   : PoleZeroMode.velocity,
@@ -808,12 +812,16 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
       PidResult posPid;
 
 
+      final totalDelaySec = PidAutoTuner.defaultTransportDelaySec +
+          config.filterPhaseDelaySec;
+
       if (_legacyPidMode) {
         // Use legacy PID calculation for sim/legacy mode
         velPid = PidAutoTuner.tuneVelocityLegacy(
           ff: primaryFF,
           mechanismType: config.type,
           desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
+          transportDelaySec: totalDelaySec,
         );
         posPid = PidAutoTuner.tunePositionLegacy(
           ff: primaryFF,
@@ -842,12 +850,14 @@ class _ResultsScreenState extends ConsumerState<ResultsScreen> {
           ff: primaryFF,
           mechanismType: config.type,
           desiredTimeConstantMs: tuningParams.velocityTimeConstantMs,
+          transportDelaySec: totalDelaySec,
         );
         posPid = PidAutoTuner.tunePosition(
           ff: primaryFF,
           mechanismType: config.type,
           desiredBandwidthHz: tuningParams.positionBandwidthHz,
           dampingRatio: tuningParams.dampingRatio,
+          transportDelaySec: totalDelaySec,
         );
       }
 

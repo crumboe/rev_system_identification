@@ -119,6 +119,10 @@ _C _controllerAt(double omega, PidResult pid) {
 /// Compute frequency response arrays + stability margins.
 ///
 /// Returns (plantResponse, openLoopResponse, closedLoopResponse, margins).
+///
+/// [transportDelaySec] adds a first-order Padé approximation of the
+/// measurement delay `e^{-sT}` to the plant, capturing the phase lag
+/// introduced by encoder velocity filtering and other pipeline delays.
 ({
   List<FrequencyResponse> plant,
   List<FrequencyResponse> openLoop,
@@ -128,6 +132,7 @@ _C _controllerAt(double omega, PidResult pid) {
   required FeedforwardGains ff,
   required PidResult pid,
   required BodePlotMode mode,
+  double transportDelaySec = 0.0,
   double omegaMin = 0.1,
   double omegaMax = 1000.0,
   int numPoints = 500,
@@ -156,7 +161,18 @@ _C _controllerAt(double omega, PidResult pid) {
     final omega = math.pow(10, logOmega).toDouble();
 
     // Plant
-    final gVal = _plantAt(omega, ff.kV, ff.kA, mode);
+    final gPlant = _plantAt(omega, ff.kV, ff.kA, mode);
+    // Apply first-order Padé approximation of transport delay:
+    // e^{-sT} ≈ (1 - sT/2) / (1 + sT/2),  s = jω
+    final gVal = transportDelaySec <= 0
+        ? gPlant
+        : () {
+            final h = transportDelaySec / 2.0;
+            final joh = _C(0, omega * h);
+            final pade =
+                (_C.fromReal(1.0) - joh) / (_C.fromReal(1.0) + joh);
+            return gPlant * pade;
+          }();
     plant.add(FrequencyResponse(
       omegaRadPerSec: omega,
       magnitudeDb: 20.0 * math.log(gVal.mag) / math.ln10,
@@ -258,6 +274,10 @@ class BodePlot extends StatefulWidget {
   final PidResult? velPid;
   final PidResult? posPid;
 
+  /// Transport delay (seconds) to include in the frequency response.
+  /// Encoder filter delay + pipeline delay should be summed here.
+  final double transportDelaySec;
+
   /// When non-null, overrides the internal mode state.
   final BodePlotMode? mode;
 
@@ -269,6 +289,7 @@ class BodePlot extends StatefulWidget {
     required this.ff,
     this.velPid,
     this.posPid,
+    this.transportDelaySec = 0.0,
     this.mode,
     this.onModeChanged,
   });
@@ -296,7 +317,12 @@ class _BodePlotState extends State<BodePlot> {
 
     // If there's no PID for the selected mode, show plant-only
     final data = hasPid
-        ? computeBodeData(ff: widget.ff, pid: pid, mode: _mode)
+        ? computeBodeData(
+            ff: widget.ff,
+            pid: pid,
+            mode: _mode,
+            transportDelaySec: widget.transportDelaySec,
+          )
         : null;
 
     // Always compute plant-only response
@@ -304,6 +330,7 @@ class _BodePlotState extends State<BodePlot> {
       ff: widget.ff,
       pid: const PidResult(kP: 0),
       mode: _mode,
+      transportDelaySec: widget.transportDelaySec,
     );
 
     final chart = Card(

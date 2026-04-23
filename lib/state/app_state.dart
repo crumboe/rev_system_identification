@@ -98,6 +98,14 @@ class MechanismConfigNotifier extends StateNotifier<MechanismConfig> {
     state = state.copyWith(feedbackSensor: sensor);
   }
 
+  void setEncoderAverageDepth(int depth) {
+    state = state.copyWith(encoderAverageDepth: depth.clamp(1, 64));
+  }
+
+  void setEncoderSampleDelta(int delta) {
+    state = state.copyWith(encoderSampleDelta: delta.clamp(1, 255));
+  }
+
   void setSimulatedArmMassLbs(double? massLbs) {
     state = state.copyWith(simulatedArmMassLbs: () => massLbs);
   }

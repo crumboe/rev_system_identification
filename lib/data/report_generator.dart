@@ -143,6 +143,7 @@ class ReportGenerator {
                     velocityPid,
                     BodePlotMode.velocity,
                     chartFont,
+                    config.filterPhaseDelaySec,
                   ),
                   pw.SizedBox(height: 10),
                 ],
@@ -161,6 +162,7 @@ class ReportGenerator {
                     positionPid,
                     BodePlotMode.position,
                     chartFont,
+                    config.filterPhaseDelaySec,
                   ),
                 ],
               ],
@@ -792,8 +794,15 @@ class ReportGenerator {
     PidResult pid,
     BodePlotMode mode,
     PdfFont chartFont,
+    double transportDelaySec,
   ) {
-    final data = computeBodeData(ff: ff, pid: pid, mode: mode, numPoints: 200);
+    final data = computeBodeData(
+      ff: ff,
+      pid: pid,
+      mode: mode,
+      numPoints: 200,
+      transportDelaySec: transportDelaySec,
+    );
 
     final m = data.margins;
     final gm = m.gainMarginDb.isInfinite

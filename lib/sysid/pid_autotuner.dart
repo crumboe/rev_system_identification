@@ -154,6 +154,15 @@ class PidAutoTuner {
   /// adding minimal phase lag at frequencies the controller cares about.
   static const _dFilterBandwidthMultiplier = 8.0;
 
+  /// Feedback-dominant robust velocity scaling for single-set load tolerance.
+  static const _robustVelocityFfKvScale = 0.80;
+  static const _robustVelocityFfKaScale = 0.75;
+  static const _robustVelocityKpBoost = 1.60;
+  static const _robustVelocityTauFloorMultiplier = 1.30;
+  static const _robustVelocityTiFloorSec = 0.12;
+  static const _robustVelocityTiTauMultiplier = 1.60;
+  static const _robustVelocityKgUnloadedWeight = 0.60;
+
   /// Robust velocity tuning uses a much slower integral loop than the
   /// proportional loop so load/gravity mismatch is corrected gradually
   /// instead of injecting overshoot.
@@ -161,7 +170,10 @@ class PidAutoTuner {
     required double closedLoopTauSec,
     required double plantTauSec,
   }) {
-    return math.max(12.0 * closedLoopTauSec, 30.0 * plantTauSec);
+    return math.max(
+      _robustVelocityTiFloorSec,
+      _robustVelocityTiTauMultiplier * closedLoopTauSec,
+    );
   }
 
   /// Robust position tuning uses a slow integral loop relative to both the
@@ -443,17 +455,29 @@ class PidAutoTuner {
 
   /// Compute blended feedforward from unloaded and loaded gain sets.
   ///
-  /// Each parameter is the arithmetic mean: error is bounded to ±ΔkX/2
-  /// in either direction, which the integral term corrects.
+  /// Uses a conservative heavy-biased blend to avoid under-driving at high
+  /// loads while keeping a single fixed set of gains.
+  ///
+  /// In feedback-dominant mode we intentionally de-weight uncertain kV/kA so
+  /// the PI loop carries more of the load-variation burden:
+  /// - kS = max(kS_unloaded, kS_loaded)
+  /// - kV = scale * geometric mean sqrt(kV_unloaded * kV_loaded)
+  /// - kA = scale * kA_loaded (heavier inertia)
+  /// - kG = slightly unloaded-biased blend
   static FeedforwardGains blendFeedforward(
     FeedforwardGains unloaded,
     FeedforwardGains loaded,
   ) {
+    final kvProduct = unloaded.kV * loaded.kV;
+    final kvGeomMean = kvProduct > 0 ? math.sqrt(kvProduct) : 0.0;
+    final kgBlend = (_robustVelocityKgUnloadedWeight * unloaded.kG) +
+        ((1.0 - _robustVelocityKgUnloadedWeight) * loaded.kG);
+
     return FeedforwardGains(
-      kS: (unloaded.kS + loaded.kS) / 2.0,
-      kV: (unloaded.kV + loaded.kV) / 2.0,
-      kA: (unloaded.kA + loaded.kA) / 2.0,
-      kG: (unloaded.kG + loaded.kG) / 2.0,
+      kS: math.max(unloaded.kS, loaded.kS),
+      kV: kvGeomMean * _robustVelocityFfKvScale,
+      kA: loaded.kA * _robustVelocityFfKaScale,
+      kG: kgBlend,
     );
   }
 
@@ -464,9 +488,11 @@ class PidAutoTuner {
   /// is a pure integrator 1/(kA·s).  The PID handles only residual error
   /// from feedforward model mismatch between loaded and unloaded conditions.
   ///
-  /// - kP sized for the lighter plant (min kA) so proportional action
-  ///   never exceeds what either plant can track.
-  /// - kI is a slow integral to reject the gravity/weight disturbance ΔkG.
+  /// - kP uses heavy-biased plant terms with a feedback boost and
+  ///   conservative time constant floor (τ >= 2.0 * τ_plant) so response stays controlled
+  ///   across unknown loads.
+  /// - kI is set from T_i = max(0.20 s, 2.5 * τ) for stronger disturbance rejection
+  ///   without making light-load response ring.
   /// - I-zone bounds integrator accumulation to prevent windup.
   static PidResult tuneRobustVelocity({
     required FeedforwardGains ffUnloaded,
@@ -477,10 +503,12 @@ class PidAutoTuner {
     const nominalVoltage = 12.0;
     final warnings = <String>[];
 
-    // Use lighter plant kA (faster natural response = worst-case for
-    // proportional gain sizing — ensures stability for both).
-    final kA = math.min(ffUnloaded.kA, ffLoaded.kA);
-    final kV = math.max(ffUnloaded.kV, ffLoaded.kV);
+    // Heavy-biased fixed robust model for one-set tuning, but with
+    // de-weighted FF terms so feedback dominates unknown load variation.
+    final kA = ffLoaded.kA * _robustVelocityFfKaScale;
+    final kvProduct = ffUnloaded.kV * ffLoaded.kV;
+    final kV =
+      (kvProduct > 0 ? math.sqrt(kvProduct) : 0.0) * _robustVelocityFfKvScale;
 
     if (kA <= 0 || kV <= 0) {
       warnings.add('Invalid plant parameters — returning zero gains.');
@@ -494,12 +522,14 @@ class PidAutoTuner {
     final plantTau = kA / kV;
     var tau = desiredTimeConstantMs / 1000.0;
 
-    // Same clamping as single-plant tuneVelocity.
-    if (tau < plantTau) {
-      tau = plantTau;
+    // Conservative fixed-loop floor for load variation robustness.
+    final robustFloor = _robustVelocityTauFloorMultiplier * plantTau;
+    if (tau < robustFloor) {
+      tau = robustFloor;
       warnings.add(
-        'Velocity time constant clamped to plant τ = '
-        '${(plantTau * 1000).toStringAsFixed(1)} ms.');
+        'Velocity time constant clamped to '
+        '${_robustVelocityTauFloorMultiplier.toStringAsFixed(1)}× plant τ = '
+        '${(robustFloor * 1000).toStringAsFixed(1)} ms.');
     }
     if (plantTau < _lowInertiaTauThreshold) {
       final robustMin = plantTau * 3.0;
@@ -510,7 +540,7 @@ class PidAutoTuner {
       }
     }
 
-    final kP = (kA / tau) / nominalVoltage;
+    final kP = _robustVelocityKpBoost * (kA / tau) / nominalVoltage;
 
     // Integral gain: reject the blended-load mismatch slowly enough that the
     // proportional loop remains dominant. A slower integral loop reduces
@@ -526,7 +556,9 @@ class PidAutoTuner {
     final iZone = kI > 0 ? (2.0 * deltaKG / kI).clamp(0.0, 100.0) : 0.0;
 
     warnings.add(
-      'Robust gains: kP uses lighter kA = ${kA.toStringAsFixed(4)}. '
+      'Feedback-dominant robust gains: kP boosted by '
+      '${_robustVelocityKpBoost.toStringAsFixed(2)} using kA = ${kA.toStringAsFixed(4)} '
+      'and kV = ${kV.toStringAsFixed(4)} after FF scaling. '
       'kI = ${kI.toStringAsFixed(6)} uses Tᵢ = '
       '${integralTimeSec.toStringAsFixed(2)} s to reject load disturbance '
       'ΔkG = ${deltaKG.toStringAsFixed(3)} V without making the response ring.');

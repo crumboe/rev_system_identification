@@ -71,12 +71,21 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
   // Simulated load controller (raw voltage fallback for flywheel)
   late TextEditingController _loadCtrl;
 
+  // Typed simulated mass controller for disturbance testing (arm/elevator sim).
+  late TextEditingController _disturbanceMassCtrl;
+
   // Simulated load mass in kg for arm/elevator
   double? _simulatedLoadMassKg;
 
   // Validation-only integral overrides. Null means "use the auto-tuned value".
   double? _velocityIntegralOverride;
   double? _positionIntegralOverride;
+
+  // Baseline gains captured from Results-page values before validation retuning.
+  FeedforwardGains? _baselineFf;
+  PidResult? _baselineVelocityPid;
+  PidResult? _baselinePositionPid;
+  bool _suppressBaselineAutoUpdate = false;
 
   // MAXMotion configuration controllers
   late TextEditingController _mmCruiseCtrl;
@@ -112,7 +121,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _mmErrorCtrl = TextEditingController(text: '0.05');
     _clErrorCtrl = TextEditingController(text: '0');
     _loadCtrl = TextEditingController(text: '0');
+    _disturbanceMassCtrl = TextEditingController(text: '0');
     _clErrorCtrl.addListener(_syncClErrorToProviders);
+    _captureBaselineFromCurrentIfNeeded();
 
     _positionPollTimer = Timer.periodic(
       const Duration(milliseconds: 100),
@@ -132,6 +143,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     _clErrorCtrl.removeListener(_syncClErrorToProviders);
     _clErrorCtrl.dispose();
     _loadCtrl.dispose();
+    _disturbanceMassCtrl.dispose();
     _mmFlyoutController.dispose();
     super.dispose();
   }
@@ -158,6 +170,19 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<FeedforwardGains?>(feedforwardGainsProvider, (previous, next) {
+      if (_suppressBaselineAutoUpdate || previous == next || !mounted) return;
+      setState(() => _captureBaselineFromCurrentIfNeeded(force: true));
+    });
+    ref.listen<PidResult?>(pidResultProvider, (previous, next) {
+      if (_suppressBaselineAutoUpdate || previous == next || !mounted) return;
+      setState(() => _captureBaselineFromCurrentIfNeeded(force: true));
+    });
+    ref.listen<PidResult?>(posPidResultProvider, (previous, next) {
+      if (_suppressBaselineAutoUpdate || previous == next || !mounted) return;
+      setState(() => _captureBaselineFromCurrentIfNeeded(force: true));
+    });
+
     final dm = ref.watch(deviceManagerProvider);
     final config = ref.watch(mechanismConfigProvider);
     final device = dm.leader;
@@ -352,14 +377,17 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                   const SizedBox(width: 8),
                   Button(
                     onPressed: canRunDisturbance
-                        ? () => _runTest(
-                            ValidationMode.disturbancePosition,
-                            config,
-                            device,
-                            ff: ff,
-                            velPid: velPid,
-                            posPid: posPid,
-                          )
+                        ? () {
+                            _applyDisturbanceMassFromText(device, config);
+                            _runTest(
+                              ValidationMode.disturbancePosition,
+                              config,
+                              device,
+                              ff: ff,
+                              velPid: velPid,
+                              posPid: posPid,
+                            );
+                          }
                         : null,
                     child: const Text('Run Disturbance Test'),
                   ),
@@ -542,20 +570,20 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                     const SizedBox(width: 8),
                     SizedBox(
                       width: 120,
-                      child: NumberBox<double>(
-                        value: _simulatedLoadMassKg,
-                        onChanged: _isRunning
-                            ? null
-                            : (v) => _setSimulatedLoadMassKg(
-                                device,
-                                config,
-                                v ?? 0.0,
-                              ),
-                        smallChange: 0.1,
-                        min: 0,
-                        max: 100,
-                        clearButton: false,
+                      child: TextBox(
+                        controller: _disturbanceMassCtrl,
+                        enabled: !_isRunning,
                         placeholder: '0',
+                        onChanged: (value) {
+                          final parsed = double.tryParse(value);
+                          if (parsed == null || _isRunning) return;
+                          _setSimulatedLoadMassKg(
+                            device,
+                            config,
+                            parsed,
+                            updateTextField: false,
+                          );
+                        },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -605,10 +633,17 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
             // Live charts + mechanism visual
             Expanded(
               key: TutorialKeys.validationChart,
-              child: Column(
-                children: [
-                  Expanded(
-                    child: Row(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  const chartAreaMinHeight = 520.0;
+                  return SingleChildScrollView(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                      child: Column(
+                        children: [
+                          SizedBox(
+                            height: chartAreaMinHeight,
+                            child: Row(
                       children: [
                         // Charts
                         Expanded(
@@ -814,7 +849,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                     ),
                   ),
 
-                  // Metrics strip (inside Expanded so it doesn't shrink charts)
+                  // Metrics strip and diagnostics appear below the chart area.
                   if (_result != null) ...[
                     const SizedBox(height: 8),
                     _MetricsStrip(
@@ -843,6 +878,20 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                       }),
                       onApplyAndRetest: _applyTuningAndRetest,
                     ),
+                    const SizedBox(height: 6),
+                    _PidFfComparisonCard(
+                      baselineFf: _baselineFf,
+                      currentFf: ff,
+                      baselineVelocityPid: _baselineVelocityPid,
+                      currentVelocityPid: velPid,
+                      baselinePositionPid: _baselinePositionPid,
+                      currentPositionPid: posPid,
+                      onUseCurrentAsBaseline: () {
+                        setState(() {
+                          _captureBaselineFromCurrentIfNeeded(force: true);
+                        });
+                      },
+                    ),
                     const SizedBox(height: 4),
                     // Response diagnostics — fix-it bars
                     if (_diagnostics.isNotEmpty)
@@ -869,7 +918,11 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
                       ),
                     const SizedBox(height: 4),
                   ],
-                ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -899,17 +952,38 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     if (val == null) return;
 
     final velPid = ref.read(pidResultProvider);
-    if (velPid != null && (velPid.allowedClosedLoopError - val).abs() > 1e-12) {
-      ref.read(pidResultProvider.notifier).state = velPid.copyWith(
-        allowedClosedLoopError: val,
-      );
-    }
-
     final posPid = ref.read(posPidResultProvider);
-    if (posPid != null && (posPid.allowedClosedLoopError - val).abs() > 1e-12) {
-      ref.read(posPidResultProvider.notifier).state = posPid.copyWith(
-        allowedClosedLoopError: val,
-      );
+    _suppressBaselineAutoUpdate = true;
+    try {
+      if (velPid != null && (velPid.allowedClosedLoopError - val).abs() > 1e-12) {
+        ref.read(pidResultProvider.notifier).state = velPid.copyWith(
+          allowedClosedLoopError: val,
+        );
+      }
+
+      if (posPid != null && (posPid.allowedClosedLoopError - val).abs() > 1e-12) {
+        ref.read(posPidResultProvider.notifier).state = posPid.copyWith(
+          allowedClosedLoopError: val,
+        );
+      }
+    } finally {
+      _suppressBaselineAutoUpdate = false;
+    }
+  }
+
+  void _captureBaselineFromCurrentIfNeeded({bool force = false}) {
+    final currentFf = ref.read(feedforwardGainsProvider);
+    final currentVelocityPid = ref.read(pidResultProvider);
+    final currentPositionPid = ref.read(posPidResultProvider);
+
+    if (force || (_baselineFf == null && currentFf != null)) {
+      _baselineFf = currentFf;
+    }
+    if (force || (_baselineVelocityPid == null && currentVelocityPid != null)) {
+      _baselineVelocityPid = currentVelocityPid;
+    }
+    if (force || (_baselinePositionPid == null && currentPositionPid != null)) {
+      _baselinePositionPid = currentPositionPid;
     }
   }
 
@@ -948,6 +1022,7 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     PidResult? velPid,
     PidResult? posPid,
   }) async {
+    _captureBaselineFromCurrentIfNeeded();
     _applyConservativeRealPositionBandwidthStart(mode, device);
 
     var velSp = double.tryParse(_velSpCtrl.text);
@@ -1180,6 +1255,9 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
 
     if (ff == null) return;
 
+    final totalDelaySec = PidAutoTuner.defaultTransportDelaySec +
+        config.filterPhaseDelaySec;
+
     PidResult velPid;
     PidResult posPid;
 
@@ -1202,18 +1280,25 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
         ff: ff,
         mechanismType: config.type,
         desiredTimeConstantMs: tuning.velocityTimeConstantMs,
+        transportDelaySec: totalDelaySec,
       );
       posPid = PidAutoTuner.tunePosition(
         ff: ff,
         mechanismType: config.type,
         desiredBandwidthHz: tuning.positionBandwidthHz,
         dampingRatio: tuning.dampingRatio,
+        transportDelaySec: totalDelaySec,
       );
     }
 
     // Store the retuned gains.
-    ref.read(pidResultProvider.notifier).state = _applyClError(velPid);
-    ref.read(posPidResultProvider.notifier).state = _applyClError(posPid);
+    _suppressBaselineAutoUpdate = true;
+    try {
+      ref.read(pidResultProvider.notifier).state = _applyClError(velPid);
+      ref.read(posPidResultProvider.notifier).state = _applyClError(posPid);
+    } finally {
+      _suppressBaselineAutoUpdate = false;
+    }
 
     // Rerun the same test with updated gains.
     final device = ref.read(deviceManagerProvider).leader;
@@ -1273,10 +1358,14 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
     SparkDevice device,
     MechanismConfig config,
     double massKg,
+    {bool updateTextField = true}
   ) {
     final clamped = massKg.clamp(0.0, 100.0).toDouble();
     setState(() {
       _simulatedLoadMassKg = clamped;
+      if (updateTextField) {
+        _disturbanceMassCtrl.text = clamped.toStringAsFixed(2);
+      }
     });
     final conn = device.connection as SimulatedSparkConnection;
     conn.physics.loadTorqueVolts = computeLoadTorqueVolts(
@@ -1284,6 +1373,15 @@ class _ValidationScreenState extends ConsumerState<ValidationScreen> {
       config: config,
       physics: conn.physics,
     );
+  }
+
+  void _applyDisturbanceMassFromText(
+    SparkDevice device,
+    MechanismConfig config,
+  ) {
+    final parsed = double.tryParse(_disturbanceMassCtrl.text);
+    if (parsed == null) return;
+    _setSimulatedLoadMassKg(device, config, parsed);
   }
 
   void _adjustSimulatedLoadMassKg(
@@ -1348,6 +1446,67 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
 
   bool get _isVelocity => widget.result.mode == ValidationMode.velocity;
 
+  bool _isLikelyLongDecayOvershoot() {
+    final result = widget.result;
+    final overshoot = result.overshootPercent;
+    if (overshoot == null || overshoot <= 0 || result.data.length < 12) {
+      return false;
+    }
+
+    final target = result.setpoints.first != 0
+        ? result.setpoints.first
+        : result.setpoints.last;
+    final initial = _isVelocity
+        ? result.data.first.velocity
+        : result.data.first.position;
+    final stepAmplitude = target - initial;
+    if (stepAmplitude.abs() < 1e-9) return false;
+
+    final stepSign = stepAmplitude >= 0 ? 1.0 : -1.0;
+    final deadband = stepAmplitude.abs() * 0.01;
+
+    final normalizedErrors = <double>[];
+    for (var i = 0; i < result.data.length; i++) {
+      final measured = _isVelocity
+          ? result.data[i].velocity
+          : result.data[i].position;
+      final setpoint = i < result.setpoints.length
+          ? result.setpoints[i]
+          : target;
+      normalizedErrors.add((measured - setpoint) * stepSign);
+    }
+
+    var peakIndex = 0;
+    var peakValue = -double.infinity;
+    for (var i = 0; i < normalizedErrors.length; i++) {
+      if (normalizedErrors[i] > peakValue) {
+        peakValue = normalizedErrors[i];
+        peakIndex = i;
+      }
+    }
+    if (peakValue <= deadband) return false;
+
+    int postPeakCrossings = 0;
+    double? prev;
+    for (var i = peakIndex; i < normalizedErrors.length; i++) {
+      final e = normalizedErrors[i];
+      final signed = e.abs() <= deadband ? 0.0 : (e > 0 ? 1.0 : -1.0);
+      if (prev != null && prev != 0.0 && signed != 0.0 && prev != signed) {
+        postPeakCrossings++;
+      }
+      if (signed != 0.0) prev = signed;
+    }
+
+    final tailStart = (normalizedErrors.length * 0.8).floor();
+    final tail = normalizedErrors.sublist(tailStart);
+    final avgTailError =
+        tail.fold<double>(0.0, (sum, v) => sum + v) / tail.length;
+
+    // Long-decay overshoot tends to cross at most once after the first peak,
+    // then approaches the target slowly from the same side.
+    return postPeakCrossings <= 1 && avgTailError > deadband;
+  }
+
   double _equivalentTauMsFromBw(double bwHz) {
     if (bwHz <= 0) return double.infinity;
     return 1000.0 / (2.0 * 3.141592653589793 * bwHz);
@@ -1374,11 +1533,16 @@ class _MetricsStripState extends ConsumerState<_MetricsStrip> {
         final measured = overshoot != null
             ? 'Current overshoot is ${overshoot.toStringAsFixed(1)}%. '
             : '';
+        final longDecayOvershoot = !_isVelocity && _isLikelyLongDecayOvershoot();
         return _isVelocity
         ? '${measured}If it bounces past target, slow it down. '
           'Increase \u03c4 until overshoot drops below about 10-15%.'
-        : '${measured}Add damping to calm ringing. '
-          'Increase \u03b6 by about 0.1-0.3 or reduce BW by 10-20%.';
+        : longDecayOvershoot
+            ? '${measured}This looks like a long-decay overshoot (little ringing). '
+            'Keep damping healthy (\u03b6 around 0.9-1.3) and try increasing BW by about 5-15% '
+                'to improve setpoint tracking, then retest for oscillation.'
+            : '${measured}Add damping to calm ringing. '
+            'Increase \u03b6 by about 0.1-0.3 or reduce BW by 10-20%.';
       case 'sse':
         final measured = ssError != null
             ? 'Current steady-state error is ${ssError.toStringAsFixed(3)}. '
@@ -2107,6 +2271,9 @@ class _GainPreview extends ConsumerWidget {
 
     if (ff == null) return const SizedBox.shrink();
 
+    final totalDelaySec = PidAutoTuner.defaultTransportDelaySec +
+        config.filterPhaseDelaySec;
+
     final PidResult preview;
     if (isVelocity) {
       preview = ffLoaded != null
@@ -2120,6 +2287,7 @@ class _GainPreview extends ConsumerWidget {
               ff: ff,
               mechanismType: config.type,
               desiredTimeConstantMs: tuning.velocityTimeConstantMs,
+              transportDelaySec: totalDelaySec,
             );
     } else {
       preview = ffLoaded != null
@@ -2135,6 +2303,7 @@ class _GainPreview extends ConsumerWidget {
               mechanismType: config.type,
               desiredBandwidthHz: tuning.positionBandwidthHz,
               dampingRatio: tuning.dampingRatio,
+              transportDelaySec: totalDelaySec,
             );
     }
 
@@ -2169,6 +2338,172 @@ class _GainPreview extends ConsumerWidget {
               fontSize: 11,
               fontFamily: 'Consolas',
               fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PidFfComparisonCard extends StatelessWidget {
+  final FeedforwardGains? baselineFf;
+  final FeedforwardGains? currentFf;
+  final PidResult? baselineVelocityPid;
+  final PidResult? currentVelocityPid;
+  final PidResult? baselinePositionPid;
+  final PidResult? currentPositionPid;
+  final VoidCallback onUseCurrentAsBaseline;
+
+  const _PidFfComparisonCard({
+    required this.baselineFf,
+    required this.currentFf,
+    required this.baselineVelocityPid,
+    required this.currentVelocityPid,
+    required this.baselinePositionPid,
+    required this.currentPositionPid,
+    required this.onUseCurrentAsBaseline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasAny =
+        (baselineFf != null && currentFf != null) ||
+        (baselineVelocityPid != null && currentVelocityPid != null) ||
+        (baselinePositionPid != null && currentPositionPid != null);
+    if (!hasAny) return const SizedBox.shrink();
+
+    return Card(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Results vs Validation Gain Changes',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const Spacer(),
+              Button(
+                onPressed: onUseCurrentAsBaseline,
+                child: const Text('Use Current as Baseline'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (baselineVelocityPid != null && currentVelocityPid != null)
+            _comparisonSection(
+              title: 'Velocity PID',
+              rows: [
+                _valueRow('kP', baselineVelocityPid!.kP, currentVelocityPid!.kP),
+                _valueRow('kI', baselineVelocityPid!.kI, currentVelocityPid!.kI),
+                _valueRow('kD', baselineVelocityPid!.kD, currentVelocityPid!.kD),
+                _valueRow(
+                  'dFilter',
+                  baselineVelocityPid!.dFilter,
+                  currentVelocityPid!.dFilter,
+                ),
+                _valueRow(
+                  'CL Error',
+                  baselineVelocityPid!.allowedClosedLoopError,
+                  currentVelocityPid!.allowedClosedLoopError,
+                ),
+              ],
+            ),
+          if (baselinePositionPid != null && currentPositionPid != null)
+            _comparisonSection(
+              title: 'Position PID',
+              rows: [
+                _valueRow('kP', baselinePositionPid!.kP, currentPositionPid!.kP),
+                _valueRow('kI', baselinePositionPid!.kI, currentPositionPid!.kI),
+                _valueRow('kD', baselinePositionPid!.kD, currentPositionPid!.kD),
+                _valueRow(
+                  'dFilter',
+                  baselinePositionPid!.dFilter,
+                  currentPositionPid!.dFilter,
+                ),
+                _valueRow(
+                  'CL Error',
+                  baselinePositionPid!.allowedClosedLoopError,
+                  currentPositionPid!.allowedClosedLoopError,
+                ),
+              ],
+            ),
+          if (baselineFf != null && currentFf != null)
+            _comparisonSection(
+              title: 'Feedforward',
+              rows: [
+                _valueRow('kS', baselineFf!.kS, currentFf!.kS),
+                _valueRow('kV', baselineFf!.kV, currentFf!.kV),
+                _valueRow('kA', baselineFf!.kA, currentFf!.kA),
+                _valueRow('kG', baselineFf!.kG, currentFf!.kG),
+              ],
+            ),
+          const SizedBox(height: 2),
+          const Text(
+            'Baseline is captured from the current Results-page gains. '
+            'Validation retuning currently changes PID values; FF typically remains unchanged.',
+            style: TextStyle(fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _comparisonSection({required String title, required List<Widget> rows}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(4),
+          color: const Color(0x1A808080),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            ...rows,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _valueRow(String label, double baseline, double current) {
+    final delta = current - baseline;
+    final changed = delta.abs() > 1e-12;
+    final deltaText = changed
+        ? '${delta >= 0 ? '+' : ''}${delta.toStringAsExponential(3)}'
+        : '0';
+    final currentText = current.toStringAsExponential(3);
+    final baselineText = baseline.toStringAsExponential(3);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        children: [
+          SizedBox(width: 62, child: Text(label, style: const TextStyle(fontSize: 10))),
+          Expanded(
+            child: Text(
+              '$baselineText  ->  $currentText',
+              style: const TextStyle(fontSize: 10, fontFamily: 'Consolas'),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Δ $deltaText',
+            style: TextStyle(
+              fontSize: 10,
+              fontFamily: 'Consolas',
+              fontWeight: FontWeight.w600,
+              color: changed ? Colors.warningPrimaryColor : null,
             ),
           ),
         ],

@@ -75,6 +75,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       final pcf = await device.parameters.getPositionConversionFactor();
       await Future<void>.delayed(readDelay);
       final vcf = await device.parameters.getVelocityConversionFactor();
+      await Future<void>.delayed(readDelay);
+      final avgDepth = await device.parameters
+          .getParameter(kParamEncoderAverageDepth);
+      await Future<void>.delayed(readDelay);
+      final sampleDelta = await device.parameters
+          .getParameter(kParamEncoderSampleDelta);
 
       notifier.setIsBrushless(motorType >= 0.5);
       notifier.setMotorInverted(inverted >= 0.5);
@@ -86,6 +92,12 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       );
       if (pcf != 0) notifier.setPositionConversionFactor(pcf);
       if (vcf != 0) notifier.setVelocityConversionFactor(vcf);
+      if (avgDepth >= 1 && avgDepth <= 64) {
+        notifier.setEncoderAverageDepth(avgDepth.toInt());
+      }
+      if (sampleDelta >= 1 && sampleDelta <= 255) {
+        notifier.setEncoderSampleDelta(sampleDelta.toInt());
+      }
     } catch (_) {
       // Device communication failed — leave defaults in place.
     }
@@ -357,6 +369,24 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
               }
             },
           ),
+        ),
+
+        const SizedBox(height: 12),
+
+        // Advanced encoder filtering
+        _EncoderFilterSection(
+          config: config,
+          isConnected: isConnected,
+          onDepthChanged: (v) {
+            configNotifier.setEncoderAverageDepth(v);
+            device?.parameters.setParameter(
+                kParamEncoderAverageDepth, v.toDouble());
+          },
+          onDeltaChanged: (v) {
+            configNotifier.setEncoderSampleDelta(v);
+            device?.parameters.setParameter(
+                kParamEncoderSampleDelta, v.toDouble());
+          },
         ),
 
         const SizedBox(height: 24),
@@ -882,6 +912,141 @@ class _ZeroEncoderCard extends StatelessWidget {
                 SizedBox(width: 6),
                 Text('Set Current Position as Zero'),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Encoder velocity filter configuration expander. Explains the phase lag
+/// introduced by the two SPARK MAX encoder averaging parameters and lets the
+/// user change them directly from the configuration screen.
+class _EncoderFilterSection extends StatelessWidget {
+  final MechanismConfig config;
+  final bool isConnected;
+  final ValueChanged<int> onDepthChanged;
+  final ValueChanged<int> onDeltaChanged;
+
+  const _EncoderFilterSection({
+    required this.config,
+    required this.isConnected,
+    required this.onDepthChanged,
+    required this.onDeltaChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final delayMs = (config.filterPhaseDelaySec * 1000).round();
+    return Expander(
+      initiallyExpanded: false,
+      header: Row(
+        children: [
+          const Icon(FluentIcons.timer, size: 14),
+          const SizedBox(width: 8),
+          const Text('Encoder Velocity Filtering'),
+          const SizedBox(width: 12),
+          Text(
+            '(filter delay: ${delayMs} ms)',
+            style: TextStyle(
+              fontSize: 11,
+              color: delayMs > 20
+                  ? Colors.orange.normal
+                  : Colors.green.normal,
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InfoBar(
+            title: const Text('Phase lag trade-off'),
+            content: Text(
+              'The encoder velocity filter adds approximately $delayMs ms of '
+              'phase lag to the velocity feedback loop, which limits how '
+              'aggressively the PID can be tuned. '
+              'Lowering these values reduces phase lag and allows tighter '
+              'control, but increases velocity measurement noise.\n\n'
+              'Firmware defaults (Average Depth = 64, Sample Delta = 200) '
+              'add ~82 ms of lag. For most velocity control applications, '
+              'values of Average Depth = 4\u201316 and Sample Delta = 1\u20134 '
+              'give a good balance of low noise and low lag.',
+            ),
+            severity: InfoBarSeverity.warning,
+            isLong: true,
+          ),
+          const SizedBox(height: 12),
+          _ConfigRow(
+            label: 'Average Depth (1\u201364)',
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: NumberBox<int>(
+                    value: config.encoderAverageDepth,
+                    min: 1,
+                    max: 64,
+                    onChanged: (v) {
+                      if (v != null) onDepthChanged(v);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message:
+                      'Number of velocity samples to average together.\n'
+                      'Lower values reduce phase lag but increase noise.\n'
+                      'Firmware default: 64.',
+                  child: Icon(
+                    FluentIcons.info,
+                    size: 14,
+                    color: Colors.grey[100],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _ConfigRow(
+            label: 'Sample Delta (1\u2013255, \u00d7500 \u00b5s)',
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: NumberBox<int>(
+                    value: config.encoderSampleDelta,
+                    min: 1,
+                    max: 255,
+                    onChanged: (v) {
+                      if (v != null) onDeltaChanged(v);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Tooltip(
+                  message:
+                      'Time between each velocity measurement in 500 \u00b5s steps.\n'
+                      '1 = 500 \u00b5s window, 200 = 100 ms window.\n'
+                      'Shorter windows reduce phase lag.\n'
+                      'Firmware default: 200.',
+                  child: Icon(
+                    FluentIcons.info,
+                    size: 14,
+                    color: Colors.grey[100],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Estimated filter delay: $delayMs ms'
+            '${isConnected ? '' : '  (not written to device — connect a SPARK MAX first)'}',
+            style: TextStyle(
+              fontSize: 11,
+              fontStyle: isConnected ? FontStyle.normal : FontStyle.italic,
+              color: Colors.grey[100],
             ),
           ),
         ],
