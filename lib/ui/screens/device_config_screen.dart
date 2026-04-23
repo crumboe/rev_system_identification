@@ -716,9 +716,11 @@ class _DeviceConfigScreenState extends ConsumerState<DeviceConfigScreen> {
         notifier.setCurrentLimit(value);
       case kParamClosedLoopControlSensor:
         notifier.setFeedbackSensor(
-          value == FeedbackSensor.absoluteEncoder.parameterValue.toDouble()
-              ? FeedbackSensor.absoluteEncoder
-              : FeedbackSensor.primaryEncoder,
+          switch (value.round()) {
+            0 => FeedbackSensor.analogSensor,
+            2 => FeedbackSensor.absoluteEncoder,
+            _ => FeedbackSensor.primaryEncoder,
+          },
         );
     }
   }

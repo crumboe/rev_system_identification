@@ -9,6 +9,9 @@ enum FeedbackSensor {
   /// Built-in primary encoder (Hall-effect / quadrature on the motor shaft).
   primaryEncoder,
 
+  /// Analog sensor (connected to the analog input port).
+  analogSensor,
+
   /// Absolute encoder (e.g. REV Through Bore Encoder in absolute mode).
   absoluteEncoder,
 }
@@ -17,30 +20,35 @@ enum FeedbackSensor {
 extension FeedbackSensorX on FeedbackSensor {
   String get displayName => switch (this) {
         FeedbackSensor.primaryEncoder => 'Primary Encoder',
+        FeedbackSensor.analogSensor => 'Analog Sensor',
         FeedbackSensor.absoluteEncoder => 'Absolute Encoder',
       };
 
   /// Integer value written to SPARK parameter 9.
   int get parameterValue => switch (this) {
-        FeedbackSensor.primaryEncoder => 0,
+        FeedbackSensor.primaryEncoder => 1,
+        FeedbackSensor.analogSensor => 0,
         FeedbackSensor.absoluteEncoder => 2,
       };
 
   /// Java REVLib enum name.
   String get javaName => switch (this) {
         FeedbackSensor.primaryEncoder => 'kPrimaryEncoder',
+        FeedbackSensor.analogSensor => 'kAnalogSensor',
         FeedbackSensor.absoluteEncoder => 'kAbsoluteEncoder',
       };
 
   /// Python REVLib enum name.
   String get pythonName => switch (this) {
         FeedbackSensor.primaryEncoder => 'kPrimaryEncoder',
+        FeedbackSensor.analogSensor => 'kAnalogSensor',
         FeedbackSensor.absoluteEncoder => 'kAbsoluteEncoder',
       };
 
   /// C++ REVLib enum name.
   String get cppName => switch (this) {
         FeedbackSensor.primaryEncoder => 'kPrimaryEncoder',
+        FeedbackSensor.analogSensor => 'kAnalogSensor',
         FeedbackSensor.absoluteEncoder => 'kAbsoluteEncoder',
       };
 }

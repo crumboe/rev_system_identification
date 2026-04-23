@@ -101,6 +101,8 @@ class WebSparkConnection implements ISparkConnection {
   @override
   StatusFrame2? lastStatus2;
   @override
+  StatusFrame3? lastStatus3;
+  @override
   StatusFrame5? lastStatus5;
   @override
   NewStatusFrame1? lastNewStatus1;
@@ -422,6 +424,7 @@ class WebSparkConnection implements ISparkConnection {
       if (parsed is StatusFrame0) lastStatus0 = parsed;
       if (parsed is StatusFrame1) lastStatus1 = parsed;
       if (parsed is StatusFrame2) lastStatus2 = parsed;
+      if (parsed is StatusFrame3) lastStatus3 = parsed;
       if (parsed is StatusFrame5) lastStatus5 = parsed;
     }
 

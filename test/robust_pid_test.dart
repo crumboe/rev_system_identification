@@ -145,7 +145,8 @@ void main() {
         closedLoopTauSec: tau,
         plantTauSec: plantTau,
       );
-      expect(pid.kI, closeTo(kP / ti, 1e-9));
+      // kI is scaled by the SPARK control period (0.001) for discrete accumulation.
+      expect(pid.kI, closeTo((kP / ti) * 0.001, 1e-12));
       expect(pid.kI, lessThan(kP / (10.0 * plantTau)));
     });
 
@@ -218,7 +219,8 @@ void main() {
         omegaRadPerSec: omega,
         plantTauSec: plantTau,
       );
-      expect(pid.kI, closeTo(kP / ti, 1e-9));
+      // kI is scaled by the SPARK control period (0.001) for discrete accumulation.
+      expect(pid.kI, closeTo((kP / ti) * 0.001, 1e-12));
       expect(pid.kI, lessThan(kP * omega / 20.0));
     });
 

@@ -86,9 +86,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
       notifier.setMotorInverted(inverted >= 0.5);
       if (currentLimit > 0) notifier.setCurrentLimit(currentLimit);
       notifier.setFeedbackSensor(
-        sensorVal >= 1.5
-            ? FeedbackSensor.absoluteEncoder
-            : FeedbackSensor.primaryEncoder,
+        switch (sensorVal.round()) {
+          0 => FeedbackSensor.analogSensor,
+          2 => FeedbackSensor.absoluteEncoder,
+          _ => FeedbackSensor.primaryEncoder,
+        },
       );
       if (pcf != 0) notifier.setPositionConversionFactor(pcf);
       if (vcf != 0) notifier.setVelocityConversionFactor(vcf);
@@ -115,6 +117,9 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     double rawPos;
     if (config.feedbackSensor == FeedbackSensor.absoluteEncoder) {
       rawPos = device.connection.lastStatus5?.absoluteEncoderPosition ??
+          (device.connection.lastStatus2?.positionRotations ?? 0.0);
+    } else if (config.feedbackSensor == FeedbackSensor.analogSensor) {
+      rawPos = device.connection.lastStatus3?.analogPosition ??
           (device.connection.lastStatus2?.positionRotations ?? 0.0);
     } else {
       rawPos = device.connection.lastStatus2?.positionRotations ?? 0.0;
@@ -166,7 +171,34 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
     } else {
       // Primary (relative) encoder: send a "set encoder position to 0"
       // control command so the firmware resets its accumulator.
+      //
+      // The SPARK controller only processes control frames while the
+      // heartbeat is running and enabled.  Enable it temporarily so the
+      // setEncoderPosition frame is accepted, then restore the previous
+      // heartbeat state.
+      final wasRunning = device.heartbeat.isRunning;
+      final wasEnabled = device.heartbeat.isEnabled;
+
+      if (!wasRunning) {
+        device.heartbeat.start(enabled: true);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      } else if (!wasEnabled) {
+        device.heartbeat.enable();
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+
       device.control.setEncoderPosition(0.0);
+
+      // Brief pause so the frame reaches the controller before we
+      // restore the disabled heartbeat.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Restore previous heartbeat state.
+      if (!wasRunning) {
+        device.heartbeat.stop();
+      } else if (!wasEnabled) {
+        device.heartbeat.disable();
+      }
 
       if (mounted) {
         setState(() => _currentPosition = 0.0);
@@ -478,7 +510,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
             child: NumberBox<double>(
               value: config.forwardSoftLimit,
               onChanged: (v) {
-                if (v != null) configNotifier.setForwardSoftLimit(v);
+                if (v != null) {
+                    configNotifier.setForwardSoftLimit(v);
+                    device?.parameters.setForwardSoftLimit(v);
+                    device?.parameters.setForwardSoftLimitEnabled(true);
+                  }
               },
               placeholder: 'Max position',
             ),
@@ -492,7 +528,11 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
             child: NumberBox<double>(
               value: config.reverseSoftLimit,
               onChanged: (v) {
-                if (v != null) configNotifier.setReverseSoftLimit(v);
+                if (v != null) {
+                    configNotifier.setReverseSoftLimit(v);
+                    device?.parameters.setReverseSoftLimit(v);
+                    device?.parameters.setReverseSoftLimitEnabled(true);
+                  }
               },
               placeholder: 'Min position',
             ),
@@ -574,10 +614,16 @@ class _ConfigScreenState extends ConsumerState<ConfigScreen> {
                       key: TutorialKeys.jogControls,
                       device: device,
                       config: config,
-                      onSetForwardLimit: (pos) =>
-                          configNotifier.setForwardSoftLimit(pos),
-                      onSetReverseLimit: (pos) =>
-                          configNotifier.setReverseSoftLimit(pos),
+                      onSetForwardLimit: (pos) {
+                          configNotifier.setForwardSoftLimit(pos);
+                            device?.parameters.setForwardSoftLimit(pos);
+                            device?.parameters.setForwardSoftLimitEnabled(true);
+                        },
+                      onSetReverseLimit: (pos) {
+                          configNotifier.setReverseSoftLimit(pos);
+                            device?.parameters.setReverseSoftLimit(pos);
+                            device?.parameters.setReverseSoftLimitEnabled(true);
+                        },
                       onPositionChanged: (pos) =>
                           setState(() => _currentPosition = pos),
                     ),

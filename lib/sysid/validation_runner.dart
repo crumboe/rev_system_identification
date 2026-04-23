@@ -730,6 +730,11 @@ class ValidationRunner {
             rawPosition =
                 device.connection.lastStatus5?.absoluteEncoderPosition ??
                 (status2?.positionRotations ?? 0.0);
+          } else if (mechanismConfig.feedbackSensor ==
+              FeedbackSensor.analogSensor) {
+            rawPosition =
+                device.connection.lastStatus3?.analogPosition ??
+                (status2?.positionRotations ?? 0.0);
           } else {
             rawPosition = status2?.positionRotations ?? 0.0;
           }

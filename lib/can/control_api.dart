@@ -230,7 +230,7 @@ class ControlApi implements IControlApi {
   /// A short delay is inserted between each command so the controller has
   /// time to process each frame-rate change before the next arrives.
   Future<void> configureForSysId() async {
-    const gap = Duration(milliseconds: 15);
+    const gap = Duration(milliseconds: 35);
     // Legacy frame-rate commands (apiClass 0x07).
     setStatusFrameRate(0, 10); // Applied output — 10ms
     await Future<void>.delayed(gap);

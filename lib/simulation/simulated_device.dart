@@ -48,6 +48,9 @@ class SimulatedSparkConnection implements ISparkConnection {
   StatusFrame2? lastStatus2;
 
   @override
+  StatusFrame3? lastStatus3;
+
+  @override
   StatusFrame5? lastStatus5;
 
   @override
@@ -115,6 +118,13 @@ class SimulatedSparkConnection implements ISparkConnection {
 
     lastStatus2 = StatusFrame2(
       positionRotations: noisyPos,
+    );
+
+    // Simulate an analog sensor reading the same position.
+    lastStatus3 = StatusFrame3(
+      analogVoltage: 0.0,
+      analogVelocity: 0.0,
+      analogPosition: noisyPos,
     );
 
     // Simulate an absolute encoder reading the same position.
